@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#050805">
-<title>버그아레나 c2 · BUG ARENA</title>
+<title>버그아레나 c3 · BUG ARENA</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030503;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;touch-action:none}button{font:inherit}
 #app{position:fixed;inset:0;overflow:hidden;background:#030503}#game{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050805}
@@ -145,7 +145,7 @@
 <body>
 <div id="app">
 <canvas id="game" width="1280" height="720"></canvas>
-<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">버그아레나 c2 · 곤충 격투 아레나</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
+<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">버그아레나 c3 · 곤충 격투 아레나</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
 <div id="launchGate"><div class="launchInner"><div class="launchEyebrow">BUG ARENA · INSECT FIGHTING</div><div class="launchLogo">BUG<br>ARENA</div><div class="launchKo">버그 아레나</div><div class="launchHint">START를 누르면 가로 화면에 맞춰 게임을 시작합니다.</div><button id="launchBtn" class="launchBtn">START</button></div></div>
 <div id="ui"><button id="navBack"><span class="arrow">‹</span><span>BACK</span></button><div id="pauseOverlay" class="pauseOverlay"><div class="pauseCard"><div class="brandSmall">BATTLE PAUSED</div><div class="pauseTitle">일시정지</div><div class="pauseSub">전투가 멈췄습니다.</div><div class="pauseActions"><button id="pauseContinue" class="goldBtn">계속하기</button><button id="pauseSelect" class="ghostBtn">캐릭터 선택</button><button id="pauseMain" class="ghostBtn">메인 메뉴</button></div></div></div>
 <section id="start" class="screen active"><div id="profileCard" class="profileCard"><div class="profileEyebrow">HUNTER RECORD</div><div class="profileHead"><div id="profileLevel" class="profileLevel">LV.1</div><div id="profileTitle" class="profileTitle">신입 사냥꾼</div></div><div class="profileXpTrack"><div id="profileXpFill" class="profileXpFill"></div></div><div class="profileXpMeta"><span id="profileXpText">0 / 100 XP</span><span id="profileStats">0 WINS · STREAK 0</span></div><div id="profileNext" class="profileNext"><b>NEXT</b> · LV.5 ORIGIN FRAME I</div></div><div class="brandSmall">INSECT FIGHTING</div><div class="brand">BUG<br>ARENA</div><div class="brandKo">버그 아레나</div><div class="mainMenu"><button id="startBtn" class="menuChoice primary"><span class="menuChoiceTitle">게임 시작</span><span class="menuChoiceSub">캐릭터를 골라 1대1 승부</span></button><button id="bossBtn" class="menuChoice bossMenuChoice"><span class="menuChoiceTitle">보스전</span><span class="menuChoiceSub">난이도를 고르고 거대 포식자에 도전</span></button><button id="codexBtn" class="menuChoice"><span class="menuChoiceTitle">곤충 도감</span><span class="menuChoiceSub">능력치 · 고유 효과 · 특수기 · 오리진</span></button><button id="guideBtn" class="menuChoice"><span class="menuChoiceTitle">게임 방법</span><span class="menuChoiceSub">공격 · 가드 · 대시 · 비행 · 오리진 익히기</span></button></div><div class="mainFoot">버그 아레나 · BUG ARENA COMBAT</div></section>
@@ -35402,6 +35402,565 @@ window.BugArenaG84={
   note:'Origin cut-in presentation and the arena body-scale knob. Damage, beat timing, cooldowns, ranges and save data unchanged.',
   bodyScale:(()=>{ try{ return G('G84_BODY_SCALE') }catch(_){ return null } })(),
   KO_NAME
+};
+})();
+</script>
+
+
+
+<!-- ============================================================
+     BUG ARENA G85 — BOSS PRESENCE
+     ------------------------------------------------------------
+     The boss fight was mechanically deep already: per-difficulty
+     pattern sets, telegraph / active / recovery phases, weak-point
+     windows and phase changes. What it did not have was *weight*.
+     The boss read as a large sprite standing in the same arena as
+     the player, because nothing on screen said it was heavy, and
+     nothing said an attack was forming until it had already landed.
+
+     This layer adds presence, in three groups:
+
+       WEIGHT      a contact shadow that tightens and darkens as the
+                   boss loads, dust that kicks up when it lands, and
+                   a camera that answers every landing
+       THREAT      the windup is drawn on the ground — a reach band
+                   in front of the boss that fills as the attack
+                   charges, plus a marker on the spot a leap or a
+                   spit is locked onto, and a rim on the boss itself
+                   that climbs with the windup
+       PRESSURE    a proximity vignette that darkens the frame edges
+                   while the player stands inside the boss's reach,
+                   and a roar — shockwave, desaturation, hard shake —
+                   on entrance and on every phase break
+
+     Presentation only. Damage, reach, windup lengths, pattern
+     selection, cooldowns, weak points and save data are the base
+     build's; this layer reads boss state and never writes it. The
+     only globals it touches are the presentation knobs the game
+     already drives itself (state.shake, state.cameraKickY).
+     ============================================================ -->
+<script id="bugArenaG85BossPresence">
+(()=>{'use strict';
+const VERSION='G85', root=document.documentElement;
+if(root.dataset.g85Bound==='1')return; root.dataset.g85Bound='1';
+
+const TAU5=Math.PI*2;
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+const num=(v,d=0)=>Number.isFinite(Number(v))?Number(v):d;
+const G=n=>{ try{ return (0,eval)(n) }catch(_){ return undefined } };
+const B=()=>{ const s=G('state'); return s&&s.battle };
+const GND=()=>num(G('GROUND'),570);
+const outCubic=t=>1-Math.pow(1-t,3);
+const inCubic=t=>t*t*t;
+
+function rgbOf(hex){
+  let h=String(hex||'#ffe08a').replace('#','');
+  if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  const n=parseInt(h,16)||0;
+  return [(n>>16)&255,(n>>8)&255,n&255];
+}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+/* The boss object, only when a boss fight is actually running. */
+function boss(){
+  const b=B();
+  if(!b||!b.boss||!b.e||b.e.dead)return null;
+  return b.e;
+}
+/* Both boss engines in this build expose an action; they disagree on
+   the field names, so read whichever is present. */
+function action(e){
+  const a=e&&(e.v14Action||e.bossAction);
+  if(!a)return null;
+  const stage=a.stage||a.phase||'';
+  return {a, stage, t:num(a.t), tele:num(a.tele,0.38)};
+}
+function accentOf(e){
+  return rgbOf((e&&e.bossCfg&&e.bossCfg.accent)||'#ffe08a');
+}
+function reachOf(e){
+  return num(e&&e.bossCfg&&e.bossCfg.tongue, 380);
+}
+
+/* ------------------------------------------------------------------
+   EVENT WATCHER — read-only. Runs once per rendered frame.
+   ------------------------------------------------------------------ */
+const HOOKS=[];
+
+/* Canvas gradients are expensive to build and this layer wanted three
+   of them per frame, which cost ~1.9ms/frame in a boss fight. They are
+   built once at the origin and reused under a translate, keyed by a
+   coarse radius bucket; alpha is applied with globalAlpha instead of
+   being baked into the stops, so the same object serves every strength. */
+const GCACHE=new Map();
+function radial(c,key,r,stops){
+  const k=key+'|'+(Math.round(r/12)*12);
+  let g=GCACHE.get(k);
+  if(!g){
+    g=c.createRadialGradient(0,0,0,0,0,Math.max(1,Math.round(r/12)*12));
+    for(const [at,col] of stops)g.addColorStop(at,col);
+    if(GCACHE.size>60)GCACHE.clear();
+    GCACHE.set(k,g);
+  }
+  return g;
+}
+const S={
+  key:'', phase:0, pendingEntrance:false, wasAir:false, lastStage:'', lastType:'',
+  roarT:0, roarKind:'', landT:0, landX:0, telePulse:0, releaseT:0, lastT:0
+};
+
+function pushDust(x,y,n,col,power){
+  const st=G('state');
+  if(!st||!Array.isArray(st.particles))return;
+  if(st.particles.length>240)return;              // never fight the game for budget
+  for(let i=0;i<n;i++){
+    const a=(Math.random()*0.8+0.1)*Math.PI;      // upward fan
+    const sp=(60+Math.random()*190)*power;
+    st.particles.push({
+      x:x+(Math.random()-0.5)*70, y:y-2,
+      vx:Math.cos(a)*sp*(Math.random()<0.5?-1:1)*0.9,
+      vy:-Math.abs(Math.sin(a))*sp*0.55,
+      life:0.34+Math.random()*0.46, max:0.8,
+      size:1.6+Math.random()*3.4,
+      col, type:'dust'
+    });
+  }
+}
+
+function watch(dt){
+  const e=boss();
+  if(!e){ S.key=''; S.phase=0; return; }
+  const st=G('state');
+  const key=String(e.v9BossId||(e.bossCfg&&e.bossCfg.name)||'boss');
+
+  /* entrance — deferred.
+     The build shows a boss intro card ("보스 등장 …") over the canvas
+     before the fight begins. Roaring the moment the boss object exists
+     spends the whole effect behind that card, so the roar waits for the
+     intro to run out and fires on the first frame of actual combat. */
+  if(key!==S.key){
+    S.key=key; S.phase=num(e.bossPhase,1);
+    S.wasAir=!!e.airborne; S.pendingEntrance=true;
+  }
+  const b0=B();
+  if(S.pendingEntrance && b0 && num(b0.intro,0)<=0){
+    S.pendingEntrance=false;
+    S.roarT=1.0; S.roarKind='entrance';
+    if(st){
+      st.shake=Math.max(num(st.shake),22);
+      st.cameraKickY=(num(st.cameraKickY))+11;
+    }
+    pushDust(e.x, GND(), 22, 'rgba(222,210,186,.82)', 1.35);
+  }
+  /* phase break */
+  const ph=num(e.bossPhase,1);
+  if(ph>S.phase){
+    S.phase=ph;
+    S.roarT=1.0; S.roarKind='phase';
+    if(st){
+      st.shake=Math.max(num(st.shake),26);
+      st.cameraKickY=(num(st.cameraKickY))+14;
+    }
+    pushDust(e.x, GND(), 26, 'rgba(226,214,190,.85)', 1.5);
+  }
+  /* landing — the boss answering gravity is most of what sells mass */
+  const air=!!e.airborne;
+  if(S.wasAir && !air){
+    S.landT=0.42; S.landX=num(e.x);
+    const heavy=(e.bossCfg&&e.bossCfg.key==='hard')?1.5:(e.bossCfg&&e.bossCfg.key==='normal')?1.2:1.0;
+    if(st){
+      st.shake=Math.max(num(st.shake), 16*heavy);
+      st.cameraKickY=(num(st.cameraKickY))+9*heavy;
+    }
+    pushDust(e.x, GND(), Math.round(16*heavy), 'rgba(214,203,180,.8)', 1.15*heavy);
+  }
+  S.wasAir=air;
+
+  /* a telegraph starting gets one short pulse, not a continuous hum */
+  const act=action(e);
+  const stage=act?act.stage:'';
+  const type=act?String(act.a.type||act.a.v6Type||act.a.id||''):'';
+  if(stage==='telegraph' && (S.lastStage!=='telegraph' || type!==S.lastType)) S.telePulse=0.30;
+
+  /* RELEASE — the frame the windup becomes the attack. Everything above
+     builds anticipation; without a snap here the payoff lands softer
+     than the wind-up promised. The kick is proportional to difficulty so
+     a hard boss hits the camera harder than an easy one. */
+  if(stage==='active' && S.lastStage==='telegraph'){
+    const heavy=(e.bossCfg&&e.bossCfg.key==='hard')?1.5:(e.bossCfg&&e.bossCfg.key==='normal')?1.2:1.0;
+    S.releaseT=0.26;
+    if(st){
+      st.shake=Math.max(num(st.shake), 13*heavy);
+      st.cameraKickX=(num(st.cameraKickX)) + 7*heavy*(num(e.facing,-1)||-1);
+    }
+    pushDust(e.x, GND(), Math.round(9*heavy), 'rgba(230,220,198,.75)', 0.95*heavy);
+  }
+  S.lastStage=stage; S.lastType=type;
+
+  S.roarT=Math.max(0,S.roarT-dt);
+  S.landT=Math.max(0,S.landT-dt);
+  S.telePulse=Math.max(0,S.telePulse-dt);
+  S.releaseT=Math.max(0,S.releaseT-dt);
+}
+
+/* ------------------------------------------------------------------
+   WORLD SPACE — drawn with the boss, under the camera transform.
+   ------------------------------------------------------------------ */
+function groundFx(c,e){
+  const acc=accentOf(e), G0=GND();
+  const x=num(e.x), y=num(e.y,G0);
+  const air=cl((G0-y)/220,0,1);
+  const rad=num(e.bossCfg&&e.bossCfg.radius,60);
+  const act=action(e);
+  const windup=act&&act.stage==='telegraph' ? cl(act.t/Math.max(.05,act.tele),0,1) : 0;
+
+  c.save();
+
+  /* --- contact shadow: tight and dark on the ground, wide and faint
+     in the air. The base build draws a flat ellipse; this replaces the
+     read with something that tracks height. --- */
+  const sw=rad*(1.85+air*1.35), sh=(17+rad*0.18)*(1-air*0.35);
+  const sg=radial(c,'shadow',sw,[[0,'rgba(0,0,0,1)'],[0.55,'rgba(0,0,0,.48)'],[1,'rgba(0,0,0,0)']]);
+  c.save();
+  c.translate(x,G0+6);c.scale(1,sh/sw);
+  c.globalAlpha=0.62*(1-air*0.55);
+  c.fillStyle=sg;c.beginPath();c.arc(0,0,sw,0,TAU5);c.fill();
+  c.restore();
+
+  /* --- standing aura: a low, slow ground haze that says "this thing
+     is radiating". Scales with phase so later phases feel worse. --- */
+  const ph=cl(num(e.bossPhase,1),1,3);
+  const t=num(G('state')&&G('state').now,0)/1000;
+  for(let i=0;i<2;i++){
+    const k=(t*0.5+i/2)%1;
+    const r=rad*(1.1+k*1.5);
+    c.globalAlpha=(1-k)*0.26*(0.5+ph*0.35);
+    c.strokeStyle=rgba(acc,1);
+    c.lineWidth=2.4;
+    c.beginPath();c.ellipse(x,G0+4,r,r*0.20,0,0,TAU5);c.stroke();
+  }
+  c.globalAlpha=1;
+
+  /* --- landing shock: a ring that snaps out from the impact --- */
+  if(S.landT>0){
+    const k=1-S.landT/0.42;
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=(1-k)*0.55;
+    c.strokeStyle='rgba(240,232,214,1)';
+    c.lineWidth=7*(1-k)+1;
+    const r=60+k*rad*5.5;
+    c.beginPath();c.ellipse(S.landX,G0+6,r,r*0.22,0,0,TAU5);c.stroke();
+    c.globalCompositeOperation='source-over';
+  }
+
+  /* --- THREAT: the windup, drawn on the floor -------------------
+     A band in front of the boss covering the reach it is about to
+     use, filling toward the player as the windup completes. This is
+     the part that turns "it hit me out of nowhere" into "I saw it
+     coming and stood in it anyway". --- */
+  if(windup>0){
+    const reach=reachOf(e);
+    const fac=num(e.facing,-1)||-1;
+    const x0=x, x1=x+fac*reach;
+    const lo=Math.min(x0,x1), hi=Math.max(x0,x1);
+
+    c.save();
+    const bandY=G0+2;
+
+    /* the full extent: a dark trough with hazard stripes, so the danger
+       zone reads as a place you are standing in rather than a thin line
+       on the floor */
+    c.globalAlpha=0.30+0.22*windup;
+    c.fillStyle='rgba(10,4,4,.85)';
+    c.fillRect(lo,bandY-15,hi-lo,30);
+
+    c.save();
+    c.beginPath();c.rect(lo,bandY-15,hi-lo,30);c.clip();
+    c.globalAlpha=0.20+0.30*windup;
+    c.fillStyle=rgba(acc,1);
+    const stripe=26, off=(num(G('state')&&G('state').now,0)/28)%stripe;
+    for(let sx=lo-stripe; sx<hi+stripe; sx+=stripe){
+      c.beginPath();
+      c.moveTo(sx+off,bandY+15);
+      c.lineTo(sx+off+11,bandY-15);
+      c.lineTo(sx+off+20,bandY-15);
+      c.lineTo(sx+off+9,bandY+15);
+      c.closePath();c.fill();
+    }
+    c.restore();
+
+    /* a soft glow spilling up out of the trough */
+    c.globalAlpha=0.16+0.34*windup;
+    const glow=c.createLinearGradient(0,bandY-15,0,bandY-64);
+    glow.addColorStop(0,rgba(acc,.55));
+    glow.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=glow;
+    c.fillRect(lo,bandY-64,hi-lo,64);
+
+    c.globalAlpha=0.20+0.14*windup;
+    const gg=c.createLinearGradient(x0,0,x1,0);
+    gg.addColorStop(0,rgba(acc,.75));
+    gg.addColorStop(1,rgba(acc,0));
+    c.fillStyle=gg;
+    c.fillRect(lo,bandY-9,hi-lo,18);
+
+    /* the charge front, sweeping out to the reach */
+    const fx=x0+fac*reach*outCubic(windup);
+    c.globalAlpha=0.30+0.55*windup;
+    c.fillStyle=windup>0.82?'rgba(255,246,228,1)':rgba(acc,1);
+    c.fillRect(Math.min(x0,fx),bandY-3,Math.abs(fx-x0),6);
+    /* leading edge — a moving wall the eye can track */
+    c.globalAlpha=0.55+0.40*windup;
+    c.fillRect(fx-3*fac,bandY-26,6,52);
+    c.globalAlpha=0.25+0.45*windup;
+    const eg=c.createLinearGradient(fx,bandY-58,fx,bandY);
+    eg.addColorStop(0,'rgba(0,0,0,0)');
+    eg.addColorStop(1,windup>0.82?'rgba(255,246,228,.9)':rgba(acc,.9));
+    c.fillStyle=eg;
+    c.fillRect(fx-9,bandY-58,18,58);
+
+    /* the boundary tick, so the reach itself is legible */
+    c.globalAlpha=0.35+0.35*windup;
+    c.strokeStyle=rgba(acc,1);
+    c.lineWidth=2;
+    c.beginPath();c.moveTo(x1,bandY-20);c.lineTo(x1,bandY+12);c.stroke();
+    c.restore();
+  }
+
+  /* --- a locked target marker for leaps, spits and mud --- */
+  const a=act&&act.a;
+  if(a&&a.locked&&Number.isFinite(Number(a.targetX))&&windup>0){
+    const tx=num(a.targetX);
+    c.save();
+    c.globalCompositeOperation='lighter';
+    const k=windup;
+    c.globalAlpha=0.30+0.50*k;
+    c.strokeStyle=k>0.82?'rgba(255,240,210,1)':rgba(acc,1);
+    c.lineWidth=2.4;
+    const r=54*(1.5-0.5*k);
+    c.beginPath();c.ellipse(tx,G0+6,r,r*0.30,0,0,TAU5);c.stroke();
+    c.globalAlpha=0.20+0.45*k;
+    c.beginPath();c.ellipse(tx,G0+6,r*0.55,r*0.165,0,0,TAU5);c.stroke();
+    /* crosshair ticks */
+    c.beginPath();
+    c.moveTo(tx-r*1.15,G0+6);c.lineTo(tx-r*0.75,G0+6);
+    c.moveTo(tx+r*0.75,G0+6);c.lineTo(tx+r*1.15,G0+6);
+    c.stroke();
+    c.restore();
+  }
+
+  c.restore();
+}
+
+/* Rim light on the boss itself as the windup climbs. Drawn after the
+   sprite so it reads as the body charging, not as a floor decal. */
+function bossRim(c,e){
+  const act=action(e);
+  if(!act||act.stage!=='telegraph')return;
+  const w=cl(act.t/Math.max(.05,act.tele),0,1);
+  if(w<=0.02)return;
+  const acc=accentOf(e), G0=GND();
+  const x=num(e.x), y=num(e.y,G0);
+  const rad=num(e.bossCfg&&e.bossCfg.radius,60);
+  c.save();
+  c.globalCompositeOperation='lighter';
+  const cy=y-rad*1.05;
+  const rr=rad*(1.9+w*0.7);
+  const gr=radial(c,'rim',rr,[[0,rgba(acc,1)],[0.6,rgba(acc,.43)],[1,'rgba(0,0,0,0)']]);
+  c.save();
+  c.translate(x,cy);
+  c.globalAlpha=0.30*w;
+  c.fillStyle=gr;
+  c.beginPath();c.arc(0,0,rr,0,TAU5);c.fill();
+  c.restore();
+  /* motes drawn inward on the last third of the windup */
+  if(w>0.55){
+    const k=(w-0.55)/0.45;
+    for(let i=0;i<10;i++){
+      const ang=(i/10)*TAU5+num(G('state')&&G('state').now,0)/240;
+      const d=rad*(2.4-1.5*k)+Math.sin(i*2.1+k*6)*8;
+      c.globalAlpha=0.25+0.5*k;
+      c.fillStyle=k>0.8?'rgba(255,248,232,1)':rgba(acc,1);
+      c.beginPath();c.arc(x+Math.cos(ang)*d, cy+Math.sin(ang)*d*0.7, 1.4+2.2*k,0,TAU5);c.fill();
+    }
+  }
+  c.restore();
+}
+
+/* ------------------------------------------------------------------
+   SCREEN SPACE — drawn after drawBattle, outside the camera.
+   ------------------------------------------------------------------ */
+function screenFx(c,W,H){
+  const e=boss(); if(!e)return;
+  const b=B(); if(!b||!b.p)return;
+  const acc=accentOf(e);
+  const act=action(e);
+  const windup=act&&act.stage==='telegraph' ? cl(act.t/Math.max(.05,act.tele),0,1) : 0;
+
+  /* --- PRESSURE: standing inside the boss's reach costs you a darker
+     frame. It is a read the player feels before they read it. --- */
+  const dist=Math.abs(num(b.p.x)-num(e.x));
+  const reach=reachOf(e);
+  const near=cl(1-dist/Math.max(80,reach*1.15),0,1);
+  const heat=cl(near*(0.45+windup*0.85),0,1);
+  /* Edge bands rather than a full-screen radial fill. A vignette is
+     transparent through the middle, so filling all 1280x720 every frame
+     was blending a million pixels to show a rim — it measured as the
+     bulk of this layer's 2.3ms/frame cost in a boss fight. Four bands
+     cover roughly a third of the area for the same read. */
+  if(heat>0.05){
+    const key='vig|'+W+'x'+H;
+    let g=GCACHE.get(key);
+    if(!g){
+      const mk=(x0,y0,x1,y1)=>{const q=c.createLinearGradient(x0,y0,x1,y1);
+        q.addColorStop(0,'rgba(104,10,12,1)');q.addColorStop(1,'rgba(104,10,12,0)');return q};
+      const bw=Math.round(W*0.20), bh=Math.round(H*0.26);
+      g={bw,bh,l:mk(0,0,bw,0),r:mk(W,0,W-bw,0),t:mk(0,0,0,bh),b:mk(0,H,0,H-bh)};
+      GCACHE.set(key,g);
+    }
+    c.save();
+    c.globalAlpha=0.62*heat*(0.55+windup*0.45);
+    c.fillStyle=g.l;c.fillRect(0,0,g.bw,H);
+    c.fillStyle=g.r;c.fillRect(W-g.bw,0,g.bw,H);
+    c.fillStyle=g.t;c.fillRect(0,0,W,g.bh);
+    c.fillStyle=g.b;c.fillRect(0,H-g.bh,W,g.bh);
+    c.restore();
+  }
+
+  /* --- the moment a windup completes: a hard edge flare --- */
+  if(windup>0.90){
+    const k=(windup-0.90)/0.10;
+    c.save();
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=0.30*k;
+    const eg=c.createLinearGradient(0,0,0,H);
+    eg.addColorStop(0,rgba(acc,.9));
+    eg.addColorStop(.28,'rgba(0,0,0,0)');
+    eg.addColorStop(.72,'rgba(0,0,0,0)');
+    eg.addColorStop(1,rgba(acc,.9));
+    c.fillStyle=eg;c.fillRect(0,0,W,H);
+    c.restore();
+  }
+
+  /* --- the release itself: a fast bright wash along the attack lane --- */
+  if(S.releaseT>0){
+    const k=1-S.releaseT/0.26;
+    c.save();
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=0.34*(1-k)*(1-k);
+    const fac=num(e.facing,-1)||-1;
+    const cx=W*0.5+(num(e.x)-640)*0.35;
+    const lg=c.createLinearGradient(cx,0,cx+fac*W*0.6,0);
+    lg.addColorStop(0,rgba(acc,.95));
+    lg.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=lg;
+    c.fillRect(0,H*0.52,W,H*0.30);
+    c.restore();
+  }
+
+  /* --- ROAR: entrance and every phase break --- */
+  if(S.roarT>0){
+    const k=1-S.roarT/1.0;
+    c.save();
+    /* the world drains for a beat */
+    c.globalAlpha=0.42*(1-k)*(1-k);
+    c.fillStyle='rgba(6,4,6,1)';
+    c.fillRect(0,0,W,H);
+
+    /* concentric pressure rings from the boss */
+    c.globalCompositeOperation='lighter';
+    const cx=W*0.5+ (num(e.x)-640)*0.35, cy=H*0.55;
+    for(let i=0;i<4;i++){
+      const kk=cl(k-i*0.09,0,1);
+      if(kk<=0)continue;
+      /* Kept translucent on purpose: the rings pass over the boss, and
+         a phase break reads better when its silhouette stays visible
+         through the shockwave than when the ring paints it out. */
+      c.globalAlpha=(1-kk)*(S.roarKind==='phase'?0.40:0.30);
+      c.strokeStyle=i===0?'rgba(255,250,238,1)':rgba(acc,1);
+      c.lineWidth=(S.roarKind==='phase'?8:6)*(1-kk)+1;
+      const r=H*(0.05+kk*1.15);
+      c.beginPath();c.ellipse(cx,cy,r,r*0.66,0,0,TAU5);c.stroke();
+    }
+    /* a low warm wash rising from the floor */
+    c.globalAlpha=0.30*(1-k);
+    const wg=c.createLinearGradient(0,H,0,H*0.4);
+    wg.addColorStop(0,rgba(acc,.75));
+    wg.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=wg;c.fillRect(0,H*0.4,W,H*0.6);
+    c.restore();
+  }
+
+  /* --- landing kick at the frame edges --- */
+  if(S.landT>0){
+    const k=1-S.landT/0.42;
+    c.save();
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=0.22*(1-k);
+    const lg=c.createLinearGradient(0,H,0,H*0.62);
+    lg.addColorStop(0,'rgba(226,214,190,.9)');
+    lg.addColorStop(1,'rgba(0,0,0,0)');
+    c.fillStyle=lg;c.fillRect(0,H*0.62,W,H*0.38);
+    c.restore();
+  }
+}
+
+/* ------------------------------------------------------------------
+   HOOKS
+   ------------------------------------------------------------------ */
+/* World-space: wrap whichever boss renderer this build ended up with. */
+for(const name of ['drawBossFrog','drawBoss']){
+  try{
+    const fn=G(name);
+    if(typeof fn!=='function')continue;
+    const prev=fn;
+    const wrapped=function(c,b,override,alpha){
+      let pre=false;
+      try{
+        const e=boss();
+        if(e&&b===e&&c&&!override){ groundFx(c,e); pre=true }
+      }catch(_){}
+      const r=prev.apply(this,arguments);
+      try{ if(pre){ const e=boss(); if(e)bossRim(c,e) } }catch(_){}
+      return r;
+    };
+    /* Indirect eval evaluates in global scope and cannot see `wrapped`,
+       which lives in this closure. These renderers are top-level
+       declarations in classic scripts, so they are properties of the
+       global object and assigning there rebinds what callers resolve. */
+    globalThis[name]=wrapped;
+    HOOKS.push(name);
+  }catch(_){}
+}
+
+/* Screen-space + the watcher. drawBattle restores its camera transform
+   before returning, so anything drawn here is in screen space. */
+try{
+  const prevBattle=G('drawBattle');
+  if(typeof prevBattle==='function'){
+    let lastNow=0;
+    const wrapped=function(c){
+      const r=prevBattle.apply(this,arguments);
+      try{
+        const st=G('state');
+        const now=num(st&&st.now,0);
+        const dt=lastNow?cl((now-lastNow)/1000,0,0.05):0.016;
+        lastNow=now;
+        watch(dt);
+        if(c) screenFx(c, num(G('W'),1280), num(G('H'),720));
+      }catch(_){}
+      return r;
+    };
+    globalThis.drawBattle=wrapped;
+    HOOKS.push('drawBattle');
+  }
+}catch(_){}
+
+window.BugArenaG85={
+  version:VERSION,
+  hooks:HOOKS,
+  note:'Boss presence: weight, ground threat telegraphs, aura, landing dust and roars. Damage, reach, windups, patterns and save data unchanged.',
+  state:S
 };
 })();
 </script>
