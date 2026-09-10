@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#050805">
-<title>버그아레나 c1 · BUG ARENA</title>
+<title>버그아레나 c2 · BUG ARENA</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030503;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;touch-action:none}button{font:inherit}
 #app{position:fixed;inset:0;overflow:hidden;background:#030503}#game{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050805}
@@ -145,7 +145,7 @@
 <body>
 <div id="app">
 <canvas id="game" width="1280" height="720"></canvas>
-<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">버그아레나 c1 · 곤충 격투 아레나</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
+<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">버그아레나 c2 · 곤충 격투 아레나</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
 <div id="launchGate"><div class="launchInner"><div class="launchEyebrow">BUG ARENA · INSECT FIGHTING</div><div class="launchLogo">BUG<br>ARENA</div><div class="launchKo">버그 아레나</div><div class="launchHint">START를 누르면 가로 화면에 맞춰 게임을 시작합니다.</div><button id="launchBtn" class="launchBtn">START</button></div></div>
 <div id="ui"><button id="navBack"><span class="arrow">‹</span><span>BACK</span></button><div id="pauseOverlay" class="pauseOverlay"><div class="pauseCard"><div class="brandSmall">BATTLE PAUSED</div><div class="pauseTitle">일시정지</div><div class="pauseSub">전투가 멈췄습니다.</div><div class="pauseActions"><button id="pauseContinue" class="goldBtn">계속하기</button><button id="pauseSelect" class="ghostBtn">캐릭터 선택</button><button id="pauseMain" class="ghostBtn">메인 메뉴</button></div></div></div>
 <section id="start" class="screen active"><div id="profileCard" class="profileCard"><div class="profileEyebrow">HUNTER RECORD</div><div class="profileHead"><div id="profileLevel" class="profileLevel">LV.1</div><div id="profileTitle" class="profileTitle">신입 사냥꾼</div></div><div class="profileXpTrack"><div id="profileXpFill" class="profileXpFill"></div></div><div class="profileXpMeta"><span id="profileXpText">0 / 100 XP</span><span id="profileStats">0 WINS · STREAK 0</span></div><div id="profileNext" class="profileNext"><b>NEXT</b> · LV.5 ORIGIN FRAME I</div></div><div class="brandSmall">INSECT FIGHTING</div><div class="brand">BUG<br>ARENA</div><div class="brandKo">버그 아레나</div><div class="mainMenu"><button id="startBtn" class="menuChoice primary"><span class="menuChoiceTitle">게임 시작</span><span class="menuChoiceSub">캐릭터를 골라 1대1 승부</span></button><button id="bossBtn" class="menuChoice bossMenuChoice"><span class="menuChoiceTitle">보스전</span><span class="menuChoiceSub">난이도를 고르고 거대 포식자에 도전</span></button><button id="codexBtn" class="menuChoice"><span class="menuChoiceTitle">곤충 도감</span><span class="menuChoiceSub">능력치 · 고유 효과 · 특수기 · 오리진</span></button><button id="guideBtn" class="menuChoice"><span class="menuChoiceTitle">게임 방법</span><span class="menuChoiceSub">공격 · 가드 · 대시 · 비행 · 오리진 익히기</span></button></div><div class="mainFoot">버그 아레나 · BUG ARENA COMBAT</div></section>
@@ -1509,9 +1509,15 @@ function frameFor(f){
  }
  if(f.landT>0)return FRAME.landing;if(f.state==='jump_squat')return FRAME.jump_squat;if(f.airborne){if(!f.data.fly){if(f.state==='rise')return FRAME.rise;if(f.state==='apex')return FRAME.apex;return FRAME.fall}else return f.flyState==='ascend'?FRAME.rise:f.flyState==='descend'?FRAME.fall:FRAME.apex}if(Math.abs(f.vx)>40)return FRAME.move0+Math.floor(f.animT*9)%4;return FRAME.idle0+Math.floor(f.animT*4)%4}
 
+/* G84: one knob for how large the fighters read on the arena. Applied to
+   the battle view only — the origin cut-in keeps its own 1.15 close-up
+   scale, because that shot is meant to fill the frame. Attack ranges are
+   absolute world pixels (100-135) and are deliberately NOT scaled here;
+   see the G84 layer's note. */
+const G84_BODY_SCALE=0.80;
 function drawSpriteFrame(c,f,override=null,alpha=1){
  let img=images['atlas_'+f.data.id];if(!img)return;
- let frame=override?.frame??frameFor(f),sx=(frame%5)*512,sy=Math.floor(frame/5)*384,combatScale=(state.scene==='battle'&&!state.battle?.origin?.owner)?0.612:1.15,scale=(override?.scale??f.data.scale)*combatScale;
+ let frame=override?.frame??frameFor(f),sx=(frame%5)*512,sy=Math.floor(frame/5)*384,combatScale=(state.scene==='battle'&&!state.battle?.origin?.owner)?0.612*G84_BODY_SCALE:1.15,scale=(override?.scale??f.data.scale)*combatScale;
  let rawX=override?.x??f.x,rawY=override?.y??f.y,DPR=Math.min(window.devicePixelRatio||1,2),x=Math.round(rawX*DPR)/DPR,y=Math.round(rawY*DPR)/DPR;
  let face=override?.facing??f.facing,pose=!override?(f.special?specialPose(f):f.attack?attackPose(f):{x:0,y:0,rot:0,sx:1,sy:1}):{x:0,y:0,rot:0,sx:1,sy:1};
  c.save();
@@ -32929,7 +32935,9 @@ window.BugArenaG82={
   grid-column: 1 !important; grid-row: 1 !important;
   height: auto !important;
   min-width: 0 !important;
-  width: clamp(30px, 3.6vw, 44px) !important;
+  /* Wide enough for the longest label plus its icon: "오리진" measures
+     44px on its own, and a 30px track was clipping its last syllable. */
+  width: clamp(46px, 4.6vw, 58px) !important;
   font-size: var(--g83-fs-micro) !important;
   font-weight: 800 !important;
   color: var(--g83-ink-3) !important;
@@ -33173,7 +33181,13 @@ window.BugArenaG82={
    `#app.battle #hud .hudSide.right{display:block!important}`, which
    silently dropped the right-hand block out of grid layout and
    stacked the portrait on top of the meters. */
-#app.battle:not(.g83-off) #hud .hudSide.right{
+/* `:not(.v14BossBattle)` matters: the boss HUD replaces the right-hand
+   fighter block with its own panel via
+   `#app.v14BossBattle .hudSide.right{display:none!important}`. This
+   layer's display rule outranks that selector, so without the guard the
+   standard enemy block was drawn straight through the boss panel — name,
+   meters and all. */
+#app.battle:not(.g83-off):not(.v14BossBattle) #hud .hudSide.right{
   display: grid !important;
   grid-template-columns: minmax(0,1fr) auto !important;
   align-items: start !important;
@@ -33184,8 +33198,11 @@ window.BugArenaG82={
 #app.battle:not(.g83-off) #hud .hudSide.right .g83Portrait{ grid-area: auto !important; grid-column: 2 !important; grid-row: 1 !important }
 
 /* Meter rows: three tracks, placed explicitly, no RTL. */
+/* No `display` here on purpose. `.meterRow` is already a grid in the base
+   stylesheet, and challenge mode hides individual rows with
+   `#app.challengeBattle .hudSide.right .meterRow:not(.hpRow){display:none}`
+   — restating display at this weight would silently un-hide them. */
 #app.battle:not(.g83-off) #hud .hudSide .meterRow{
-  display: grid !important;
   grid-template-columns: auto minmax(42px,1fr) auto !important;
   direction: ltr !important;
   align-items: center !important;
@@ -33217,7 +33234,7 @@ window.BugArenaG82={
     font-size: var(--g83-fs-micro) !important;
   }
   #app.battle:not(.g83-off) #hud .hpRow .meterLabel{
-    width: clamp(28px, 3.4vw, 40px) !important;
+    width: clamp(40px, 4.8vw, 48px) !important;
   }
   /* Secondary meters also drop their numeric read-out on a narrow screen.
      With labels on, the bar was 42-52px long at 667px wide — too short to
@@ -33244,10 +33261,10 @@ window.BugArenaG82={
    negotiation: the bar is simply everything left over, and both sides
    are symmetric by construction. */
 #app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterRow.meterRow{
-  grid-template-columns: clamp(30px,3.6vw,46px) minmax(48px,1fr) clamp(34px,4vw,46px) !important;
+  grid-template-columns: clamp(46px,4.6vw,58px) minmax(48px,1fr) clamp(34px,4vw,46px) !important;
 }
 #app.battle:not(.g83-off) #hud .hudSide.right .meterRow.meterRow{
-  grid-template-columns: clamp(34px,4vw,46px) minmax(48px,1fr) clamp(30px,3.6vw,46px) !important;
+  grid-template-columns: clamp(34px,4vw,46px) minmax(48px,1fr) clamp(46px,4.6vw,58px) !important;
 }
 @media (max-width: 780px){
   /* Secondary rows are icon + bar only here, so they are two-track. */
@@ -33257,6 +33274,19 @@ window.BugArenaG82={
   #app.battle:not(.g83-off) #hud .hudSide.right .meterRow.meterRow:not(.hpRow){
     grid-template-columns: minmax(56px,1fr) 18px !important;
   }
+}
+
+/* Boss battles: the boss panel replaces the enemy block, but the block
+   was still being painted underneath it — the enemy's name and meters
+   bled through the panel and out past its lower edge. The build already
+   asks for this with `#app.v14BossBattle .hudSide.right{display:none}`;
+   that selector just loses to a later `#app.battle #hud .hudSide.right
+   {display:block!important}` visibility repair. Restated here at a
+   weight that wins. (Present in G82 too — verified against the original
+   build, not introduced by this layer.) */
+#app.battle.v14BossBattle #hud .hudSide.right,
+html.v7-boss-battle #app.battle #hud .hudSide.right{
+  display: none !important;
 }
 
 /* The boss-battle skin shrank meter text to 6.6px; the floor applies
@@ -34882,5 +34912,498 @@ requestAnimationFrame(tick);
 }
 #app .g83-scroll.g83-more .g83-fadeEdge{ opacity: 1 }
 </style>
+
+
+
+<!-- ============================================================
+     BUG ARENA G84 — ORIGIN: CUT-IN REBUILD
+     ------------------------------------------------------------
+     The origin already ran in three acts (revelation / hunt /
+     execution) with a full-bleed illustration and a letterbox from
+     G81. What it did not have is the thing that makes a MapleStory
+     origin read as an *event*: a framed cut-in. The art filled the
+     screen as a background rather than arriving as a panel, and the
+     name was set in plain system-ui at a size the art swallowed.
+
+     This layer owns ACT I outright — it paints over the base
+     renderer's revelation act with a composed cut-in — and adds
+     impact treatment to the two acts that follow:
+
+       ACT I   freeze-flash, a rune seal under the hero, a skewed
+               panel that flies in carrying the illustration, the
+               skill name set with an outline and a metal gradient
+               arriving on an overshoot, then a charge bloom that
+               hands off to the choreography
+       II/III  shock rings and a stylised RGB split on every landed
+               beat, a screen-wide burst and a white-out on the
+               finisher, embers throughout
+
+     Presentation only. Damage, beat timing, cooldowns, the origin's
+     duration and every mechanic are the base build's.
+     ============================================================ -->
+<script id="bugArenaG84OriginCutIn">
+(()=>{'use strict';
+const VERSION='G84', root=document.documentElement;
+if(root.dataset.g84Bound==='1')return; root.dataset.g84Bound='1';
+
+const TAU4=Math.PI*2;
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+const num=(v,d=0)=>Number.isFinite(Number(v))?Number(v):d;
+const G=n=>{ try{ return (0,eval)(n) }catch(_){ return undefined } };
+const STATS={calls:0,act1:0,act23:0,err:0,lastErr:''};
+
+/* Easing */
+const outCubic  = t=>1-Math.pow(1-t,3);
+const outQuint  = t=>1-Math.pow(1-t,5);
+const inCubic   = t=>t*t*t;
+const outBack   = t=>{const c1=1.70158,c3=c1+1;return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2)};
+const inOut     = t=>t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+
+/* The build ships English origin names and a Korean tagline, but no
+   Korean name for the skill itself — which is the line a Korean player
+   actually reads first. */
+const KO_NAME={
+  rhino:'패왕의 뿔',      stag:'거악의 큰턱',   mantis:'사신의 낫',
+  hornet:'창공의 처형',   sia:'야수 해방',      waterbug:'심연의 흡인',
+  centipede:'백족의 독',  scorpion:'절명의 독침', tarantula:'악몽의 송곳니',
+  dragonfly:'초음속 관통'
+};
+
+function accentOf(id){
+  try{
+    const t=window.BugArenaG80&&window.BugArenaG80.accent&&window.BugArenaG80.accent();
+    if(t&&t.ring)return t.ring;
+  }catch(_){}
+  const C=G('COL');
+  return (C&&C[id])||'#ffe6a8';
+}
+function rgb(hex){
+  let h=String(hex||'#ffe6a8').replace('#','');
+  if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  const n=parseInt(h,16)||0;
+  return [(n>>16)&255,(n>>8)&255,n&255];
+}
+const rgba=(c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+/* Text with a heavy outline and a metal gradient — the reason origin
+   names in this genre survive on top of busy art. */
+function plate(c,txt,x,y,size,acc,opt){
+  opt=opt||{};
+  c.save();
+  c.font=`1000 ${size}px "Noto Sans KR", system-ui, sans-serif`;
+  c.textAlign=opt.align||'left';
+  c.textBaseline='alphabetic';
+  c.lineJoin='round';
+  c.miterLimit=2;
+  /* dark rim, then a thin accent rim: reads at any background value */
+  c.lineWidth=size*0.20;
+  c.strokeStyle='rgba(2,4,3,.94)';
+  c.strokeText(txt,x,y);
+  c.lineWidth=size*0.075;
+  c.strokeStyle=rgba(acc,opt.rim!=null?opt.rim:.85);
+  c.strokeText(txt,x,y);
+  const g=c.createLinearGradient(0,y-size*0.92,0,y+size*0.16);
+  g.addColorStop(0,   opt.top||'#ffffff');
+  g.addColorStop(0.42,opt.mid||'#fff3cf');
+  g.addColorStop(0.58,opt.mid2||'#e9cc87');
+  g.addColorStop(1,   opt.bot||'#b98b2e');
+  c.fillStyle=g;
+  c.fillText(txt,x,y);
+  c.restore();
+}
+
+/* A rotating seal: two glyph rings and a tick ring. */
+function seal(c,cx,cy,r,acc,q,spin){
+  c.save();
+  c.translate(cx,cy);
+  c.globalCompositeOperation='lighter';
+  c.globalAlpha=.85*q;
+  c.strokeStyle=rgba(acc,.9);
+
+  c.lineWidth=2.4;
+  c.beginPath();c.arc(0,0,r,0,TAU4*q);c.stroke();
+  c.lineWidth=1.1;
+  c.beginPath();c.arc(0,0,r*1.16,0,TAU4*q);c.stroke();
+
+  c.save();c.rotate(spin*0.6);
+  c.lineWidth=1.6;
+  for(let i=0;i<24;i++){
+    const a=(i/24)*TAU4;
+    const len=(i%4===0)?r*0.16:r*0.07;
+    c.globalAlpha=(.30+.55*q)*(i%4===0?1:.55);
+    c.beginPath();
+    c.moveTo(Math.cos(a)*r*0.80,Math.sin(a)*r*0.80);
+    c.lineTo(Math.cos(a)*(r*0.80-len),Math.sin(a)*(r*0.80-len));
+    c.stroke();
+  }
+  c.restore();
+
+  c.save();c.rotate(-spin*0.95);
+  c.globalAlpha=.55*q;
+  c.lineWidth=1.4;
+  for(let i=0;i<6;i++){
+    const a=(i/6)*TAU4;
+    c.beginPath();
+    c.moveTo(Math.cos(a)*r*0.42,Math.sin(a)*r*0.42);
+    c.lineTo(Math.cos(a+TAU4/3)*r*0.42,Math.sin(a+TAU4/3)*r*0.42);
+    c.stroke();
+  }
+  c.restore();
+  c.restore();
+}
+
+/* Motion streaks that read as speed rather than as noise. */
+function streaks(c,W,H,acc,q,dir,density){
+  c.save();
+  c.globalCompositeOperation='lighter';
+  const n=density||16;
+  for(let i=0;i<n;i++){
+    const seed=(i*97)%1000/1000;
+    const y=seed*H;
+    const len=(120+seed*520)*(0.35+q);
+    const x=dir>0 ? (-260+((i*151+q*1900)%(W+560))) : (W+260-((i*151+q*1900)%(W+560)));
+    c.globalAlpha=(0.05+0.10*seed)*(1-Math.abs(0.5-q)*0.7);
+    const g=c.createLinearGradient(x,0,x+dir*len,0);
+    g.addColorStop(0,'rgba(255,255,255,0)');
+    g.addColorStop(.5,rgba(acc,.9));
+    g.addColorStop(1,'rgba(255,255,255,0)');
+    c.fillStyle=g;
+    c.fillRect(x,y,dir*len,1+seed*2.4);
+  }
+  c.restore();
+}
+
+/* Embers drifting up through the frame. */
+function embers(c,W,H,acc,t,q){
+  c.save();
+  c.globalCompositeOperation='lighter';
+  for(let i=0;i<26;i++){
+    const s=(i*73)%1000/1000;
+    const life=(t*(0.22+s*0.35)+s)%1;
+    const x=(s*1.7%1)*W + Math.sin((t+s*9)*1.6)*26;
+    const y=H-life*H*1.05;
+    const a=(1-life)*(0.30+0.45*s)*q;
+    if(a<=0.01)continue;
+    c.globalAlpha=a;
+    c.fillStyle=s>.72?'rgba(255,250,235,1)':rgba(acc,1);
+    const r=0.9+s*2.3;
+    c.beginPath();c.arc(x,y,r,0,TAU4);c.fill();
+  }
+  c.restore();
+}
+
+/* ============================================================
+   ACT I — the cut-in. Painted opaque over the base revelation act.
+   ============================================================ */
+function cutIn(c,o,W,H){
+  const dur=Math.max(.001,num(o.dur,4));
+  const p=cl(num(o.t)/dur,0,1);
+  const CUT=0.40;
+  if(p>=CUT)return false;
+  const q=cl(p/CUT,0,1);
+
+  const f=o.owner, id=f&&f.data&&f.data.id;
+  const acc=rgb(accentOf(id));
+  const fac=num(f&&f.facing,1)||1;
+  const art=o.art;
+
+  /* --- 0.00-0.10 the freeze: a hard white snap that falls to black --- */
+  const flash=Math.pow(1-cl(q/.10,0,1),2);
+
+  /* --- ground: desaturated field the panel will sit on --- */
+  const bg=c.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'rgba(4,6,8,1)');
+  bg.addColorStop(.55,'rgba(9,12,12,1)');
+  bg.addColorStop(1,'rgba(2,3,4,1)');
+  c.fillStyle=bg;c.fillRect(0,0,W,H);
+
+  /* a slow vignette pulse keeps the black from reading as flat */
+  const vg=c.createRadialGradient(W*.5,H*.52,H*.10,W*.5,H*.52,H*.92);
+  vg.addColorStop(0,rgba(acc,.10*(0.4+q*0.6)));
+  vg.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=vg;c.fillRect(0,0,W,H);
+
+  streaks(c,W,H,acc,q,fac,18);
+
+  /* --- the seal, behind the panel --- */
+  seal(c,W*(fac>0?0.30:0.70),H*0.56,H*0.30,acc,cl((q-.06)/.35,0,1),num(o.t)*2.2);
+
+  /* --- the panel: a skewed slab carrying the illustration ---------
+     It flies in from the side the hunter faces, overshoots, settles. */
+  const enter=cl((q-.06)/.30,0,1);
+  const slide=outBack(enter);
+  const panelW=W*0.62, panelH=H*0.86;
+  const px=(fac>0 ? W*0.34 : W*0.04) + (1-slide)*fac*W*0.85;
+  const py=H*0.07;
+  const skew=-0.16*fac;
+
+  if(enter>0.001&&art&&art.width){
+    c.save();
+    c.translate(px+panelW/2,py+panelH/2);
+    c.transform(1,0,skew,1,0,0);
+    c.translate(-panelW/2,-panelH/2);
+
+    c.beginPath();c.rect(0,0,panelW,panelH);c.clip();
+
+    /* art, scaled to cover, drifting slowly for parallax */
+    const drift=(1-enter)*fac*70 + Math.sin(num(o.t)*1.1)*6;
+    const sc=Math.max(panelW/art.width,panelH/art.height)*1.14;
+    const iw=art.width*sc, ih=art.height*sc;
+    c.globalAlpha=cl(enter*1.4,0,1);
+    c.drawImage(art,(panelW-iw)/2+drift,(panelH-ih)/2-H*0.03,iw,ih);
+
+    /* grade the art toward the accent so it belongs to the frame */
+    c.globalCompositeOperation='overlay';
+    c.globalAlpha=.34;
+    c.fillStyle=rgba(acc,1);
+    c.fillRect(0,0,panelW,panelH);
+    c.globalCompositeOperation='source-over';
+
+    /* darken the lower third so the name has somewhere to sit */
+    const sh=c.createLinearGradient(0,panelH*0.42,0,panelH);
+    sh.addColorStop(0,'rgba(0,0,0,0)');
+    sh.addColorStop(1,'rgba(2,3,4,.92)');
+    c.globalAlpha=1;c.fillStyle=sh;c.fillRect(0,0,panelW,panelH);
+
+    /* a sweep of light crossing the panel once as it lands */
+    const sweep=cl((q-.16)/.22,0,1);
+    if(sweep>0&&sweep<1){
+      const sx=-panelW*0.4+sweep*panelW*1.8;
+      const sg=c.createLinearGradient(sx-90,0,sx+90,0);
+      sg.addColorStop(0,'rgba(255,255,255,0)');
+      sg.addColorStop(.5,`rgba(255,255,255,${.20*(1-sweep)})`);
+      sg.addColorStop(1,'rgba(255,255,255,0)');
+      c.globalCompositeOperation='lighter';
+      c.fillStyle=sg;c.fillRect(0,0,panelW,panelH);
+      c.globalCompositeOperation='source-over';
+    }
+    c.restore();
+
+    /* panel edges — a bright leading rim, a quiet trailing one */
+    c.save();
+    c.translate(px+panelW/2,py+panelH/2);
+    c.transform(1,0,skew,1,0,0);
+    c.translate(-panelW/2,-panelH/2);
+    c.globalAlpha=.95;
+    c.strokeStyle=rgba(acc,.55);c.lineWidth=2;
+    c.strokeRect(0,0,panelW,panelH);
+    c.fillStyle=rgba(acc,.95);
+    c.fillRect(fac>0?-3:panelW,0,3,panelH);
+    c.globalAlpha=.35;
+    c.fillStyle='rgba(255,255,255,.9)';
+    c.fillRect(fac>0?-6:panelW+3,0,2,panelH);
+    c.restore();
+  }
+
+  /* --- typography ------------------------------------------------
+     Korean name is the headline; the English name and the tagline
+     support it. Everything arrives on an overshoot, slightly late. */
+  const tq=cl((q-.20)/.26,0,1);
+  const tw=outBack(tq);
+  const koName=KO_NAME[id]||'오리진';
+  const enName=(f&&f.data&&f.data.origin)||'ORIGIN';
+  const CINE=G('ORIGIN_CINE')||{};
+  const cine=CINE[id]||{tag:'ORIGIN',ko:''};
+
+  if(tq>0.001){
+    const baseX=fac>0 ? W*0.055 : W*0.945;
+    const align=fac>0?'left':'right';
+    const dx=(1-tw)*fac*-90;
+
+    c.save();
+    c.globalAlpha=cl(tq*1.6,0,1);
+    c.translate(dx,0);
+
+    /* eyebrow */
+    c.font='1000 15px system-ui';
+    c.textAlign=align;
+    c.fillStyle=rgba(acc,.95);
+    c.fillText('O R I G I N',baseX,H*0.40);
+
+    /* headline — auto-fitted.
+       The text column runs from the frame edge to where the art panel
+       starts, about 0.285W. At a fixed 0.062W a six-syllable name like
+       '악몽의 송곳니' is ~30% wider than that and would slide under the
+       panel, so the size is measured down until it fits. */
+    /* The column is allowed to run a little over the panel's leading
+       edge — the headline carries a 20%-of-size dark rim, so it stays
+       readable on art, and a consistent size across all ten names beats
+       a headline that shrinks from 79px to 53px depending on species. */
+    const maxW=W*0.40;
+    let size=Math.min(76, W*0.058);
+    c.font=`1000 ${size}px "Noto Sans KR", system-ui, sans-serif`;
+    const wName=c.measureText(koName).width;
+    if(wName>maxW) size=Math.max(34, size*(maxW/wName));
+    plate(c,koName,baseX,H*0.40+size*0.98,size,acc,{align});
+
+    /* english name */
+    c.font='1000 23px system-ui';
+    c.textAlign=align;
+    c.fillStyle='rgba(255,255,255,.92)';
+    c.fillText(enName,baseX,H*0.40+size*1.52);
+
+    /* rule that draws itself out */
+    const rw=Math.min(340,W*0.26)*outQuint(cl((q-.26)/.30,0,1));
+    c.fillStyle=rgba(acc,.95);
+    c.fillRect(fac>0?baseX:baseX-rw,H*0.40+size*1.75,rw,3);
+
+    /* tagline */
+    if(cine.ko){
+      c.globalAlpha=cl((q-.30)/.20,0,1)*0.96;
+      c.font='900 16px "Noto Sans KR", system-ui';
+      c.shadowColor='rgba(0,0,0,.95)'; c.shadowBlur=6;
+      c.fillStyle='rgba(255,244,222,.94)';
+      c.fillText(cine.ko,baseX,H*0.40+size*2.16);
+    }
+    c.restore();
+  }
+
+  embers(c,W,H,acc,num(o.t),cl(q*1.6,0,1));
+
+  /* --- letterbox owns the frame for the whole act --- */
+  const barH=H*0.115*outCubic(cl(q/.08,0,1));
+  c.save();
+  c.fillStyle='rgba(3,4,5,.98)';
+  c.fillRect(0,0,W,barH);c.fillRect(0,H-barH,W,barH);
+  c.fillStyle=rgba(acc,.5);
+  c.fillRect(0,barH-1.5,W,1.5);c.fillRect(0,H-barH,W,1.5);
+  c.restore();
+
+  /* --- charge bloom into the hand-off --- */
+  const climax=cl((q-.78)/.22,0,1);
+  if(climax>0){
+    const cg=c.createRadialGradient(W*.5,H*.52,0,W*.5,H*.52,H*(0.25+climax*0.85));
+    cg.addColorStop(0,`rgba(255,255,255,${.55*inCubic(climax)})`);
+    cg.addColorStop(.45,rgba(acc,.30*climax));
+    cg.addColorStop(1,'rgba(255,255,255,0)');
+    c.save();c.globalCompositeOperation='lighter';
+    c.fillStyle=cg;c.fillRect(0,0,W,H);c.restore();
+  }
+
+  /* --- the opening white snap, last so it covers everything --- */
+  if(flash>0.002){
+    c.save();
+    c.globalAlpha=flash;
+    c.fillStyle='#ffffff';
+    c.fillRect(0,0,W,H);
+    c.restore();
+  }
+  return true;
+}
+
+/* ============================================================
+   ACT II / III — impact treatment over the choreography
+   ============================================================ */
+function impactFx(c,o,W,H){
+  const dur=Math.max(.001,num(o.dur,4));
+  const p=cl(num(o.t)/dur,0,1);
+  if(p<0.40)return;
+
+  const id=o.owner&&o.owner.data&&o.owner.data.id;
+  const acc=rgb(accentOf(id));
+  const it=num(o.impactT,0);
+  const last=o.impactIndex>=0 && o.hits && o.hits.size>=1 && it>0.20;
+
+  /* shock rings on the frames just after a beat lands */
+  if(it>0){
+    const k=cl(1-it/0.34,0,1);
+    c.save();
+    c.globalCompositeOperation='lighter';
+    for(let i=0;i<3;i++){
+      const kk=cl(k-i*0.13,0,1);
+      if(kk<=0)continue;
+      const r=H*(0.06+kk*(last?0.95:0.48));
+      c.globalAlpha=(1-kk)*(last?0.55:0.30);
+      c.strokeStyle=i===0?'rgba(255,252,240,1)':rgba(acc,1);
+      c.lineWidth=(last?9:5)*(1-kk)+1;
+      c.beginPath();c.ellipse(W*.5,H*.55,r,r*0.62,0,0,TAU4);c.stroke();
+    }
+    c.restore();
+
+    /* A chromatic fringe at the frame edges. An earlier attempt filled
+       two half-screen tinted rectangles to fake an RGB split; at any
+       real impact strength that reads as a flat pink slab over the
+       lower half of the arena, not as aberration. Confining the tint to
+       narrow edge gradients gives the same "the screen just took a hit"
+       cue without covering the fight. */
+    const sp=(1-cl(1-it/0.34,0,1))*(last?1:0.55);
+    if(sp>0.02){
+      const bw=W*0.085;
+      c.save();
+      c.globalCompositeOperation='lighter';
+      c.globalAlpha=(last?0.30:0.16)*sp;
+      const L=c.createLinearGradient(0,0,bw,0);
+      L.addColorStop(0,'rgba(255,64,86,.95)');
+      L.addColorStop(1,'rgba(255,64,86,0)');
+      c.fillStyle=L;c.fillRect(0,0,bw,H);
+      const R=c.createLinearGradient(W,0,W-bw,0);
+      R.addColorStop(0,'rgba(74,214,255,.95)');
+      R.addColorStop(1,'rgba(74,214,255,0)');
+      c.fillStyle=R;c.fillRect(W-bw,0,bw,H);
+      c.restore();
+    }
+  }
+
+  /* the finisher: a screen-wide burst, then a white-out that clears */
+  const fin=cl((p-0.86)/0.14,0,1);
+  if(fin>0){
+    c.save();
+    c.globalCompositeOperation='lighter';
+    const n=30;
+    for(let i=0;i<n;i++){
+      const a=(i/n)*TAU4+0.3;
+      const len=H*(0.30+0.80*outQuint(fin))*(0.6+((i*37)%100)/140);
+      c.globalAlpha=0.30*(1-fin);
+      const g=c.createLinearGradient(W*.5,H*.54,W*.5+Math.cos(a)*len,H*.54+Math.sin(a)*len);
+      g.addColorStop(0,rgba(acc,.95));
+      g.addColorStop(1,'rgba(255,255,255,0)');
+      c.strokeStyle=g;c.lineWidth=2+((i*13)%5);
+      c.beginPath();c.moveTo(W*.5,H*.54);
+      c.lineTo(W*.5+Math.cos(a)*len,H*.54+Math.sin(a)*len);c.stroke();
+    }
+    c.restore();
+
+    if(o.ko){
+      const w=Math.pow(1-fin,3)*0.55;
+      if(w>0.004){
+        c.save();c.globalAlpha=w;c.fillStyle='#fff';c.fillRect(0,0,W,H);c.restore();
+      }
+    }
+  }
+
+  embers(c,W,H,acc,num(o.t),0.5);
+}
+
+/* ============================================================
+   HOOK — chained after the base renderer and after G81's frame,
+   so ACT I paints over the base revelation act.
+   ============================================================ */
+try{
+  if(typeof drawOrigin==='function'){
+    const prev=drawOrigin;
+    // eslint-disable-next-line no-global-assign
+    drawOrigin=function(c,o){
+      const r=prev.apply(this,arguments);
+      try{
+        if(o&&c){
+          const W=num(G('W'),1280), H=num(G('H'),720);
+          STATS.calls++;
+          if(cutIn(c,o,W,H)) STATS.act1++; else { STATS.act23++; impactFx(c,o,W,H); }
+        }
+      }catch(e){ STATS.err++; STATS.lastErr=String(e).slice(0,120) }
+      return r;
+    };
+  }
+}catch(_){}
+
+window.BugArenaG84={
+  stats:STATS,
+  version:VERSION,
+  note:'Origin cut-in presentation and the arena body-scale knob. Damage, beat timing, cooldowns, ranges and save data unchanged.',
+  bodyScale:(()=>{ try{ return G('G84_BODY_SCALE') }catch(_){ return null } })(),
+  KO_NAME
+};
+})();
+</script>
 
 </body></html>
