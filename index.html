@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
 <meta name="theme-color" content="#050805">
-<title>BUG ARENA · G75</title>
+<title>버그아레나 c1 · BUG ARENA</title>
 <style>
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030503;color:#fff;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;touch-action:none}button{font:inherit}
 #app{position:fixed;inset:0;overflow:hidden;background:#030503}#game{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050805}
@@ -145,7 +145,7 @@
 <body>
 <div id="app">
 <canvas id="game" width="1280" height="720"></canvas>
-<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">V56 · HUNT PROGRESSION · BOSS GATES · RANK BREAK ORIGIN</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
+<div id="loading"><div class="loadBox"><div class="loadLogo">BUG ARENA</div><div class="loadSub">버그아레나 c1 · 곤충 격투 아레나</div><div class="loadBar"><div id="loadFill" class="loadFill"></div></div></div></div>
 <div id="launchGate"><div class="launchInner"><div class="launchEyebrow">BUG ARENA · INSECT FIGHTING</div><div class="launchLogo">BUG<br>ARENA</div><div class="launchKo">버그 아레나</div><div class="launchHint">START를 누르면 가로 화면에 맞춰 게임을 시작합니다.</div><button id="launchBtn" class="launchBtn">START</button></div></div>
 <div id="ui"><button id="navBack"><span class="arrow">‹</span><span>BACK</span></button><div id="pauseOverlay" class="pauseOverlay"><div class="pauseCard"><div class="brandSmall">BATTLE PAUSED</div><div class="pauseTitle">일시정지</div><div class="pauseSub">전투가 멈췄습니다.</div><div class="pauseActions"><button id="pauseContinue" class="goldBtn">계속하기</button><button id="pauseSelect" class="ghostBtn">캐릭터 선택</button><button id="pauseMain" class="ghostBtn">메인 메뉴</button></div></div></div>
 <section id="start" class="screen active"><div id="profileCard" class="profileCard"><div class="profileEyebrow">HUNTER RECORD</div><div class="profileHead"><div id="profileLevel" class="profileLevel">LV.1</div><div id="profileTitle" class="profileTitle">신입 사냥꾼</div></div><div class="profileXpTrack"><div id="profileXpFill" class="profileXpFill"></div></div><div class="profileXpMeta"><span id="profileXpText">0 / 100 XP</span><span id="profileStats">0 WINS · STREAK 0</span></div><div id="profileNext" class="profileNext"><b>NEXT</b> · LV.5 ORIGIN FRAME I</div></div><div class="brandSmall">INSECT FIGHTING</div><div class="brand">BUG<br>ARENA</div><div class="brandKo">버그 아레나</div><div class="mainMenu"><button id="startBtn" class="menuChoice primary"><span class="menuChoiceTitle">게임 시작</span><span class="menuChoiceSub">캐릭터를 골라 1대1 승부</span></button><button id="bossBtn" class="menuChoice bossMenuChoice"><span class="menuChoiceTitle">보스전</span><span class="menuChoiceSub">난이도를 고르고 거대 포식자에 도전</span></button><button id="codexBtn" class="menuChoice"><span class="menuChoiceTitle">곤충 도감</span><span class="menuChoiceSub">능력치 · 고유 효과 · 특수기 · 오리진</span></button><button id="guideBtn" class="menuChoice"><span class="menuChoiceTitle">게임 방법</span><span class="menuChoiceSub">공격 · 가드 · 대시 · 비행 · 오리진 익히기</span></button></div><div class="mainFoot">버그 아레나 · BUG ARENA COMBAT</div></section>
@@ -34231,6 +34231,201 @@ html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
   #app #start.active{ row-gap: 0 !important }
 }
 
+/* ================= HUB PANELS =================
+   The panels reached from the hub menu are built by later layers. Their
+   type is handled by the presenter's floor pass; these are the two
+   structural clips the panel audit found.
+   ---------------------------------------------------------------- */
+
+/* Quick-match mode cards held 99px of copy in a 54px box, so the third
+   line of each mode's explanation was cut off entirely. */
+#app #g49Duel.g49Mode, #app #g49Coop.g49Mode,
+#app .g49Mode{
+  height: auto !important;
+  min-height: 54px !important;
+  overflow: visible !important;
+  padding: var(--g83-s3) !important;
+  display: grid !important;
+  align-content: center !important;
+  gap: 2px !important;
+}
+
+/* The forge wallet counters clipped their own digits by a pixel. */
+#app #g48ShardWallet, #app #g48CoinWallet,
+#app .g48Wallet b{
+  line-height: 1.45 !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+/* Panel lists are long; give them the same scroll treatment as the rest
+   of the game rather than letting a card run under the panel edge. */
+#app .g31AchList, #app .g28Chars, #app .g48ForgeList{
+  overscroll-behavior: contain !important;
+}
+
+/* ---- Two-column panel shells that cannot fit a small phone ----------
+   Both of these pin a hard minimum on their right column:
+
+     .g28Shell  minmax(190px,.52fr) minmax(520px,1.48fr)
+     .g23Shell  minmax(300px,.76fr) minmax(430px,1.24fr)
+
+   190+520 and 300+430, plus gap and padding, need ~730-780px. On a
+   667px phone the grid simply overflowed the screen: the enhance
+   panel's stat column ran off the right edge ("0 / 50" rendered as
+   "0 / 5"), taking its 강화 buttons with it. The minimums become
+   flexible, and the stat grid reflows to one column when it is narrow
+   rather than forcing the shell wider than the display. */
+#app .g28Shell{
+  grid-template-columns: minmax(132px,.46fr) minmax(0,1.54fr) !important;
+  padding: 40px max(2.5vw, var(--g83-edge-r)) max(2vh, var(--g83-edge-b)) max(2.5vw, var(--g83-edge-l)) !important;
+  min-width: 0 !important;
+}
+#app .g23Shell{
+  grid-template-columns: minmax(150px,.62fr) minmax(0,1.38fr) !important;
+  padding: clamp(48px,9vh,76px) max(3vw, var(--g83-edge-r)) max(2vh, var(--g83-edge-b)) max(3vw, var(--g83-edge-l)) !important;
+  min-width: 0 !important;
+}
+#app .g28Panel, #app .g28Chars, #app .g28Char,
+#app .g23Main, #app .g23Grid, #app .g23Char{ min-width: 0 !important }
+
+/* The stat cards reflow instead of being squeezed to unreadable widths. */
+#app .g28Stats{
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 186px), 1fr)) !important;
+}
+#app .g23Grid{
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 84px), 1fr)) !important;
+}
+/* The right pane is taller than a 375px screen once the roster and the
+   start button are both in it, so it scrolls rather than pushing the CTA
+   below the fold. */
+#app .g23Main{
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+}
+#app .g23Shell{ align-items: stretch !important }
+/* On a short screen the start button sits just below the fold; the shell
+   scrolls so it stays reachable. */
+@media (max-height: 430px){
+  #app .g23Shell{
+    align-items: start !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+  }
+}
+
+/* The footnotes stay where they are authored — as full-width items at
+   the end of the scrolling stat grid. There are three of them, not one,
+   so reserving a panel row for "the" footer just squeezed the cards. */
+#app .g28Footer{
+  position: static !important;
+  font-size: var(--g83-fs-micro) !important;
+  line-height: 1.5 !important;
+}
+
+/* The real cause of the footnote overlap: .g28Buy is positioned over its
+   card, and the card has no layout of its own beyond padding, so the
+   button hung past the card's bottom edge onto whatever followed. The
+   card becomes a plain column with the button in flow at its end. */
+/* The card is a grid item and was stretching to a 27px row while its own
+   content measured 159px, so everything below the title spilled onto the
+   next card and onto the footnotes. `align-self:start` stops the stretch
+   and lets the card take its content height; the row then grows with it.
+   This, not the positioning of the card's children, was the actual cause
+   of the enhance panel's overlaps. */
+/* Grid could not be made to size these rows: even with `grid-auto-rows:
+   auto` and the item no longer stretching, the implicit rows stayed at
+   27px while the cards measured 159px, so the cards printed over each
+   other. A wrapping flex container has no rows to pin — each line is as
+   tall as its tallest card — which is the same fix the boss grid needed. */
+#app .g28Stats{
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-content: flex-start !important;
+  align-items: stretch !important;
+  gap: 7px !important;
+}
+#app #g28Enhance .g28Stat{
+  flex: 1 1 calc(50% - 7px) !important;
+  min-width: min(100%, 190px) !important;
+  max-width: 100% !important;
+}
+#app #g28Enhance .g28Footer{ flex: 1 1 100% !important }
+
+/* The three footnotes are children of .g28Panel, not of the stat area, so
+   in a fixed-height 3-row grid they were competing with the `1fr` stat
+   row for space and landing on the cards. The panel becomes a plain
+   scrolling column: stats first, notes after, nothing pinned. */
+#app .g28Panel{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+}
+#app .g28Stats{ flex: 0 0 auto !important; overflow: visible !important }
+#app .g28Footer{ flex: 0 0 auto !important }
+#app #g28Enhance .g28Stat{
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 3px !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  padding: var(--g83-s3) !important;
+}
+/* Every part of the card — the description, the pip track, the current
+   and next effect lines and the buy button — is positioned, so the card
+   itself only ever contained its title and stayed ~44px tall while its
+   content ran on over the card below it and over the footnotes. Putting
+   the children back in flow is what actually gives the card its height. */
+#app #g28Enhance .g28Stat > *{
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  max-width: 100% !important;
+}
+#app #g28Enhance .g28Buy{
+  position: static !important;
+  align-self: flex-end !important;
+  margin-top: var(--g83-s2) !important;
+  width: auto !important;
+  min-height: 38px !important;
+  flex: none !important;
+}
+
+/* Stacking these two shells to a single column was tried and reverted:
+   both place their roster and their detail pane with grid areas that
+   assume two columns, so collapsing the template made the roster print
+   over the detail cards. The flexible minimums above already fit the
+   content to a 667px screen; the columns simply stay two. */
+@media (max-width: 720px){
+  #app .g28Shell{ grid-template-columns: minmax(118px,.40fr) minmax(0,1.60fr) !important }
+  #app .g23Shell{ grid-template-columns: minmax(140px,.56fr) minmax(0,1.44fr) !important }
+  #app .g28Chars{ grid-template-columns: minmax(0,1fr) !important }
+}
+
+/* Both panels put their close button in the top-left corner, where the
+   heading also starts. The heading gets the same reserved lane the rest
+   of the game's screens use. */
+/* Both shells start their heading in the top-left corner, where the
+   close button also sits. Indenting the heading was tried first and
+   reverted — these headings live in the narrow left column, so an 84px
+   indent wrapped "곤충 능력 강화" to one word per line. The shells clear
+   the button with top padding instead. */
+#app .g28Shell{ padding-top: 62px !important }
+#app .g23Shell{ padding-top: clamp(58px,10vh,80px) !important }
+#app #g23Close, #app #g28Close{
+  left: var(--g83-edge-l) !important;
+  top: var(--g83-edge-t) !important;
+  z-index: 140 !important;
+}
+
 /* ================= LAUNCH GATE ================= */
 #app #launchGate .launchLogo{ font-size: var(--g83-fs-3xl) !important; line-height: .92 !important }
 #app #launchGate .launchKo{ font-size: var(--g83-fs-lg) !important; line-height: 1.35 !important }
@@ -34453,6 +34648,78 @@ function bindScrollers(){
 }
 
 /* ---------------------------------------------------------------
+   LEGIBILITY FLOOR — the general pass.
+   Parts 1-4a raised the classes the screen audit named. The panels
+   reached from the hub (도전 모드, 빠른 대전, 임무, 보스 공방, 강화,
+   상점, 업적) are built by later layers with their own private class
+   names, and they carry text down to 5.4px. Enumerating those class
+   names would only cover the panels that exist today.
+
+   So the floor is enforced from the DOM instead: any element with its
+   own text rendering below the floor is raised to it. Two cases are
+   deliberately left alone — font-size:0 paired with a ::after that
+   carries the real string, and font-size:0 on a wrapper whose visible
+   child is an icon. Both are "replace this label" idioms, not
+   illegible text, and forcing a size on them prints the stale copy.
+   --------------------------------------------------------------- */
+function floorPx(){
+  const v=getComputedStyle(document.documentElement).getPropertyValue('--g83-fs-micro');
+  const n=parseFloat(v);
+  return (isFinite(n)&&n>0)?n:10;
+}
+function ownText(el){
+  for(const n of el.childNodes) if(n.nodeType===3&&n.textContent.trim()) return true;
+  return false;
+}
+/* The hub panels are appended to #app or straight to <body>, not into
+   #ui — scoping the sweep to #ui is why the first version of this pass
+   left 5.4px text untouched in every one of them. */
+function uiScope(){ return $('app')||document.body }
+function applyFloor(){
+  const floor=floorPx();
+  const scope=uiScope();
+  for(const el of scope.querySelectorAll('*')){
+    if(!ownText(el)) continue;
+    const cs=getComputedStyle(el);
+    if(cs.display==='none'||cs.visibility==='hidden') continue;
+    const fs=parseFloat(cs.fontSize);
+    if(!isFinite(fs)||fs>=floor) continue;
+    if(fs===0){
+      const after=getComputedStyle(el,'::after').content;
+      if(after&&after!=='none'&&after!=='normal') continue;
+      const kid=[...el.children].some(c=>{
+        const k=getComputedStyle(c);
+        return k.display!=='none'&&k.visibility!=='hidden'&&c.getBoundingClientRect().width>1;
+      });
+      if(kid) continue;
+    }
+    el.style.setProperty('font-size', floor+'px', 'important');
+    if(parseFloat(cs.lineHeight) < floor*1.25)
+      el.style.setProperty('line-height','1.45','important');
+    el.dataset.g83Floor='1';
+  }
+}
+
+/* Latin display tracking on Hangul produces "제 한 시 간". The named
+   classes were handled in Part 1; this catches the same mistake in the
+   hub panels, whatever they call their elements. */
+function normaliseTracking(){
+  const scope=uiScope();
+  for(const el of scope.querySelectorAll('*')){
+    if(!ownText(el)) continue;
+    if(el.dataset.g83Track==='1') continue;
+    const cs=getComputedStyle(el);
+    const ls=parseFloat(cs.letterSpacing);
+    if(!isFinite(ls)||ls<=0) continue;
+    const fs=parseFloat(cs.fontSize)||12;
+    if(ls/fs < 0.055) continue;                  // ordinary tracking, leave it
+    if(!HANGUL.test(el.textContent||'')) continue; // Latin may keep it
+    el.style.setProperty('letter-spacing','-0.005em','important');
+    el.dataset.g83Track='1';
+  }
+}
+
+/* ---------------------------------------------------------------
    PRESENTER LOOP — ~8Hz, read-only, cheap.
    --------------------------------------------------------------- */
 const ghost={p:100,e:100};
@@ -34514,6 +34781,8 @@ function boot(){
   markLatin();
   bindScrollers();
   bindLabelObserver();
+  applyFloor();
+  normaliseTracking();
 }
 boot();
 
@@ -34529,8 +34798,71 @@ if(typeof window.setScene==='function'){
 }
 window.addEventListener('resize',()=>{ bindScrollers(); },{passive:true});
 // Late layers can rebuild the roster or the boss grid after boot.
-new MutationObserver(()=>{ bindScrollers(); markLatin(); })
-  .observe($('ui')||document.body,{childList:true,subtree:true});
+/* A plain debounce starves here. The game mutates the DOM continuously
+   (HUD text, timers, effect nodes), so every scheduled run was cancelled
+   by the next mutation and the sweep executed exactly zero times — which
+   is why the hub panels kept G77's 9px text no matter how the observer
+   was configured. This is a throttle with a guaranteed ceiling: it still
+   coalesces bursts, but it always runs within MAX_WAIT of the first
+   pending mutation. */
+const SWEEP_IDLE=140, SWEEP_MAX=500;
+let sweepT=0, sweeps=0, pendingSince=0;
+function runSweep(){
+  clearTimeout(sweepT); sweepT=0; pendingSince=0; sweeps++;
+  // Each step is isolated: a throw in one must not stop the floor pass,
+  // which is the step the hub panels depend on.
+  try{ bindScrollers() }catch(_){}
+  try{ markLatin() }catch(_){}
+  // The full scan walks every element in #app, so it is skipped during
+  // combat, where the HUD's type is already fixed by stylesheet and a
+  // per-frame scan would cost real milliseconds.
+  const app=$('app');
+  if(!app||!app.classList.contains('battle')||document.querySelector('.pauseOverlay.open')){
+    try{ applyFloor() }catch(_){}
+    try{ normaliseTracking() }catch(_){}
+  }
+}
+function sweep(){
+  const now=performance.now();
+  if(!pendingSince) pendingSince=now;
+  if(now-pendingSince>=SWEEP_MAX){ runSweep(); return; }
+  clearTimeout(sweepT);
+  sweepT=setTimeout(runSweep,SWEEP_IDLE);
+}
+/* Hub panels open on click rather than through setScene, so the sweep is
+   driven by mutations as well. Debounced: several of these panels rebuild
+   their whole list on every state change.
+
+   `style` is in the filter because G77 ships its own floor enforcer that
+   writes `font-size:9px !important` inline — below this layer's floor,
+   and capped at 420 elements, which is why the hub panels still carried
+   5.4-9px text. Watching only childList meant those writes were never
+   seen. The two passes settle rather than fight: G77 only raises text
+   under 9px, so once this pass has written 10px it skips the element,
+   and this pass only raises text under its own floor, so it stops too. */
+new MutationObserver(sweep).observe(document.body,{
+  childList:true, subtree:true, attributes:true, attributeFilter:['style','class']
+});
+document.addEventListener('click',sweep,true);
+/* Land after G77's own scheduled passes (60ms debounce, +260ms on scene
+   change, +800ms after load) rather than racing them. */
+if(typeof window.setScene==='function'){
+  const prevG83=window.setScene;
+  window.setScene=function(){
+    const r=prevG83.apply(this,arguments);
+    setTimeout(sweep,320); setTimeout(sweep,1000);
+    return r;
+  };
+}
+addEventListener('load',()=>setTimeout(sweep,1000),{once:true});
+
+/* Exposed for inspection and for the screenshot harness. */
+window.BugArenaG83Ui={
+  version:'G83-UI',
+  note:'Design system, HUD rebuild, Korean typography, hub-panel legibility floor. No combat, reward or save change.',
+  applyFloor, normaliseTracking, sweep, boot,
+  get sweepCount(){ return sweeps }
+};
 
 requestAnimationFrame(tick);
 })();
