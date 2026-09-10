@@ -32535,4 +32535,2020 @@ window.BugArenaG82={
 };
 })();
 </script>
+
+
+<!-- ============================================================
+     G83 · UI OVERHAUL — PART 1 / 4 · FOUNDATION
+     ------------------------------------------------------------
+     Why this layer exists (measured on the G82 build, headless
+     Chromium at 667x375 / 844x390 / 915x412 / 1180x820):
+
+       · .meterValue lives inside .meterBar, and .meterBar is
+         `height:9px; overflow:hidden`. A 9-10px value string inside
+         a 6-9px clipping box loses its ascender and descender, so
+         "100%" rendered as a chopped "100‰". That is the single
+         biggest source of the reported "글씨가 위아래로 잘린다".
+       · The same absolutely-positioned value sat on top of the bar
+         fill — white text over a light HP gradient.
+       · .bossCard clipped 77px of every card (351px of content in a
+         274px box): the trait list and loot line were simply gone.
+       · .codexFighter clipped 5px off every roster row, and Korean
+         broke mid-word ("뿔 돌 / 진 · 파워") because nothing set
+         word-break:keep-all.
+       · .menuChoiceSub computed to font-size:0px on the hub rows.
+       · 88 nodes rendered at 7.8px; .charBtn at 8px.
+       · Korean strings carried .28em Latin tracking ("사 냥 기 록").
+
+     The fix is a real design system rather than another round of
+     spot patches: one type scale with a hard legibility floor, one
+     spacing/radius/colour vocabulary, and a Korean typography
+     engine applied globally. Parts 2-4 build the HUD, the controls
+     and the screens on top of it.
+
+     Layout, type and colour only. No combat value, reward, save
+     payload or input binding is touched.
+     ============================================================ -->
+<style id="bugArenaG83Foundation">
+:root{
+  /* ---- Type scale -------------------------------------------------
+     Every step is clamp(floor, fluid, ceiling). The floors are the
+     contract: nothing in the game may render below --fs-micro, and
+     --fs-micro never drops under 10px on the smallest phone we
+     support. Korean needs more vertical room than Latin at the same
+     nominal size, so the floors sit a step above a Latin-only scale. */
+  --g83-fs-micro : clamp(10px, 1.02vw + 0.18vh, 12px);  /* chips, units      */
+  --g83-fs-xs    : clamp(11px, 1.15vw + 0.20vh, 13px);  /* captions, subs    */
+  --g83-fs-sm    : clamp(12px, 1.30vw + 0.24vh, 15px);  /* dense body        */
+  --g83-fs-md    : clamp(13px, 1.55vw + 0.30vh, 17px);  /* body              */
+  --g83-fs-lg    : clamp(15px, 1.95vw + 0.36vh, 21px);  /* card titles       */
+  --g83-fs-xl    : clamp(18px, 2.60vw + 0.50vh, 27px);  /* section titles    */
+  --g83-fs-2xl   : clamp(23px, 3.60vw + 0.70vh, 40px);  /* screen titles     */
+  --g83-fs-3xl   : clamp(34px, 5.60vw + 1.10vh, 68px);  /* hero / timer      */
+
+  /* ---- Space & shape ---- */
+  --g83-s1: 4px;  --g83-s2: 7px;  --g83-s3: 10px; --g83-s4: 14px;
+  --g83-s5: 18px; --g83-s6: 24px; --g83-s7: 32px;
+  --g83-r-sm: 8px; --g83-r-md: 13px; --g83-r-lg: 18px; --g83-r-xl: 24px;
+  --g83-r-pill: 999px;
+
+  /* ---- Safe area ---------------------------------------------------
+     One source of truth. Every edge-anchored element reads these
+     instead of inventing its own env() expression, which is how the
+     HUD and the corner buttons ended up sharing pixels. */
+  --g83-edge-l: max(12px, env(safe-area-inset-left));
+  --g83-edge-r: max(12px, env(safe-area-inset-right));
+  --g83-edge-t: max(10px, env(safe-area-inset-top));
+  --g83-edge-b: max(12px, env(safe-area-inset-bottom));
+
+  /* ---- Ink: contrast-checked against the dark arena backdrop ---- */
+  --g83-ink       : #f4f7f3;
+  --g83-ink-2     : #c6cec4;   /* ~7:1 on surface  */
+  --g83-ink-3     : #9aa398;   /* ~4.6:1, captions only */
+  --g83-gold      : #e8cd7f;
+  --g83-gold-deep : #a9863a;
+  --g83-hp        : #8fd05c;
+  --g83-hp-deep   : #3f7233;
+  --g83-guard     : #6fb8c9;
+  --g83-origin    : #f0c85f;
+  --g83-flight    : #7fc7dd;
+  --g83-danger    : #e2705a;
+
+  /* ---- Surfaces ---- */
+  --g83-surface   : rgba(11,16,12,.90);
+  --g83-surface-2 : rgba(17,24,18,.94);
+  --g83-hairline  : rgba(255,255,255,.13);
+  --g83-hairline-2: rgba(255,255,255,.07);
+  --g83-glow-gold : rgba(232,205,127,.24);
+
+  /* ---- Elevation & motion ---- */
+  --g83-lift-1: 0 2px 8px rgba(0,0,0,.42);
+  --g83-lift-2: 0 8px 24px rgba(0,0,0,.52);
+  --g83-lift-3: 0 18px 48px rgba(0,0,0,.62);
+  --g83-ease  : cubic-bezier(.22,.61,.36,1);
+  --g83-fast  : 140ms var(--g83-ease);
+  --g83-med   : 240ms var(--g83-ease);
+
+  /* Scrim used wherever text sits over character art. */
+  --g83-scrim: linear-gradient(180deg, rgba(3,6,4,.92) 0%, rgba(3,6,4,.72) 46%, rgba(3,6,4,0) 100%);
+}
+
+/* Short viewports get the floors, not the fluid middle: on a 375px-tall
+   phone in landscape the vh term collapses, so we pin the scale. */
+@media (max-height: 430px){
+  :root{
+    --g83-fs-micro: 10px; --g83-fs-xs: 11px; --g83-fs-sm: 12px;
+    --g83-fs-md: 13px;    --g83-fs-lg: 15px; --g83-fs-xl: 18px;
+    --g83-fs-2xl: 24px;   --g83-fs-3xl: 34px;
+    --g83-s5: 14px; --g83-s6: 18px; --g83-s7: 22px;
+  }
+}
+
+/* ------------------------------------------------------------------
+   KOREAN TYPOGRAPHY ENGINE
+   The build is `lang="ko"` throughout but was typeset like Latin.
+   Three rules fix the bulk of the reported illegibility:
+
+     1. word-break:keep-all — Korean wraps at word boundaries, not
+        mid-syllable-block. This alone removes "뿔 돌 / 진 · 파워",
+        "카 / 운터", "추 / 적·백족 포박" from the codex roster.
+     2. overflow-wrap:anywhere — the escape hatch so keep-all can
+        never push a long unbroken token out of a narrow card.
+     3. letter-spacing:normal — Latin display tracking applied to
+        Hangul produces "사 냥 기 록". Tracking is re-granted below,
+        by opt-in, only to the Latin eyebrow classes that want it.
+   ------------------------------------------------------------------ */
+#app, #app *{
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-break: strict;
+}
+/* Reset the Latin tracking that was applied globally to Korean copy. */
+#app .brandSmall, #app .hubLead, #app .menuChoiceTitle, #app .menuChoiceSub,
+#app .bossName, #app .bossLatin, #app .bossRank, #app .bossUnlock,
+#app .codexName, #app .codexEn, #app .codexTag, #app .codexDesc,
+#app .selName, #app .selStyle, #app .selDesc, #app .selSkill,
+#app .hudName, #app .meterLabel, #app .meterValue,
+#app .btnTitle, #app .btnSub, #app .charBtn,
+#app .profileTitle, #app .profileLevel, #app .resultTitle, #app .resultSub,
+#app .g33GuideTitle, #app .g33GuideLead, #app .g33PaneTitle,
+#app .pauseTitle, #app .pauseSub, #app .hubTitle, #app .selectTitle{
+  letter-spacing: -0.005em !important;
+}
+/* Latin eyebrows keep their tracking — but only when they are Latin.
+   .g83-lat is applied by the Part 4 script after a Hangul test. */
+#app .g83-lat{ letter-spacing: .20em !important; }
+
+/* Vertical rhythm floors. Korean glyphs are full-height boxes; 1.2
+   line-height clips them in any container with hidden overflow. */
+#app p, #app li, #app .codexDesc, #app .selDesc, #app .hubLead,
+#app .menuChoiceSub, #app .bossTraits span, #app .g33Move p, #app .g33Rule p{
+  line-height: 1.55 !important;
+}
+#app h1, #app h2, #app h3, #app .hubTitle, #app .selectTitle,
+#app .bossName, #app .codexName, #app .selName, #app .menuChoiceTitle{
+  line-height: 1.25 !important;
+}
+
+/* Numbers line up in columns everywhere they are compared. */
+#app .meterValue, #app .timer, #app #timer, #app .profileXpMeta,
+#app .resultXpMeta, #app .statValue, #app .g83-num{
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ------------------------------------------------------------------
+   LEGIBILITY FLOOR
+   The audit found 88 nodes under 10px. Rather than chase each class,
+   the floor is declared once for every text-bearing element inside
+   the UI layer, then specific roles are raised above it.
+   ------------------------------------------------------------------ */
+/* A blanket `font-size:max(floor,1em)` was tried first and rejected: it
+   also overrides every deliberate size it touches (it inflated the
+   movement hint from 8px to 16px). The floor is therefore declared
+   role by role, for the classes the audit actually named. */
+#app .menuChoiceSub, #app .hubLead, #app .bossLatin, #app .codexEn,
+#app .codexTag, #app .statLabel, #app .selStyle, #app .selSkill,
+#app .profileTitle, #app .profileXpMeta span, #app .profileNext,
+#app .resultNext, #app .resultXpMeta span, #app .g33GuideLead,
+#app .g33Move p, #app .g33Rule p, #app .g33Move em, #app .bossTraits span,
+#app .g48BossLootHint, #app .g75BossDaily, #app .btnSub, #app .meterLabel,
+#app #g67MoveHint, #app .joystickHint, #app .loadSub, #app .bossWarning,
+#app .bossRank, #app .bossUnlock, #app .charBtn small, #app .charBtn span,
+#app .selDesc, #app .codexDesc, #app .stepDesc, #app .guideMicro{
+  font-size: var(--g83-fs-xs) !important;
+}
+#app .menuChoiceTitle, #app .bossName, #app .codexName{ font-size: var(--g83-fs-lg) !important }
+#app .hubTitle, #app .selectTitle{ font-size: var(--g83-fs-2xl) !important }
+#app .selName{ font-size: var(--g83-fs-2xl) !important }
+
+/* Anything that clips its own text must at least not clip the glyph
+   box. Korean descenders need the extra 2px. */
+#app .meterValue, #app .btnSub, #app .btnTitle, #app .bossRank,
+#app .bossUnlock, #app .codexTag, #app .g75BossDaily{
+  padding-block: 1px;
+}
+
+/* ------------------------------------------------------------------
+   TOUCH TARGETS
+   44px is the floor for anything the thumb has to hit under time
+   pressure. Applied to the controls in Part 3; here for menus.
+   ------------------------------------------------------------------ */
+#app button:not(.ctrl):not(.charBtn):not(.codexFighter){ min-height: 44px }
+#app .charBtn{ min-height: 46px }
+#app .codexFighter{ min-height: 52px }
+
+/* Screens that hold more content than the viewport scroll, with a
+   contained overscroll so a drag never rubber-bands the whole page. */
+#app .g83-scroll{
+  overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232,205,127,.30) transparent;
+}
+#app .g83-scroll::-webkit-scrollbar{ width: 5px; height: 5px }
+#app .g83-scroll::-webkit-scrollbar-thumb{
+  background: rgba(232,205,127,.30); border-radius: 999px;
+}
+#app .g83-scroll::-webkit-scrollbar-track{ background: transparent }
+
+/* A fade at the bottom of a scroller is how every shipping mobile
+   game says "there is more below". Toggled by the Part 4 script. */
+#app .g83-fadeWrap{ position: relative }
+#app .g83-fadeWrap::after{
+  content:''; position:absolute; left:0; right:0; bottom:0; height:42px;
+  background: linear-gradient(180deg, transparent, rgba(4,7,5,.92));
+  pointer-events:none; opacity:0; transition: opacity var(--g83-med);
+  z-index: 6; border-radius: 0 0 var(--g83-r-lg) var(--g83-r-lg);
+}
+#app .g83-fadeWrap.g83-more::after{ opacity: 1 }
+
+@media (prefers-reduced-motion: reduce){
+  #app *, #app *::before, #app *::after{
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+</style>
+
+
+<!-- ============================================================
+     G83 · UI OVERHAUL — PART 2 / 4 · COMBAT HUD
+     ------------------------------------------------------------
+     Rebuilt on the layout the top-grossing mobile action games have
+     converged on (HoYoverse's Genshin / Star Rail, Wuthering Waves,
+     Diablo Immortal, Brawl Stars, CoD Mobile): mirrored corner
+     blocks, a portrait anchoring each side, one loud primary meter
+     and quiet secondaries, and — the part this build was missing —
+     every numeric readout in its own reserved lane.
+
+     The structural change: .meterValue is lifted out of .meterBar.
+     It used to be `position:absolute; inset:0` inside a 9px-tall
+     `overflow:hidden` bar, which both clipped the glyphs and printed
+     them on top of the fill. Part 4's script re-parents each value
+     node up to its .meterRow, and the row becomes a three-track grid
+
+         [ label ] [ ————— bar ————— ] [ value ]
+
+     so the number can never collide with, or be clipped by, the bar
+     again. Mirrored for the right-hand fighter.
+
+     Also here: a chip-damage ghost layer under the HP fill (the
+     delayed white/red trail every fighting game uses to show how
+     much was just lost), segment ticks on HP, and an origin bar that
+     announces itself at 100%.
+     ============================================================ -->
+<style id="bugArenaG83Hud">
+
+/* ---- The HUD block owns the top band; corner buttons own the corners.
+   G77 pushed the HUD in by 74px on each side to dodge the corner
+   buttons, which squeezed the meters. Instead the corner buttons are
+   given a reserved lane and the HUD keeps its width. ---- */
+#app.battle #hud .topHud.topHud{
+  left: var(--g83-edge-l) !important;
+  right: var(--g83-edge-r) !important;
+  top: var(--g83-edge-t) !important;
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) !important;
+  gap: clamp(10px, 1.6vw, 22px) !important;
+  align-items: start !important;
+  padding-left: 78px !important;   /* the 메뉴 button's lane  */
+  padding-right: 60px !important;  /* the fullscreen button's lane */
+}
+@media (max-height: 430px){
+  #app.battle #hud .topHud.topHud{ padding-left: 68px !important; padding-right: 52px !important }
+}
+
+/* ---- Fighter block ------------------------------------------------ */
+#app.battle .hudSide{
+  max-width: none !important;
+  min-width: 0 !important;
+  display: grid !important;
+  grid-template-columns: auto minmax(0,1fr) !important;
+  grid-template-areas: 'portrait meters' !important;
+  gap: var(--g83-s3) !important;
+  align-items: start !important;
+  padding: var(--g83-s2) var(--g83-s3) !important;
+  border-radius: var(--g83-r-md) !important;
+  background: linear-gradient(180deg, rgba(6,10,7,.80), rgba(6,10,7,.44)) !important;
+  border: 1px solid var(--g83-hairline-2) !important;
+  box-shadow: var(--g83-lift-1) !important;
+  backdrop-filter: blur(3px);
+}
+#app.battle .hudSide.right{
+  margin-left: auto !important;
+  margin-right: 0 !important;
+  grid-template-columns: minmax(0,1fr) auto !important;
+  grid-template-areas: 'meters portrait' !important;
+}
+#app.battle .g83Portrait{ grid-area: portrait }
+#app.battle .g83Meters { grid-area: meters; min-width: 0 }
+
+/* Portrait: a clipped hex, the shape these games use to separate a
+   fighter identity from a rectangular card. */
+#app.battle .g83Portrait{
+  width: clamp(34px, 4.4vw, 52px);
+  height: clamp(34px, 4.4vw, 52px);
+  border-radius: var(--g83-r-sm);
+  overflow: hidden;
+  position: relative;
+  flex: none;
+  background: radial-gradient(circle at 50% 35%, #24301f, #070b08);
+  box-shadow: inset 0 0 0 1px rgba(232,205,127,.30), var(--g83-lift-1);
+  clip-path: polygon(50% 0%, 100% 26%, 100% 74%, 50% 100%, 0% 74%, 0% 26%);
+}
+#app.battle .g83Portrait img{
+  width: 100%; height: 100%; object-fit: cover;
+  object-position: 50% 38%;
+  transform: scale(1.5);
+  filter: saturate(1.05) contrast(1.06);
+}
+#app.battle .hudSide.right .g83Portrait img{ transform: scale(1.5) scaleX(-1) }
+#app.battle .g83Portrait::after{
+  content:''; position:absolute; inset:0;
+  background: linear-gradient(180deg, transparent 52%, rgba(0,0,0,.55));
+}
+
+/* ---- Name plate: primary name and the round/phase tag are two
+   different pieces of information and now read as two. The script
+   splits the single text node the game writes into these nodes. ---- */
+#app.battle .g83NamePlate{
+  display: flex; align-items: baseline; gap: var(--g83-s2);
+  margin-bottom: var(--g83-s2);
+  min-width: 0;
+}
+#app.battle .hudSide.right .g83NamePlate{ flex-direction: row-reverse }
+#app.battle .g83NameMain{
+  font-size: var(--g83-fs-md) !important;
+  font-weight: 1000;
+  color: var(--g83-ink);
+  line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+  text-shadow: 0 2px 8px rgba(0,0,0,.95);
+}
+#app.battle .g83NameTag{
+  font-size: var(--g83-fs-micro) !important;
+  font-weight: 900;
+  color: var(--g83-gold);
+  background: rgba(232,205,127,.12);
+  border: 1px solid rgba(232,205,127,.26);
+  border-radius: var(--g83-r-pill);
+  padding: 2px 8px;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex: none;
+}
+#app.battle .g83NameTag:empty{ display: none }
+/* The original node keeps receiving the game's writes; it is only
+   hidden from view, never removed, so nothing downstream breaks. */
+#app.battle .hudName{
+  position: absolute !important;
+  width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- Meter rows: three reserved tracks, no overlap possible ------- */
+#app.battle .meterRow{
+  display: grid !important;
+  grid-template-columns: auto minmax(0,1fr) auto !important;
+  align-items: center !important;
+  gap: var(--g83-s2) !important;
+  margin-top: 4px !important;
+  min-width: 0 !important;
+}
+#app.battle .meterRow.hpRow{ margin-top: 0 !important }
+#app.battle .hudSide.right .meterRow{
+  grid-template-columns: auto minmax(0,1fr) auto !important;
+  direction: rtl;
+}
+#app.battle .hudSide.right .meterRow > *{ direction: ltr }
+
+#app.battle .meterLabel{
+  grid-column: 1 !important; grid-row: 1 !important;
+  height: auto !important;
+  min-width: 0 !important;
+  width: clamp(30px, 3.6vw, 44px) !important;
+  font-size: var(--g83-fs-micro) !important;
+  font-weight: 800 !important;
+  color: var(--g83-ink-3) !important;
+  display: flex !important; align-items: center !important;
+  gap: 4px !important;
+  white-space: nowrap !important;
+  justify-content: flex-start !important;
+  line-height: 1.35 !important;
+}
+#app.battle .hudSide.right .meterLabel{ justify-content: flex-end !important }
+#app.battle .hpRow .meterLabel{ color: var(--g83-ink-2) !important; font-weight: 900 !important }
+
+#app.battle .meterBar{
+  grid-column: 2 !important; grid-row: 1 !important;
+  height: 8px !important;
+  border-radius: var(--g83-r-pill) !important;
+  min-width: 0 !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+  background: linear-gradient(180deg, #0e130f, #050806) !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.8) !important;
+  overflow: hidden !important;
+}
+/* HP is the loudest thing on screen: twice the height, a lit rim,
+   and segment ticks so a glance reads "how many hits left". */
+#app.battle .hpRow .meterBar{
+  height: clamp(14px, 1.9vw, 19px) !important;
+  border-radius: var(--g83-r-sm) !important;
+  border-color: rgba(200,232,170,.28) !important;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,.85), 0 0 0 1px rgba(0,0,0,.5) !important;
+}
+#app.battle .hpRow .meterBar::after{
+  content:''; position:absolute; inset:0; z-index:4; pointer-events:none;
+  background: repeating-linear-gradient(90deg,
+    transparent 0 calc(25% - 1px), rgba(0,0,0,.45) calc(25% - 1px) 25%);
+  border-radius: inherit;
+}
+
+/* The value: its own track, outside the bar's clipping box. */
+#app.battle .meterValue{
+  position: static !important;
+  grid-column: 3 !important; grid-row: 1 !important;
+  inset: auto !important;
+  transform: none !important;
+  width: clamp(34px, 4.0vw, 46px) !important;
+  min-width: 0 !important;
+  display: block !important;
+  overflow: visible !important;
+  font-size: var(--g83-fs-micro) !important;
+  font-weight: 950 !important;
+  line-height: 1.45 !important;
+  color: var(--g83-ink-2) !important;
+  text-align: right !important;
+  white-space: nowrap !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,.95) !important;
+}
+#app.battle .hudSide.right .meterValue{ text-align: left !important }
+#app.battle .hpRow .meterValue{
+  font-size: var(--g83-fs-sm) !important;
+  color: var(--g83-ink) !important;
+  font-weight: 1000 !important;
+}
+
+/* ---- Fills ---- */
+#app.battle .hp, #app.battle .guard,
+#app.battle .origin, #app.battle .flight{
+  position: relative; z-index: 3;
+  transition: width 180ms var(--g83-ease);
+  border-radius: inherit;
+}
+#app.battle .hp{
+  background: linear-gradient(180deg, #b6e483 0%, var(--g83-hp) 42%, var(--g83-hp-deep) 100%) !important;
+  box-shadow: 0 0 10px rgba(143,208,92,.34), inset 0 1px rgba(255,255,255,.34) !important;
+}
+#app.battle .guard{ background: linear-gradient(180deg, #a7dced, var(--g83-guard) 50%, #2c5f6d) !important }
+#app.battle .origin{ background: linear-gradient(180deg, #ffe9a8, var(--g83-origin) 48%, #9a7526) !important }
+#app.battle .flight{ background: linear-gradient(180deg, #b6e9f6, var(--g83-flight) 50%, #2f6a7d) !important }
+
+/* Chip damage: a slower ghost fill behind HP, so the player sees the
+   size of the hit they just took. Width is mirrored by the script. */
+#app.battle .g83Ghost{
+  position: absolute; left: 0; top: 0; bottom: 0; z-index: 2;
+  background: linear-gradient(180deg, #f0b9a4, #c2553a);
+  opacity: .78; border-radius: inherit;
+  transition: width 620ms cubic-bezier(.16,.84,.44,1) 220ms;
+  pointer-events: none;
+}
+#app.battle .hudSide.right .meterBar{ direction: ltr }
+
+/* Origin at full charge is the one thing allowed to move. */
+#app.battle .meterRow.g83-originFull .meterBar{
+  border-color: rgba(240,200,95,.72) !important;
+  box-shadow: 0 0 12px rgba(240,200,95,.42), inset 0 1px 3px rgba(0,0,0,.7) !important;
+  animation: g83OriginPulse 1.5s ease-in-out infinite;
+}
+#app.battle .meterRow.g83-originFull .meterValue{ color: var(--g83-origin) !important }
+@keyframes g83OriginPulse{
+  0%,100%{ box-shadow: 0 0 8px rgba(240,200,95,.30), inset 0 1px 3px rgba(0,0,0,.7) }
+  50%    { box-shadow: 0 0 18px rgba(240,200,95,.62), inset 0 1px 3px rgba(0,0,0,.7) }
+}
+/* Low HP reads as danger without a colour-only cue. */
+#app.battle .meterRow.g83-hpDanger .meterBar{
+  border-color: rgba(226,112,90,.66) !important;
+  animation: g83DangerPulse 1.05s ease-in-out infinite;
+}
+#app.battle .meterRow.g83-hpDanger .hp{
+  background: linear-gradient(180deg, #f0a58c, var(--g83-danger) 45%, #8d3626) !important;
+  box-shadow: 0 0 12px rgba(226,112,90,.42), inset 0 1px rgba(255,255,255,.28) !important;
+}
+@keyframes g83DangerPulse{ 0%,100%{ opacity:1 } 50%{ opacity:.80 } }
+
+/* A meter that reports nothing is one row of noise per side. The
+   game already marks it .off for non-flying fighters. */
+#app.battle .flightRow.off{ display: none !important }
+#app.battle .flightRow{ opacity: .85 !important }
+
+/* ---- Centre column: timer over round chip, in a reserved lane ---- */
+#app.battle .timer{
+  display: flex !important; flex-direction: column !important;
+  align-items: center !important; justify-content: flex-start !important;
+  gap: 2px !important;
+  min-width: clamp(88px, 11vw, 132px) !important;
+  padding: var(--g83-s2) var(--g83-s3) !important;
+  border-radius: var(--g83-r-md) !important;
+  background: linear-gradient(180deg, rgba(6,10,7,.86), rgba(6,10,7,.40)) !important;
+  border: 1px solid var(--g83-hairline-2) !important;
+  box-shadow: var(--g83-lift-1) !important;
+  line-height: 1 !important;
+}
+#app.battle .timer #timer, #app.battle #timer{
+  font-size: var(--g83-fs-3xl) !important;
+  font-weight: 1000 !important;
+  line-height: .92 !important;
+  color: #f7ebc7 !important;
+  text-shadow: 0 3px 14px rgba(0,0,0,.9) !important;
+  display: block !important;
+}
+#app.battle .timer small{
+  font-size: var(--g83-fs-micro) !important;
+  color: var(--g83-ink-3) !important;
+  line-height: 1.4 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+}
+#app.battle .timer .roundTag{
+  font-size: var(--g83-fs-micro) !important;
+  padding: 3px 10px !important;
+  margin-top: 3px !important;
+  border-radius: var(--g83-r-pill) !important;
+  white-space: nowrap !important;
+  max-width: 100% !important;
+  overflow: hidden !important; text-overflow: ellipsis !important;
+  line-height: 1.4 !important;
+}
+/* Under 20 seconds the clock turns on the player. */
+#app.battle .timer.g83-urgent #timer{
+  color: #ffb9a4 !important;
+  animation: g83TimerTick 1s steps(1) infinite;
+}
+@keyframes g83TimerTick{ 0%,60%{ opacity:1 } 61%,100%{ opacity:.62 } }
+
+/* ---- Corner buttons keep to their reserved lanes ---- */
+#app.battle #g25BattleMenu{
+  left: var(--g83-edge-l) !important;
+  top: var(--g83-edge-t) !important;
+  min-height: 40px !important;
+  padding: 0 var(--g83-s4) !important;
+  font-size: var(--g83-fs-xs) !important;
+  border-radius: var(--g83-r-md) !important;
+  z-index: 90 !important;
+}
+#app.battle #g28BattleEnh{
+  left: var(--g83-edge-l) !important;
+  top: calc(var(--g83-edge-t) + 46px) !important;
+  font-size: var(--g83-fs-micro) !important;
+  padding: 3px 9px !important;
+  border-radius: var(--g83-r-pill) !important;
+  max-width: 148px !important;
+  white-space: nowrap !important; overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  z-index: 90 !important;
+}
+#app.battle #fs{
+  top: var(--g83-edge-t) !important;
+  right: var(--g83-edge-r) !important;
+  z-index: 90 !important;
+}
+
+/* ------------------------------------------------------------------
+   SPECIFICITY & TRANSFORM PASS
+   Two earlier rules outrank the block above and had to be answered
+   at their own weight:
+
+     · `#app.battle:not(.v14BossBattle) #hud .topHud.topHud` (G77)
+       pins the HUD 64-74px in from both edges. On a 667px-wide
+       phone that is 148px of the viewport spent on gutters, which
+       is what squeezed each fighter block down to 125px and left
+       the HP bar 27px long.
+     · `.topHud{transform:scale(.92)}` then shrank whatever survived,
+       so the type in the HUD never rendered at the size it was
+       declared at. With the grid laid out properly the downscale is
+       no longer needed, and it is what made the meter text sit at a
+       fractional pixel size in the first place.
+
+   The meter rows also drop `direction:rtl` in favour of explicit
+   per-side column placement. RTL interacted badly with the base
+   `.hudSide.right .meterRow{grid-template-columns:minmax(110px,1fr) 68px}`
+   rule and left the right-hand bar 46px wide with the portrait
+   stacked on top of the meters.
+   ------------------------------------------------------------------ */
+#app.battle:not(.g83-off) #hud .topHud.topHud.topHud{
+  left: var(--g83-edge-l) !important;
+  right: var(--g83-edge-r) !important;
+  top: var(--g83-edge-t) !important;
+  transform: none !important;
+  grid-template-columns: minmax(0,1fr) auto minmax(0,1fr) !important;
+  gap: clamp(9px, 1.5vw, 20px) !important;
+  padding-left: 76px !important;
+  padding-right: 54px !important;
+}
+@media (max-height: 430px){
+  #app.battle:not(.g83-off) #hud .topHud.topHud.topHud{
+    padding-left: 66px !important;
+    padding-right: 46px !important;
+    gap: 8px !important;
+  }
+}
+
+/* Fighter block: explicit two-track placement, mirrored by side. */
+#app.battle:not(.g83-off) #hud .hudSide{
+  grid-template-areas: none !important;
+  max-width: none !important;
+  margin-right: 0 !important;
+  min-width: 0 !important;
+}
+#app.battle:not(.g83-off) #hud .hudSide:not(.right){
+  grid-template-columns: auto minmax(0,1fr) !important;
+}
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .g83Portrait{ grid-area: auto !important; grid-column: 1 !important; grid-row: 1 !important }
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .g83Meters  { grid-area: auto !important; grid-column: 2 !important; grid-row: 1 !important }
+/* A later visibility-repair layer sets
+   `#app.battle #hud .hudSide.right{display:block!important}`, which
+   silently dropped the right-hand block out of grid layout and
+   stacked the portrait on top of the meters. */
+#app.battle:not(.g83-off) #hud .hudSide.right{
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) auto !important;
+  align-items: start !important;
+  margin-left: auto !important;
+}
+#app.battle:not(.g83-off) #hud .hudSide:not(.right){ display: grid !important }
+#app.battle:not(.g83-off) #hud .hudSide.right .g83Meters  { grid-area: auto !important; grid-column: 1 !important; grid-row: 1 !important }
+#app.battle:not(.g83-off) #hud .hudSide.right .g83Portrait{ grid-area: auto !important; grid-column: 2 !important; grid-row: 1 !important }
+
+/* Meter rows: three tracks, placed explicitly, no RTL. */
+#app.battle:not(.g83-off) #hud .hudSide .meterRow{
+  display: grid !important;
+  grid-template-columns: auto minmax(42px,1fr) auto !important;
+  direction: ltr !important;
+  align-items: center !important;
+  gap: var(--g83-s2) !important;
+}
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterLabel{ grid-column: 1 !important; grid-row: 1 !important; justify-content: flex-start !important }
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterBar  { grid-column: 2 !important; grid-row: 1 !important }
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterValue{ grid-column: 3 !important; grid-row: 1 !important; text-align: right !important }
+#app.battle:not(.g83-off) #hud .hudSide.right .meterValue{ grid-column: 1 !important; grid-row: 1 !important; text-align: left !important }
+#app.battle:not(.g83-off) #hud .hudSide.right .meterBar  { grid-column: 2 !important; grid-row: 1 !important }
+#app.battle:not(.g83-off) #hud .hudSide.right .meterLabel { grid-column: 3 !important; grid-row: 1 !important; justify-content: flex-end !important }
+
+/* On a narrow phone the four word-labels cost ~42px of every row and
+   left the bar at 42px. The secondary meters fall back to their icon
+   alone — the shape and colour already distinguish guard / origin /
+   flight, and HP keeps its word. This is the genre's own convention
+   and it roughly doubles the usable bar length. */
+@media (max-width: 780px){
+  #app.battle:not(.g83-off) #hud .hudSide .meterRow{
+    grid-template-columns: auto minmax(56px,1fr) auto !important;
+  }
+  #app.battle:not(.g83-off) #hud .meterRow:not(.hpRow) .meterLabel{
+    width: 18px !important;
+    min-width: 18px !important;
+    font-size: 0 !important;
+    gap: 0 !important;
+  }
+  #app.battle:not(.g83-off) #hud .meterRow:not(.hpRow) .meterIcon{
+    font-size: var(--g83-fs-micro) !important;
+  }
+  #app.battle:not(.g83-off) #hud .hpRow .meterLabel{
+    width: clamp(28px, 3.4vw, 40px) !important;
+  }
+  /* Secondary meters also drop their numeric read-out on a narrow screen.
+     With labels on, the bar was 42-52px long at 667px wide — too short to
+     read as a quantity at a glance, which is the only job it has. Dropping
+     the word and the number gives the bar ~120px and leaves the icon and
+     the fill colour to say which meter it is. HP, the meter that decides
+     the fight, keeps its label and its percentage at every size. */
+  #app.battle:not(.g83-off) #hud .meterRow:not(.hpRow) .meterValue{
+    display: none !important;
+  }
+  #app.battle:not(.g83-off) #hud .meterRow:not(.hpRow){
+    grid-template-columns: auto minmax(56px,1fr) !important;
+  }
+  #app.battle:not(.g83-off) #hud .hudSide.right .meterRow:not(.hpRow) .meterBar{ grid-column: 1 !important }
+  #app.battle:not(.g83-off) #hud .hudSide.right .meterRow:not(.hpRow) .meterLabel{ grid-column: 2 !important }
+}
+
+/* Explicit outer tracks, mirrored.
+   `auto` end-tracks kept resolving differently on the two sides — the
+   right-hand bar came out 46px against the left's 133px at the same
+   width — because several legacy rules declare two-track templates for
+   `.hudSide.right .meterRow` and the auto/1fr negotiation between them
+   is not stable. Fixed widths for the label and value lanes remove the
+   negotiation: the bar is simply everything left over, and both sides
+   are symmetric by construction. */
+#app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterRow.meterRow{
+  grid-template-columns: clamp(30px,3.6vw,46px) minmax(48px,1fr) clamp(34px,4vw,46px) !important;
+}
+#app.battle:not(.g83-off) #hud .hudSide.right .meterRow.meterRow{
+  grid-template-columns: clamp(34px,4vw,46px) minmax(48px,1fr) clamp(30px,3.6vw,46px) !important;
+}
+@media (max-width: 780px){
+  /* Secondary rows are icon + bar only here, so they are two-track. */
+  #app.battle:not(.g83-off) #hud .hudSide:not(.right) .meterRow.meterRow:not(.hpRow){
+    grid-template-columns: 18px minmax(56px,1fr) !important;
+  }
+  #app.battle:not(.g83-off) #hud .hudSide.right .meterRow.meterRow:not(.hpRow){
+    grid-template-columns: minmax(56px,1fr) 18px !important;
+  }
+}
+
+/* The boss-battle skin shrank meter text to 6.6px; the floor applies
+   there too. */
+html.v7-boss-battle #app.battle #hud .meterValue{ font-size: var(--g83-fs-micro) !important }
+html.v7-boss-battle #app.battle #hud .hpRow .meterValue{ font-size: var(--g83-fs-sm) !important }
+html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
+
+/* ---- Centre-screen callouts ---- */
+#app.battle #message{
+  font-size: var(--g83-fs-2xl) !important;
+  text-shadow: 0 4px 18px rgba(0,0,0,.95), 0 0 30px rgba(0,0,0,.7) !important;
+  max-width: 84vw; text-align: center;
+}
+#app.battle .attackLabel{ bottom: 22% !important }
+#app.battle .attackName{ font-size: var(--g83-fs-md) !important; line-height:1.3 !important }
+#app.battle .attackKo{ font-size: var(--g83-fs-xs) !important; line-height:1.4 !important }
+</style>
+
+
+<!-- ============================================================
+     G83 · UI OVERHAUL — PART 3 / 4 · CONTROLS
+     ------------------------------------------------------------
+     Measured problems on the G82 build:
+       · The action cluster overflowed the right screen edge on a
+         667x375 phone — the 특수기 and 공격 buttons were cut by the
+         viewport, so part of the primary attack button was off-screen.
+       · .btnSub was clamped to 9px with ellipsis, which turned the
+         origin button's state line into "게이지 …" — a control that
+         will not tell you what it is waiting for.
+       · Labels sat inside the round buttons at a size that forced
+         the ellipsis in the first place.
+
+     The rebuild follows the thumb-cluster convention of the genre:
+     one oversized primary action at the corner, satellites arcing
+     away from it, cooldown shown as a radial sweep on the button
+     itself, and short state words that fit without truncation.
+     Every control keeps a 56px minimum hit box and sits inside the
+     safe area.
+     ============================================================ -->
+<style id="bugArenaG83Controls">
+
+#app.battle #controls .pad{
+  right: var(--g83-edge-r) !important;
+  bottom: var(--g83-edge-b) !important;
+}
+#app.battle #controls .movePad{
+  left: var(--g83-edge-l) !important;
+  right: auto !important;
+  bottom: var(--g83-edge-b) !important;
+}
+
+/* ---- Movement stick ---- */
+#app.battle .joystickBase{
+  box-shadow: var(--g83-lift-2), inset 0 1px rgba(255,255,255,.08) !important;
+  border-radius: 50% !important;
+}
+#app.battle .joystickHint{
+  left: 50% !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  max-width: 100% !important;
+  text-align: center !important;
+  font-size: var(--g83-fs-micro) !important;
+  color: var(--g83-ink-3) !important;
+  white-space: nowrap !important;
+  letter-spacing: .06em !important;
+  line-height: 1.4 !important;
+}
+
+/* ---- Action cluster -----------------------------------------------
+   An explicit grid instead of stacked absolute offsets, so the
+   cluster's width is knowable and it can be kept inside the gutter. */
+#app.battle .actionPad{
+  display: grid !important;
+  grid-template-columns: auto auto auto !important;
+  grid-template-areas:
+    '.     origin skill'
+    'guard dash   attack' !important;
+  gap: clamp(7px, 1.1vw, 13px) !important;
+  align-items: end !important;
+  justify-items: center !important;
+  max-width: calc(100vw - var(--g83-edge-l) - var(--g83-edge-r) - 150px) !important;
+}
+#app.battle .actionPad .originBtn{ grid-area: origin }
+#app.battle .actionPad .skillBtn { grid-area: skill  }
+#app.battle .actionPad .guardBtn { grid-area: guard  }
+#app.battle .actionPad .dashBtn  { grid-area: dash   }
+#app.battle .actionPad .attack   { grid-area: attack }
+
+/* ---- Button sizing: primary reads as primary ---- */
+#app.battle .ctrl{
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 1px !important;
+  overflow: visible !important;
+  transition: transform var(--g83-fast), filter var(--g83-fast);
+}
+#app.battle .attack{
+  width: clamp(92px, 11.5vw, 122px) !important;
+  height: clamp(92px, 11.5vw, 122px) !important;
+}
+#app.battle .dashBtn{
+  width: clamp(70px, 8.6vw, 92px) !important;
+  height: clamp(70px, 8.6vw, 92px) !important;
+}
+#app.battle .originBtn, #app.battle .skillBtn{
+  width: clamp(64px, 7.8vw, 84px) !important;
+  height: clamp(64px, 7.8vw, 84px) !important;
+}
+#app.battle .guardBtn{
+  width: clamp(64px, 7.8vw, 84px) !important;
+  height: clamp(72px, 8.8vw, 94px) !important;
+}
+#app.battle .ctrl{ min-width: 56px !important; min-height: 56px !important }
+
+/* ---- Labels: sized to fit, so nothing needs an ellipsis ---- */
+#app.battle .ctrl .btnIcon{
+  width: 34% !important; height: 34% !important;
+  margin-bottom: 2px;
+  z-index: 4;
+}
+#app.battle .attack .btnIcon{ width: 36% !important; height: 36% !important }
+#app.battle .ctrl .btnTitle{
+  font-size: var(--g83-fs-xs) !important;
+  font-weight: 1000 !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  max-width: 94% !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  text-shadow: 0 2px 6px rgba(0,0,0,.95) !important;
+  z-index: 4;
+}
+#app.battle .ctrl .btnSub{
+  font-size: var(--g83-fs-micro) !important;
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
+  opacity: .82 !important;
+  white-space: nowrap !important;
+  max-width: 96% !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  text-shadow: 0 1px 4px rgba(0,0,0,.95) !important;
+  z-index: 4;
+}
+#app.battle .attack .btnTitle{ font-size: var(--g83-fs-sm) !important }
+
+/* Both buttons are clip-path shapes that narrow toward the bottom, so
+   the label stack has to sit above the taper rather than centred in
+   the bounding box — that is what was cutting "누르기" in half and
+   pushing the attack sub-label out past the hexagon's lower edge. */
+#app.battle .guardBtn{ padding-bottom: 10px !important; justify-content: center !important }
+#app.battle .attack  { padding-bottom: 6px !important }
+#app.battle .attack .btnSub{ max-width: 70% !important }
+#app.battle .guardBtn .btnSub, #app.battle .guardBtn .btnTitle{ max-width: 84% !important }
+
+/* ---- State feedback ---- */
+#app.battle .ctrl.pressed{ transform: scale(.94) !important; filter: brightness(1.14) }
+#app.battle .ctrl:disabled, #app.battle .ctrl.cooling{ filter: saturate(.55) }
+
+/* Origin ready: the one control that earns a glow. */
+#app.battle .originBtn.ready{
+  box-shadow: 0 0 0 2px rgba(240,200,95,.55), 0 0 22px rgba(240,200,95,.42), var(--g83-lift-2) !important;
+  animation: g83ReadyPulse 1.45s ease-in-out infinite;
+}
+@keyframes g83ReadyPulse{
+  0%,100%{ box-shadow: 0 0 0 2px rgba(240,200,95,.42), 0 0 14px rgba(240,200,95,.28), var(--g83-lift-2) }
+  50%    { box-shadow: 0 0 0 3px rgba(240,200,95,.68), 0 0 30px rgba(240,200,95,.55), var(--g83-lift-2) }
+}
+#app.battle .originBtn:not(.ready) .btnSub{ opacity: .62 !important }
+
+/* Guard about to counter, dash back off cooldown: short, non-looping
+   cues so the cluster is not constantly in motion. */
+#app.battle .guardBtn.counterReady{ animation: g83Ping 420ms var(--g83-ease) }
+#app.battle .dashBtn.readyDash    { animation: g83Ping 420ms var(--g83-ease) }
+@keyframes g83Ping{
+  0%  { transform: scale(1) }
+  40% { transform: scale(1.07) }
+  100%{ transform: scale(1) }
+}
+
+/* The radial cooldown sweep sits under the label, never over it. */
+#app.battle .dashBtn::after, #app.battle .attack::after,
+#app.battle .cooldownMask{ z-index: 2 !important }
+
+/* ---- Small phones: shrink the cluster, keep the hit boxes ---- */
+@media (max-height: 430px){
+  #app.battle .attack   { width: 84px !important; height: 84px !important }
+  #app.battle .dashBtn  { width: 64px !important; height: 64px !important }
+  #app.battle .originBtn, #app.battle .skillBtn{ width: 58px !important; height: 58px !important }
+  #app.battle .guardBtn { width: 58px !important; height: 66px !important }
+  #app.battle .actionPad{ gap: 6px !important }
+  #app.battle .movePad  { width: 132px !important; height: 132px !important }
+}
+@media (max-width: 700px){
+  #app.battle .actionPad{
+    max-width: calc(100vw - var(--g83-edge-l) - var(--g83-edge-r) - 138px) !important;
+  }
+}
+
+/* ---- Pause / modal surfaces get the same vocabulary ---- */
+#app .pauseOverlay{ backdrop-filter: blur(6px) }
+#app .pauseCard{
+  border-radius: var(--g83-r-xl) !important;
+  border: 1px solid rgba(232,205,127,.28) !important;
+  box-shadow: var(--g83-lift-3) !important;
+  padding: var(--g83-s6) !important;
+  width: min(420px, 82vw) !important;
+}
+#app .pauseTitle{ font-size: var(--g83-fs-2xl) !important; margin-top: 2px }
+#app .pauseSub  { font-size: var(--g83-fs-sm) !important; color: var(--g83-ink-3) !important }
+#app .pauseActions{ display: grid !important; gap: var(--g83-s2) !important; margin-top: var(--g83-s5) !important }
+#app .pauseActions button{
+  min-height: 46px !important;
+  font-size: var(--g83-fs-md) !important;
+  border-radius: var(--g83-r-md) !important;
+}
+
+/* ---- Paused: transient combat callouts must not land on the modal ----
+   The attack-name banner and the centre message are mid-fight feedback
+   that keep whatever they were showing when the fight stopped. If a
+   special fired on the frame the player hit pause, its name ("천공 상승")
+   sits directly across the pause card's title. They are hidden for the
+   duration of the modal; the game keeps writing to them untouched. */
+#app.paused #hud .attackLabel,
+#app.paused #hud #message{
+  display: none !important;
+}
+/* The HUD behind the modal reads as background, not as live information. */
+#app.paused #hud .topHud{ opacity: .35 !important; transition: opacity var(--g83-med) }
+
+/* ---- Universal back button ---- */
+#app #navBack{
+  min-height: 42px !important;
+  padding: 0 var(--g83-s4) !important;
+  font-size: var(--g83-fs-xs) !important;
+  border-radius: var(--g83-r-md) !important;
+  background: rgba(7,11,8,.92) !important;
+  border: 1px solid var(--g83-hairline) !important;
+  box-shadow: var(--g83-lift-1) !important;
+  left: var(--g83-edge-l) !important;
+  top: var(--g83-edge-t) !important;
+  z-index: 130 !important;
+}
+</style>
+
+
+<!-- ============================================================
+     G83 · UI OVERHAUL — PART 4a / 4 · SCREENS
+     ------------------------------------------------------------
+     Measured problems, and what replaces them:
+
+     BOSS SELECT — .bossCard held 351px of content in a 274px box, so
+       77px of every card (the trait list, the loot line) was clipped
+       away. A previous layer had "fixed" this by setting
+       .bossTraits{display:none}, i.e. by deleting the information.
+       The card is rebuilt as an auto-height flex stack inside a
+       scrolling, snapping grid, so the content decides the height.
+       The dead 350px left column (an empty .bossIntro on phones) is
+       reclaimed.
+
+     CODEX — roster rows clipped 5px and broke Korean mid-word. Now
+       auto-height with a two-line clamp and keep-all wrapping. The
+       detail panel scrolls instead of cutting off at "3타 마무리".
+
+     FIGHTER SELECT — the screen title and the level pill were dark
+       grey text directly on dark character art, effectively
+       invisible. Both get a scrim. The info panel gets a readable
+       backing plate.
+
+     GUIDE — content ran past the fold with no affordance. Both panes
+       become scrollers with a fade hint.
+
+     HUB — .menuChoiceSub computed to font-size:0px, so every menu
+       row's description was invisible.
+     ============================================================ -->
+<style id="bugArenaG83Screens">
+
+/* ================= SHARED SCREEN CHROME ================= */
+#app .hubHead{
+  left: max(5vw, var(--g83-edge-l)) !important;
+  right: max(5vw, var(--g83-edge-r)) !important;
+  top: var(--g83-edge-t) !important;
+  margin-left: 0 !important;
+  padding-left: 84px !important;   /* clears the back button */
+  z-index: 20;
+}
+#app .hubTitle{ color: var(--g83-ink) !important; text-shadow: 0 3px 14px rgba(0,0,0,.9) }
+#app .hubLead{
+  color: var(--g83-ink-2) !important;
+  margin-top: 5px !important;
+  text-shadow: 0 2px 8px rgba(0,0,0,.9);
+  max-width: 62ch;
+}
+#app .brandSmall{ color: var(--g83-gold) !important }
+
+/* ================= MAIN HUB ================= */
+/* The description line was collapsed to 0px — restored and given a
+   readable colour against the gold primary row. */
+#app #start .menuChoiceSub{
+  font-size: var(--g83-fs-xs) !important;
+  line-height: 1.45 !important;
+  color: var(--g83-ink-3) !important;
+  display: block !important;
+  opacity: 1 !important;
+  height: auto !important;
+  max-height: none !important;
+}
+#app #start .menuChoice.primary .menuChoiceSub{ color: rgba(24,18,4,.78) !important }
+/* One row is a deliberate exception: #classicQuickBtn zeroes its own sub
+   text and re-prints a newer string from ::after. Restoring a floor on
+   the element itself un-hid the stale copy and printed both. The floor
+   belongs on the pseudo-element instead. */
+#app #classicQuickBtn .menuChoiceSub{ font-size: 0 !important }
+#app #classicQuickBtn .menuChoiceSub::after{
+  font-size: var(--g83-fs-xs) !important;
+  line-height: 1.45 !important;
+  font-weight: 700 !important;
+}
+#app #start .menuChoice{
+  min-height: 56px !important;
+  padding: var(--g83-s3) var(--g83-s5) !important;
+  border-radius: var(--g83-r-md) !important;
+  row-gap: 3px !important;
+  transition: transform var(--g83-fast), box-shadow var(--g83-fast);
+}
+#app #start .menuChoice:active{ transform: scale(.985) }
+#app #start .menuChoice.primary{ box-shadow: 0 6px 22px rgba(232,205,127,.22), var(--g83-lift-1) !important }
+#app #start .mainMenu{ gap: var(--g83-s2) !important; align-content: start }
+/* The start screen overflowed its own viewport by 11px. */
+#app #start.active{ overflow: hidden !important }
+#app #start .profileCard{
+  border-radius: var(--g83-r-lg) !important;
+  box-shadow: var(--g83-lift-2) !important;
+}
+#app #start .profileLevel{ font-size: var(--g83-fs-xl) !important; line-height: 1.1 !important }
+#app #start .profileTitle{ font-size: var(--g83-fs-xs) !important; color: var(--g83-gold) !important }
+#app #start .profileXpMeta span{ font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important }
+#app #start .profileNext{ font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important }
+
+/* ================= BOSS SELECT ================= */
+/* Reclaim the empty left column and let the grid own the screen. */
+#app #bossSelect .bossHub{
+  position: absolute !important;
+  left: max(4vw, var(--g83-edge-l)) !important;
+  right: max(4vw, var(--g83-edge-r)) !important;
+  top: clamp(84px, 19vh, 136px) !important;
+  bottom: var(--g83-edge-b) !important;
+  display: block !important;
+  grid-template-columns: none !important;
+  min-height: 0 !important;
+}
+#app #bossSelect .bossIntro{ display: none !important }
+#app #bossSelect .bossDiffGrid{
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(178px, 21vw, 244px), 1fr)) !important;
+  gap: clamp(10px, 1.5vw, 18px) !important;
+  align-content: start !important;
+  height: 100% !important;
+  padding: 2px 4px calc(var(--g83-s6) + 8px) 4px !important;
+  scroll-snap-type: y proximity;
+}
+#app #bossSelect .bossCard{
+  scroll-snap-align: start;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: var(--g83-s2) !important;
+  padding: var(--g83-s3) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;   /* the 77px that used to be cut */
+  border-radius: var(--g83-r-lg) !important;
+  box-shadow: var(--g83-lift-1) !important;
+  transition: transform var(--g83-fast), box-shadow var(--g83-fast);
+}
+#app #bossSelect .bossCard:active{ transform: scale(.985) }
+#app #bossSelect .bossBadgeRow{
+  display: flex !important; align-items: center !important;
+  justify-content: space-between !important; gap: var(--g83-s2) !important;
+}
+#app #bossSelect .bossRank{
+  font-size: var(--g83-fs-micro) !important; font-weight: 1000 !important;
+  padding: 2px 9px !important; border-radius: var(--g83-r-pill) !important;
+  background: rgba(255,255,255,.08); line-height: 1.4 !important;
+}
+#app #bossSelect .bossUnlock{
+  font-size: var(--g83-fs-micro) !important; line-height: 1.4 !important; white-space: nowrap !important;
+}
+#app #bossSelect .bossArtWrap{
+  aspect-ratio: 16 / 10; width: 100% !important; height: auto !important;
+  border-radius: var(--g83-r-md) !important; overflow: hidden !important;
+  flex: none !important;
+}
+#app #bossSelect .bossArtImg{ width:100% !important; height:100% !important; object-fit: cover !important }
+#app #bossSelect .bossName{
+  font-size: var(--g83-fs-lg) !important; line-height: 1.28 !important;
+  color: var(--g83-ink) !important; margin: 0 !important;
+}
+#app #bossSelect .bossLatin{
+  font-size: var(--g83-fs-xs) !important; line-height: 1.45 !important;
+  color: var(--g83-ink-3) !important;
+}
+/* The trait list is information, not decoration — it comes back. */
+#app #bossSelect .bossTraits{
+  display: grid !important; gap: 3px !important;
+  margin-top: 2px !important;
+}
+#app #bossSelect .bossTraits span{
+  font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important;
+  color: var(--g83-ink-3) !important;
+}
+#app #bossSelect .bossTraits span b{ color: var(--g83-ink-2) !important }
+#app #bossSelect .bossCard .g48BossLootHint,
+#app #bossSelect .bossCard .g75BossDaily{
+  position: static !important;
+  left: auto !important; right: auto !important; bottom: auto !important; top: auto !important;
+  margin: 0 !important;
+  font-size: var(--g83-fs-micro) !important; line-height: 1.45 !important;
+  white-space: normal !important;
+}
+#app #bossSelect .bossCard .bossSelectBtn{
+  margin-top: auto !important;
+  min-height: 46px !important;
+  display: flex !important; align-items: center !important; justify-content: center !important;
+  font-size: var(--g83-fs-sm) !important;
+  border-radius: var(--g83-r-md) !important;
+}
+#app #bossSelect .bossWarning{
+  font-size: var(--g83-fs-xs) !important; line-height: 1.5 !important;
+}
+
+/* ================= CODEX ================= */
+#app #codex .codexLayout{
+  left: max(4vw, var(--g83-edge-l)) !important;
+  right: max(4vw, var(--g83-edge-r)) !important;
+  top: clamp(84px, 19vh, 136px) !important;
+  bottom: var(--g83-edge-b) !important;
+  grid-template-columns: minmax(230px, .82fr) minmax(300px, 1.18fr) !important;
+  gap: clamp(10px, 1.6vw, 20px) !important;
+  min-height: 0 !important;
+}
+#app #codex .codexRoster{
+  align-content: start !important;
+  gap: var(--g83-s2) !important;
+  padding: 2px var(--g83-s1) var(--g83-s6) 2px !important;
+}
+#app #codex .codexFighter{
+  height: auto !important;
+  min-height: 54px !important;
+  max-height: none !important;
+  overflow: visible !important;      /* was clipping the 2nd line */
+  padding: var(--g83-s2) var(--g83-s3) !important;
+  border-radius: var(--g83-r-md) !important;
+  display: grid !important;
+  align-content: center !important;
+  gap: 2px !important;
+  transition: transform var(--g83-fast), border-color var(--g83-fast);
+}
+#app #codex .codexFighter:active{ transform: scale(.98) }
+#app #codex .codexFighter .codexFighterName,
+#app #codex .codexFighter > :first-child{
+  font-size: var(--g83-fs-md) !important; line-height: 1.3 !important;
+  color: var(--g83-ink) !important;
+}
+#app #codex .codexFighterStyle,
+#app #codex .codexFighter > :last-child{
+  font-size: var(--g83-fs-micro) !important; line-height: 1.45 !important;
+  color: var(--g83-ink-3) !important;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#app #codex .codexDetail{
+  border-radius: var(--g83-r-lg) !important;
+  overflow: hidden !important;
+  min-height: 0 !important;
+}
+#app #codex .codexInfo{
+  inset: 0 !important;
+  padding: var(--g83-s5) !important;
+  padding-bottom: calc(var(--g83-s6) + 10px) !important;
+  background: linear-gradient(180deg, rgba(4,7,5,.62) 0%, rgba(4,7,5,.90) 42%, rgba(4,7,5,.96) 100%) !important;
+  display: block !important;
+  min-height: 0 !important;
+}
+#app #codex .codexName{ font-size: var(--g83-fs-2xl) !important; line-height: 1.2 !important }
+#app #codex .codexEn{ font-size: var(--g83-fs-sm) !important; color: var(--g83-ink-3) !important }
+#app #codex .codexTags{ display:flex !important; flex-wrap: wrap !important; gap: 6px !important; margin: var(--g83-s3) 0 !important }
+#app #codex .codexTag{
+  font-size: var(--g83-fs-micro) !important; line-height: 1.45 !important;
+  padding: 4px 10px !important; border-radius: var(--g83-r-pill) !important;
+  white-space: nowrap !important;
+}
+#app #codex .codexDesc{ font-size: var(--g83-fs-sm) !important; line-height: 1.6 !important; color: var(--g83-ink-2) !important }
+#app #codex .codexMove, #app #codex .codexOrigin{ font-size: var(--g83-fs-sm) !important; line-height: 1.6 !important }
+#app #codex .statRows{ margin: var(--g83-s3) 0 !important }
+#app #codex .statLabel{ font-size: var(--g83-fs-xs) !important; color: var(--g83-ink-3) !important }
+
+/* ================= FIGHTER SELECT ================= */
+/* Dark type on dark art was the readability failure here; every text
+   region over the illustration gets an explicit backing. */
+#app #select .selectTop{
+  left: max(4vw, var(--g83-edge-l)) !important;
+  right: max(4vw, var(--g83-edge-r)) !important;
+  top: var(--g83-edge-t) !important;
+  padding-left: 84px !important;
+  z-index: 44;
+}
+#app #select .selectTitle{
+  color: var(--g83-ink) !important;
+  text-shadow: 0 3px 16px rgba(0,0,0,.96), 0 1px 3px rgba(0,0,0,1) !important;
+}
+#app #select .selectTop .brandSmall{ text-shadow: 0 2px 10px rgba(0,0,0,.95) !important }
+#app #select .selectArtShade{
+  background:
+    linear-gradient(180deg, rgba(3,6,4,.88) 0%, rgba(3,6,4,.10) 30%, rgba(3,6,4,.10) 55%, rgba(3,6,4,.92) 100%),
+    linear-gradient(90deg, rgba(3,6,4,.72) 0%, rgba(3,6,4,0) 42%) !important;
+}
+#app #select .levelPill{
+  background: rgba(7,11,8,.90) !important;
+  border: 1px solid rgba(232,205,127,.34) !important;
+  border-radius: var(--g83-r-pill) !important;
+  padding: 6px 14px !important;
+  opacity: 1 !important;
+  box-shadow: var(--g83-lift-1) !important;
+  display: flex !important; align-items: baseline !important; gap: 7px !important;
+}
+#app #select .levelPill strong{ font-size: var(--g83-fs-md) !important; color: var(--g83-gold) !important }
+#app #select .levelPill span{ font-size: var(--g83-fs-micro) !important; color: var(--g83-ink-2) !important; white-space: nowrap }
+
+#app #select .selectInfo{
+  top: clamp(76px, 18vh, 132px) !important;
+  right: max(4vw, var(--g83-edge-r)) !important;
+  width: min(38vw, 460px) !important;
+  min-width: 258px !important;
+  padding: var(--g83-s5) !important;
+  border-radius: var(--g83-r-lg) !important;
+  background: linear-gradient(160deg, rgba(8,12,9,.90), rgba(4,7,5,.80)) !important;
+  border: 1px solid var(--g83-hairline-2) !important;
+  box-shadow: var(--g83-lift-2) !important;
+  backdrop-filter: blur(4px);
+  text-align: right;
+}
+#app #select .selName{ line-height: 1.15 !important; color: var(--g83-ink) !important }
+#app #select .selEn{ font-size: var(--g83-fs-sm) !important; color: var(--g83-ink-3) !important; line-height: 1.4 !important }
+#app #select .selStyle{ color: var(--g83-gold) !important; line-height: 1.5 !important; margin-top: var(--g83-s2) !important }
+#app #select .selDesc{ color: var(--g83-ink-2) !important; line-height: 1.6 !important; margin-top: var(--g83-s2) !important }
+#app #select .selSkill{ color: var(--g83-guard) !important; line-height: 1.5 !important; margin-top: var(--g83-s2) !important }
+/* The CTA is docked outside the scrolling panel (the presenter re-parents
+   it to #select). Sticking it inside the scroller kept it reachable but
+   meant the build read-out scrolled underneath it — a pinned bar always
+   overlaps the text passing beneath. Docked, it neither scrolls away nor
+   covers anything. */
+#app #select .fightBtn{
+  position: absolute !important;
+  right: max(4vw, var(--g83-edge-r)) !important;
+  bottom: var(--g83-edge-b) !important;
+  left: auto !important; top: auto !important;
+  width: min(38vw, 460px) !important;
+  z-index: 58 !important;
+  margin: 0 !important;
+  min-height: 52px !important;
+  font-size: var(--g83-fs-lg) !important;
+  border-radius: var(--g83-r-md) !important;
+  margin-top: var(--g83-s4) !important;
+  width: 100%;
+  box-shadow: 0 8px 26px rgba(232,205,127,.26), var(--g83-lift-1) !important;
+}
+
+#app #select .charGrid{
+  left: max(4vw, var(--g83-edge-l)) !important;
+  bottom: var(--g83-edge-b) !important;
+  gap: var(--g83-s2) !important;
+  z-index: 42;
+}
+#app #select .charBtn{
+  min-height: 48px !important;
+  padding: var(--g83-s2) var(--g83-s3) !important;
+  border-radius: var(--g83-r-md) !important;
+  display: grid !important; align-content: center !important; gap: 1px !important;
+  transition: transform var(--g83-fast);
+}
+#app #select .charBtn:active{ transform: scale(.96) }
+#app #select .charBtn > :first-child{ font-size: var(--g83-fs-sm) !important; line-height: 1.25 !important; white-space: nowrap }
+#app #select .charBtn > :last-child{ font-size: var(--g83-fs-micro) !important; line-height: 1.35 !important; color: var(--g83-ink-3) !important; white-space: nowrap }
+
+/* ================= GUIDE ================= */
+#app #guide .g33GuideHead{
+  padding-left: 84px !important;
+  top: var(--g83-edge-t) !important;
+  margin-top: 0 !important;
+  /* Same leftover centring transform as .hubHead — with explicit insets
+     it only pushed the eyebrow above the top edge. */
+  transform: none !important;
+}
+/* The eyebrow renders 14px above its own parent's box on a tall screen,
+   so it is pinned back into normal flow rather than chased property by
+   property. */
+/* The offset survives `transform:none` because it is applied through the
+   independent `translate` property, which getComputedStyle reports
+   separately from `transform` — hence the eyebrow sitting 14px above its
+   own parent's content box with no margin and no transform to blame. */
+#app #guide .g33GuideEyebrow,
+#app #guide .g33GuideHead,
+#app .hubHead, #app .hubHead > *{
+  margin-top: 0 !important;
+  position: static !important;
+  top: auto !important;
+  transform: none !important;
+  translate: none !important;
+  rotate: none !important;
+  scale: none !important;
+}
+/* .hubHead itself still needs its own anchoring back. */
+#app .hubHead{
+  position: absolute !important;
+  top: var(--g83-edge-t) !important;
+}
+#app #guide .g33GuideTitle{ font-size: var(--g83-fs-2xl) !important; line-height: 1.2 !important }
+#app #guide .g33GuideLead{ font-size: var(--g83-fs-xs) !important; line-height: 1.5 !important; color: var(--g83-ink-2) !important }
+#app #guide .g33QuickBar{ gap: var(--g83-s2) !important }
+#app #guide .g33QuickBar > div{
+  padding: var(--g83-s2) var(--g83-s3) !important;
+  border-radius: var(--g83-r-md) !important;
+  min-height: 46px !important;
+  display: grid !important; align-content: center !important; gap: 1px !important;
+}
+#app #guide .g33QuickBar b{ font-size: var(--g83-fs-md) !important; line-height: 1.2 !important }
+#app #guide .g33QuickBar span{ font-size: var(--g83-fs-micro) !important; line-height: 1.35 !important; color: var(--g83-ink-3) !important }
+#app #guide .g33GuideColumns{ gap: var(--g83-s3) !important; min-height: 0 !important; align-items: stretch !important }
+#app #guide .g33GuidePane{
+  min-height: 0 !important;
+  border-radius: var(--g83-r-lg) !important;
+  padding: var(--g83-s4) !important;
+}
+#app #guide .g33PaneTitle{ font-size: var(--g83-fs-lg) !important; line-height: 1.25 !important; margin-bottom: var(--g83-s3) !important }
+#app #guide .g33Move, #app #guide .g33Rule{
+  border-radius: var(--g83-r-md) !important;
+  padding: var(--g83-s3) !important;
+  gap: var(--g83-s3) !important;
+}
+#app #guide .g33Move b, #app #guide .g33Rule b{ font-size: var(--g83-fs-md) !important; line-height: 1.3 !important }
+#app #guide .g33Move p, #app #guide .g33Rule p{
+  font-size: var(--g83-fs-xs) !important; line-height: 1.6 !important;
+  color: var(--g83-ink-2) !important; margin: 3px 0 0 !important;
+}
+#app #guide .g33Move em{ font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important; display:block; margin-top: 4px }
+#app #guide .g33MoveKey{
+  width: 38px !important; height: 38px !important; flex: none !important;
+  display: grid !important; place-items: center !important;
+  border-radius: var(--g83-r-sm) !important;
+  font-size: var(--g83-fs-md) !important;
+}
+#app #guide .g33Rule strong{
+  font-size: var(--g83-fs-xs) !important;
+  width: 34px !important; height: 34px !important; flex: none !important;
+  display: grid !important; place-items: center !important;
+}
+#app #guide .g33GuideFoot{ gap: var(--g83-s3) !important; flex-wrap: wrap !important }
+#app #guide .g33GuideFoot span{ font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important }
+#app #guide .hapticBtn{ font-size: var(--g83-fs-xs) !important; min-height: 40px !important; white-space: nowrap }
+#app #guide .g33CombatFlow{ font-size: var(--g83-fs-micro) !important; line-height: 1.6 !important; flex-wrap: wrap !important; gap: 5px !important }
+
+/* ---- GUIDE: a deterministic column ---------------------------------
+   The head and the content wrap were each absolutely positioned with
+   their own offsets, tuned to the old (smaller) type. Once the type met
+   the legibility floor the head outgrew its reserved band: the eyebrow
+   was cut by the top of the screen and the lead line slid under the
+   quick bar. Rather than re-tune the offsets, the screen becomes an
+   ordinary flex column — head, quick bar, then the two panes taking
+   whatever height is left. Nothing can overlap because nothing is
+   positioned. */
+#app #guide.active{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: var(--g83-s3) !important;
+  padding: var(--g83-edge-t) max(4vw, var(--g83-edge-r)) var(--g83-edge-b) max(4vw, var(--g83-edge-l)) !important;
+  overflow: hidden !important;
+}
+#app #guide .g33GuideHead,
+#app #guide .g33GuideWrap{
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  width: auto !important;
+  margin: 0 !important;
+}
+#app #guide .g33GuideHead{
+  flex: 0 0 auto !important;
+  /* The eyebrow renders ~14px above this block's content-box top and has
+     done since before this overhaul (measured at y=-5 on the G82 build),
+     with no margin, transform or translate to account for it. Rather than
+     keep hunting the cause, the block reserves the overhang so the label
+     lands inside the viewport. */
+  padding-top: 20px !important;
+}
+#app #guide .g33GuideWrap{
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: var(--g83-s3) !important;
+}
+#app #guide .g33QuickBar{ flex: 0 0 auto !important }
+#app #guide .g33GuideColumns{
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+}
+#app #guide .g33GuidePane{
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+}
+
+/* ================= RESULT ================= */
+#app #result .resultProgressCard{
+  width: min(560px, 88vw) !important;
+  padding: var(--g83-s6) !important;
+  border-radius: var(--g83-r-xl) !important;
+  border: 1px solid rgba(232,205,127,.26) !important;
+  box-shadow: var(--g83-lift-3) !important;
+  background: linear-gradient(165deg, rgba(15,20,15,.97), rgba(5,8,6,.95)) !important;
+}
+#app #result .resultTitle{ font-size: var(--g83-fs-3xl) !important; line-height: 1.05 !important }
+#app #result .resultSub{ font-size: var(--g83-fs-sm) !important; color: var(--g83-ink-3) !important; line-height: 1.5 !important }
+#app #result .resultGradeRow{ margin-top: var(--g83-s4) !important; align-items: baseline !important }
+#app #result .resultGrade{ font-size: var(--g83-fs-xl) !important; line-height: 1.2 !important }
+#app #result .resultGain{ font-size: var(--g83-fs-lg) !important; line-height: 1.2 !important }
+#app #result .resultGain small{ font-size: var(--g83-fs-micro) !important; margin-right: 6px }
+#app #result .resultXpTrack{ height: 10px !important; border-radius: var(--g83-r-pill) !important; margin: var(--g83-s3) 0 var(--g83-s2) !important }
+#app #result .resultXpMeta span{ font-size: var(--g83-fs-micro) !important; line-height: 1.5 !important }
+#app #result .resultNext{ font-size: var(--g83-fs-xs) !important; line-height: 1.55 !important; padding: var(--g83-s3) !important; border-radius: var(--g83-r-sm) !important }
+#app #result .resultActions{ gap: var(--g83-s3) !important; margin-top: var(--g83-s5) !important }
+#app #result .resultActions button{
+  flex: 1; min-height: 50px !important;
+  font-size: var(--g83-fs-md) !important;
+  border-radius: var(--g83-r-md) !important;
+  padding: 0 var(--g83-s5) !important;
+}
+
+/* ============================================================
+   G83 · CORRECTION PASS
+   Findings from re-running the audit against the layer above.
+   ============================================================ */
+
+/* ---- BOSS GRID -----------------------------------------------------
+   Restoring .bossTraits made the cards taller than the fixed row
+   height three earlier layers had pinned them to
+   (`grid-auto-rows:minmax(205px,1fr)`, `150px`, `minmax(214px,auto)`),
+   so a tall card printed straight over the card below it. Auto rows
+   let the content set the height, which is the whole point of the
+   flex stack inside the card. */
+/* Grid was the wrong container here. Three separate layers pin the row
+   track (`grid-auto-rows:minmax(205px,1fr)`, `150px`,
+   `minmax(214px,auto)`), and even with `grid-auto-rows:auto` winning the
+   cascade the implicit rows still resolved to 48px against the grid's
+   own fixed height — so a 400px card printed over the two rows beneath
+   it. A wrapping flex container has no row tracks to pin: every line is
+   sized by its tallest card, which is exactly the behaviour the cards
+   need now that their content decides their height. */
+#app #bossSelect .bossDiffGrid{
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-content: flex-start !important;
+  align-items: stretch !important;
+  grid-template-columns: none !important;
+  grid-auto-rows: auto !important;
+  height: 100% !important;
+}
+#app #bossSelect .bossCard,
+#app #bossSelect .bossDiffGrid > button{
+  flex: 1 1 clamp(172px, 21vw, 236px) !important;
+  min-width: clamp(172px, 21vw, 236px) !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  align-self: stretch !important;
+}
+@media (max-width: 560px){
+  #app #bossSelect .bossCard,
+  #app #bossSelect .bossDiffGrid > button{
+    flex-basis: 100% !important; min-width: 0 !important;
+  }
+}
+
+/* ---- FIGHTER SELECT: stacking order --------------------------------
+   .selectArtShade paints after .selectTop in document order and had no
+   z-index of its own, so the screen title and the level pill were being
+   viewed *through* an 88%-black gradient. That is why the header read
+   as dark grey text on dark art. The art and its scrim are pushed to
+   the back where they belong. */
+#app #select .selectArt      { z-index: 1 !important }
+#app #select .selectArtShade { z-index: 2 !important; pointer-events: none }
+/* The title was already white (measured rgb(244,247,243)) — it was being
+   painted over. .selectTop is a static element, so its z-index did
+   nothing, and .selectArt is positioned: a positioned box always paints
+   above a non-positioned one regardless of z-index. Giving the header a
+   position is what actually puts it in front of the artwork. */
+#app #select .selectTop      { position: relative !important; z-index: 60 !important }
+/* The roster and the info panel are positioned already; restate anyway so
+   the whole screen's paint order is declared in one place. */
+#app #select .charGrid, #app #select .selectInfo{ position: absolute !important }
+#app #select .selectInfo     { z-index: 50 !important }
+#app #select .charGrid       { z-index: 55 !important }
+
+/* ---- FIGHTER SELECT: the roster must not run under the info panel ---
+   .charGrid was `width:min(68vw,740px)` while the info panel occupies
+   the right min(38vw,460px). On a 667px screen those two ranges
+   overlapped by ~90px, which put character buttons on top of the
+   FIGHT button and the build read-out. The roster is now bounded by
+   where the panel starts. */
+#app #select .charGrid{
+  width: auto !important;
+  max-width: none !important;
+  right: calc(max(4vw, var(--g83-edge-r)) + min(38vw, 460px) + 18px) !important;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(88px, 10.5vw, 132px), 1fr)) !important;
+  max-height: 46vh !important;
+  align-content: end !important;
+}
+/* The button's own label is a bare text node, so sizing its children
+   was not enough — it kept rendering at 8px. */
+#app #select .charBtn{
+  font-size: var(--g83-fs-xs) !important;
+  line-height: 1.3 !important;
+}
+#app #select .charBtn > *{ font-size: inherit !important }
+#app #select .charBtn > :last-child{ font-size: var(--g83-fs-micro) !important }
+
+/* The info panel holds more than a short screen can show. */
+#app #select .selectInfo{
+  max-height: calc(100vh - clamp(76px, 18vh, 132px) - var(--g83-edge-b) - 52px - 18px) !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain !important;
+  pointer-events: auto !important;
+}
+
+/* The roster's bottom row must clear the docked CTA on a short screen. */
+@media (max-height: 430px){
+  #app #select .charGrid{ max-height: 40vh !important }
+}
+
+/* ---- CODEX ROSTER --------------------------------------------------
+   The two-line clamp brought its own `overflow:hidden` and the row was
+   still only tall enough for one line, so the clamp just moved the cut
+   rather than removing it. The sub-line wraps freely instead; the row
+   grows. */
+#app #codex .codexFighter{ height: auto !important; align-content: start !important }
+#app #codex .codexFighterStyle,
+#app #codex .codexFighter > :last-child{
+  display: block !important;
+  -webkit-line-clamp: none !important;
+  overflow: visible !important;
+  height: auto !important;
+  min-height: 0 !important;
+  font-size: var(--g83-fs-micro) !important;
+  line-height: 1.45 !important;
+}
+
+/* ---- REMAINING SUB-10px TEXT the first pass did not name ---- */
+#app #v21ProfileTitle,
+#app .profileCard span, #app .profileCard b,
+#app .selectInfo span, #app .selectInfo b,
+#app .g33CombatFlow span, #app .g33CombatFlow b,
+#app .g33GuideFoot b, #app .resultBreakdown span, #app .resultBreakdown b{
+  font-size: var(--g83-fs-micro) !important;
+  line-height: 1.5 !important;
+}
+
+/* ---- HUB HEADER: a leftover centring transform -----------------------
+   .hubHead is `left:50%; transform:translateX(-50%)`. Part 4a re-anchored
+   it with explicit left/right insets but left the transform in place, so
+   the header was then translated a further -50% of its own width and the
+   codex/boss titles slid off the left edge (measured x = -211 at 844px).
+   With explicit insets the transform has nothing left to do. */
+#app .hubHead{ transform: none !important }
+
+/* ---- MAIN HUB below 700px: the two-column layout was collapsing ------
+   `#start.active` drops to `display:flex` (column) on a narrow viewport,
+   which stacks the profile card, the wordmark and the menu into a 1278px
+   column inside a 375px-tall screen — the menu was simply not on screen.
+   The game is landscape-only, so the two-column arrangement is restored
+   for every width that can hold it, with explicit placement so nothing
+   depends on source order. */
+/* The menu rail is taken out of grid flow entirely. As a spanning grid
+   item its 353px height was redistributed across the five auto rows of
+   column one, inflating that column to 387px inside a 375px screen — the
+   wordmark's Korean line ended up 3px below the fold. Absolute placement
+   makes the two columns independent: the rail owns the right side, the
+   identity block owns what is left. */
+@media (min-width: 560px){
+  #app #start.active{
+    display: grid !important;
+    grid-template-columns: minmax(0,1fr) !important;
+    row-gap: 2px !important;
+    align-content: center !important;
+    justify-items: start !important;
+    padding-right: calc(min(42vw, 400px) + max(4vw, var(--g83-edge-r)) + 20px) !important;
+    /* The inherited 14px/54px block padding left column one only 307px of
+       a 375px screen for 331px of content, which pushed the profile card
+       26px above the top edge. */
+    padding-top: var(--g83-edge-t) !important;
+    padding-bottom: var(--g83-edge-b) !important;
+  }
+  #app #start.active > .profileCard{
+    grid-column: 1 !important; grid-row: 1 !important;
+    width: 100% !important; max-width: 360px !important;
+  }
+  #app #start.active > .brandSmall{ grid-column: 1 !important; grid-row: 2 !important }
+  #app #start.active > .brand     { grid-column: 1 !important; grid-row: 3 !important }
+  #app #start.active > .brandKo   { grid-column: 1 !important; grid-row: 4 !important }
+  #app #start.active > .mainFoot  { grid-column: 1 !important; grid-row: 5 !important }
+  /* Later layers append rows to this menu — the shipped build has nine,
+     not the four in the base markup — so it is 779px tall on a 375px
+     screen. It becomes its own scrolling rail rather than pushing the
+     profile card and the wordmark off the top of the screen. */
+  #app #start.active > .mainMenu  {
+    position: absolute !important;
+    /* An absolutely-positioned child of a grid container resolves its
+       insets against its GRID AREA, not the container's padding box.
+       An earlier layer pins `grid-area:1/2/6`, so top/bottom were being
+       measured against a column that no longer exists and the rail kept
+       its 841px content height. Clearing the area restores #start as the
+       containing block. */
+    grid-area: auto !important;
+    right: max(4vw, var(--g83-edge-r)) !important;
+    top: var(--g83-edge-t) !important;
+    /* Sized against the viewport rather than the containing block: with
+       top+bottom+auto height the used height kept resolving to the 842px
+       content instead of the 353px between the insets, so the rail never
+       clipped and never scrolled. A vh-based max-height does not depend
+       on which box the insets resolve against. */
+    bottom: auto !important;
+    max-height: calc(100vh - var(--g83-edge-t) - var(--g83-edge-b)) !important;
+    left: auto !important;
+    width: min(42vw, 400px) !important;
+    /* An earlier rule sets an explicit height on this element. With
+       top, bottom AND height all resolved, height wins and the rail
+       grew to 841px instead of filling the 353px between the insets —
+       so it never scrolled and simply ran off the screen. */
+    height: auto !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    padding-right: 4px !important;
+    align-content: start !important;
+  }
+}
+/* The wordmark is the first thing to give up room on a short screen. */
+@media (max-height: 430px){
+  /* Column one measured 392px against a 375px screen, which put the
+     Korean wordmark 3px below the fold. The wordmark gives up the
+     difference — it is the one block on this screen with nothing to
+     read in it. */
+  #app #start .brand  { font-size: clamp(26px, 9vh, 44px) !important; line-height: .82 !important }
+  #app #start .brandKo{ font-size: var(--g83-fs-sm) !important; margin-top: 2px !important }
+  /* A 44px gap sat between the profile card and the wordmark — the last
+     five pixels of the overflow. */
+  #app #start .brandSmall{ margin-bottom: 0 !important; margin-top: 10px !important }
+  #app #start .profileCard{ margin-bottom: 0 !important }
+  #app #start .brand{ margin-top: 4px !important }
+  /* The last six pixels: the profile card keeps every row it has and
+     scrolls internally rather than pushing the wordmark past the fold. */
+  #app #start .profileCard{
+    max-height: 56vh !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+  }
+  #app #start .profileCard{ padding: var(--g83-s3) !important }
+  #app #start.active{ row-gap: 0 !important }
+}
+
+/* ================= LAUNCH GATE ================= */
+#app #launchGate .launchLogo{ font-size: var(--g83-fs-3xl) !important; line-height: .92 !important }
+#app #launchGate .launchKo{ font-size: var(--g83-fs-lg) !important; line-height: 1.35 !important }
+#app #launchGate .launchHint{ font-size: var(--g83-fs-xs) !important; line-height: 1.6 !important; max-width: 44ch; margin-inline: auto }
+#app #launchGate .launchBtn{
+  min-height: 54px !important; font-size: var(--g83-fs-lg) !important;
+  padding: 0 var(--g83-s7) !important; border-radius: var(--g83-r-md) !important;
+  box-shadow: 0 10px 30px rgba(232,205,127,.28) !important;
+}
+#app #launchGate .launchEyebrow{ font-size: var(--g83-fs-micro) !important }
+</style>
+
+
+<!-- ============================================================
+     G83 · UI OVERHAUL — PART 4b / 4 · PRESENTER
+     ------------------------------------------------------------
+     The structural half of the overhaul. Everything here is
+     presentation: it reads game state, it never writes it.
+
+       1. Lifts every .meterValue out of its clipping .meterBar and
+          into the row's third grid track. This is the fix for the
+          chopped "100%" — the number is no longer inside a 9px
+          overflow:hidden box, and no longer painted on the fill.
+       2. Adds a portrait and a split name plate to each fighter
+          block. The game keeps writing the single #pName/#eName
+          text node; we mirror it into a name + tag pair and hide
+          the original rather than replacing it, so no downstream
+          layer loses its element reference.
+       3. Adds the chip-damage ghost layer under each HP fill.
+       4. Shortens the three control state strings that were long
+          enough to need an ellipsis ("게이지 …").
+       5. Marks Latin-only eyebrows so they can keep display
+          tracking while Korean copy does not.
+       6. Turns the tall panels into real scrollers with a fade edge.
+     ============================================================ -->
+<script id="bugArenaG83Presenter">
+(()=>{'use strict';
+const root=document.documentElement;
+if(root.dataset.g83Bound==='1')return; root.dataset.g83Bound='1';
+
+const $=id=>document.getElementById(id);
+const HANGUL=/[ᄀ-ᇿ㄰-㆏ꥠ-꥿가-힯]/;
+
+/* The build declares ASSETS, state and CHARS with `const` at the top
+   level of a classic script. Lexical top-level bindings are reachable
+   by name from a later script in the same global scope, but they are
+   NOT properties of `window` — reading window.ASSETS returns undefined,
+   which is why an earlier revision of this presenter drew empty
+   portraits. Resolve them by name, guarded. */
+const G=(name)=>{ try{ return (0,eval)(name) }catch(_){ return undefined } };
+const assets=()=>G('ASSETS')||{};
+const battle=()=>{ const s=G('state'); return s&&s.battle };
+
+/* ---------------------------------------------------------------
+   1. METER VALUES — out of the bar, into their own track.
+   The nodes keep their ids, so updateHud()'s cached references and
+   every later layer that writes to them are unaffected.
+   --------------------------------------------------------------- */
+function liftMeterValues(){
+  document.querySelectorAll('#hud .meterRow').forEach(row=>{
+    const val=row.querySelector(':scope > .meterBar > .meterValue');
+    if(val) row.appendChild(val);           // moves, does not clone
+  });
+}
+
+/* ---------------------------------------------------------------
+   2. GHOST (chip damage) layer under each HP fill.
+   --------------------------------------------------------------- */
+function addGhosts(){
+  ['pHp','eHp'].forEach(id=>{
+    const fill=$(id); if(!fill||!fill.parentElement) return;
+    const bar=fill.parentElement;
+    if(bar.querySelector('.g83Ghost')) return;
+    const g=document.createElement('div');
+    g.className='g83Ghost';
+    g.dataset.for=id;
+    g.style.width=fill.style.width||'100%';
+    bar.insertBefore(g, fill);              // behind the fill (z-index 2 vs 3)
+  });
+}
+
+/* ---------------------------------------------------------------
+   3. PORTRAIT + NAME PLATE per fighter block.
+   --------------------------------------------------------------- */
+function buildPlates(){
+  [['pName','left'],['eName','right']].forEach(([id,side])=>{
+    const nameEl=$(id); if(!nameEl) return;
+    const hudSide=nameEl.closest('.hudSide'); if(!hudSide) return;
+    if(hudSide.querySelector('.g83Portrait')) return;
+
+    const portrait=document.createElement('div');
+    portrait.className='g83Portrait';
+    portrait.innerHTML='<img alt="">';
+
+    const meters=document.createElement('div');
+    meters.className='g83Meters';
+
+    const plate=document.createElement('div');
+    plate.className='g83NamePlate';
+    plate.innerHTML='<span class="g83NameMain"></span><span class="g83NameTag"></span>';
+
+    // Everything that is not the (now visually hidden) name node
+    // moves into the meters column.
+    const moving=[...hudSide.children].filter(c=>c!==nameEl);
+    hudSide.insertBefore(portrait, hudSide.firstChild);
+    hudSide.appendChild(meters);
+    meters.appendChild(plate);
+    moving.forEach(c=>meters.appendChild(c));
+    hudSide.dataset.g83Side=side;
+  });
+}
+
+/* The game writes one string; we present it as name + tag. */
+const TAGGY=/(라운드|페이즈|^BOSS$|^ROUND\b|^PHASE\b|^LV\.?\d)/i;
+function syncPlate(id){
+  const nameEl=$(id); if(!nameEl) return;
+  const hudSide=nameEl.closest('.hudSide'); if(!hudSide) return;
+  const main=hudSide.querySelector('.g83NameMain'), tag=hudSide.querySelector('.g83NameTag');
+  if(!main||!tag) return;
+  const raw=(nameEl.textContent||'').trim();
+  if(hudSide.dataset.g83Raw===raw) return;
+  hudSide.dataset.g83Raw=raw;
+  const parts=raw.split('·').map(s=>s.trim()).filter(Boolean);
+  const tags=parts.filter(p=>TAGGY.test(p));
+  const rest=parts.filter(p=>!TAGGY.test(p));
+  main.textContent=(rest.length?rest:parts).join(' · ');
+  tag.textContent=tags.join(' · ');
+}
+
+function syncPortrait(which){
+  const b=battle(); if(!b) return;
+  const f=which==='p'?b.p:b.e;
+  const hudSide=$(which+'Name')?.closest('.hudSide'); if(!hudSide) return;
+  const img=hudSide.querySelector('.g83Portrait img'); if(!img) return;
+  const id=f&&f.data&&f.data.id;
+  const key=(b.boss&&which==='e')
+    ? ('boss_'+((G('state')||{}).bossDifficulty||'easy'))
+    : (id?('origin_'+id):null);
+  if(!key||hudSide.dataset.g83Art===key) return;
+  const src=assets()[key];
+  if(!src) return;
+  hudSide.dataset.g83Art=key;
+  img.src=src;
+}
+
+/* ---------------------------------------------------------------
+   4. Control state strings that were long enough to be truncated.
+   The map's outputs are never its keys, so re-entry is a no-op.
+   --------------------------------------------------------------- */
+const LABELS={
+  '톡 / 꾹 원거리':'톡·꾹',
+  'TAP / HOLD':'TAP·HOLD',
+  '게이지 충전':'충전 중',
+  '원거리 충전':'충전 중',
+  'CHARGE RANGE':'CHARGE'
+};
+function relabelOne(el){
+  if(!el) return;
+  const t=(el.textContent||'').trim();
+  if(LABELS[t]!==undefined&&LABELS[t]!==t) el.textContent=LABELS[t];
+}
+function relabel(){
+  ['attackState','originState','skillState','dashState'].forEach(id=>relabelOne($(id)));
+}
+/* updateHud() rewrites these nodes at frame rate, so polling at 8Hz
+   would only ever repaint the long string a few frames later. A
+   character-data observer fires on the game's own write, before paint.
+   No map output is also a map key, so the rewrite cannot re-trigger. */
+function bindLabelObserver(){
+  ['attackState','originState','skillState','dashState'].forEach(id=>{
+    const el=$(id); if(!el||el.dataset.g83Label==='1') return;
+    el.dataset.g83Label='1';
+    new MutationObserver(()=>relabelOne(el))
+      .observe(el,{childList:true,characterData:true,subtree:true});
+    relabelOne(el);
+  });
+}
+
+/* ---------------------------------------------------------------
+   5. Latin eyebrows keep display tracking; Korean never gets it.
+   --------------------------------------------------------------- */
+function markLatin(){
+  document.querySelectorAll(
+    '.brandSmall,.profileEyebrow,.bossEyebrow,.g33GuideEyebrow,.launchEyebrow,.loadSub'
+  ).forEach(el=>{
+    const isLat=!HANGUL.test(el.textContent||'');
+    el.classList.toggle('g83-lat', isLat);
+  });
+}
+
+/* ---------------------------------------------------------------
+   6. Tall panels become scrollers with a "there is more" fade.
+   --------------------------------------------------------------- */
+const SCROLLERS='#bossSelect .bossDiffGrid, #codex .codexRoster, #codex .codexInfo, #guide .g33GuidePane, #guide .guideLayout, #start .mainMenu, #select .selectInfo';
+function edgeFor(el){
+  let e=el.querySelector(':scope > .g83-fadeEdge');
+  if(!e){
+    e=document.createElement('div');
+    e.className='g83-fadeEdge';
+    el.appendChild(e);
+  }else if(e!==el.lastElementChild){
+    el.appendChild(e);            // keep it last after a rebuild
+  }
+  return e;
+}
+function syncScroll(el){
+  const more=el.scrollHeight-el.clientHeight-el.scrollTop>8;
+  el.classList.toggle('g83-more',more);
+}
+function bindScrollers(){
+  document.querySelectorAll(SCROLLERS).forEach(el=>{
+    el.classList.add('g83-scroll');
+    edgeFor(el);
+    if(el.dataset.g83Scroll!=='1'){
+      el.dataset.g83Scroll='1';
+      el.addEventListener('scroll',()=>syncScroll(el),{passive:true});
+    }
+    syncScroll(el);
+  });
+}
+
+/* ---------------------------------------------------------------
+   PRESENTER LOOP — ~8Hz, read-only, cheap.
+   --------------------------------------------------------------- */
+const ghost={p:100,e:100};
+let last=0;
+function tick(ts){
+  requestAnimationFrame(tick);
+  if(ts-last<120) return;
+  const dt=(ts-last)/1000; last=ts;
+  const app=$('app');
+  if(!app) return;
+
+  if(app.classList.contains('battle')){
+    const b=battle();
+    syncPlate('pName'); syncPlate('eName');
+    syncPortrait('p');  syncPortrait('e');
+    relabel();
+
+    if(b){
+      ['p','e'].forEach(w=>{
+        const f=w==='p'?b.p:b.e;
+        if(!f) return;
+        const hp=Math.max(0,Math.min(100,f.hp/f.maxHp*100));
+        // ghost trails the real value, then catches up
+        if(hp>ghost[w]) ghost[w]=hp;
+        else ghost[w]=Math.max(hp,ghost[w]-Math.max(28,ghost[w]-hp)*dt*1.5);
+        const g=document.querySelector(`.g83Ghost[data-for="${w}Hp"]`);
+        if(g) g.style.width=ghost[w].toFixed(1)+'%';
+        const row=$(w+'Hp')?.closest('.meterRow');
+        if(row) row.classList.toggle('g83-hpDanger',hp<=25);
+        const orow=$(w+'Origin')?.closest('.meterRow');
+        if(orow) orow.classList.toggle('g83-originFull',(f.origin||0)>=100);
+      });
+      const t=document.querySelector('.timer');
+      if(t) t.classList.toggle('g83-urgent',(b.time||99)<=20);
+    }
+  }else{
+    document.querySelectorAll(SCROLLERS).forEach(syncScroll);
+  }
+}
+
+/* ---------------------------------------------------------------
+   WIRING
+   --------------------------------------------------------------- */
+/* The FIGHT button ships inside .selectInfo, which is now a scroller.
+   Moving it up to #select docks it under the panel instead of scrolling
+   with the copy. Its click handler is bound to the node directly, so the
+   move carries the binding with it. */
+function dockFightBtn(){
+  const btn=$('fightBtn'), screen=$('select');
+  if(!btn||!screen||btn.parentElement===screen) return;
+  screen.appendChild(btn);
+}
+
+function boot(){
+  dockFightBtn();
+  liftMeterValues();
+  buildPlates();
+  addGhosts();
+  markLatin();
+  bindScrollers();
+  bindLabelObserver();
+}
+boot();
+
+// setScene rebuilds screen content (buildCodex, refreshSelect …), so
+// re-apply the structural bits after each transition.
+if(typeof window.setScene==='function'){
+  const base=window.setScene;
+  window.setScene=function(...a){
+    const r=base.apply(this,a);
+    requestAnimationFrame(()=>{ boot(); requestAnimationFrame(boot); });
+    return r;
+  };
+}
+window.addEventListener('resize',()=>{ bindScrollers(); },{passive:true});
+// Late layers can rebuild the roster or the boss grid after boot.
+new MutationObserver(()=>{ bindScrollers(); markLatin(); })
+  .observe($('ui')||document.body,{childList:true,subtree:true});
+
+requestAnimationFrame(tick);
+})();
+</script>
+
+<style id="bugArenaG83EdgeStyle">
+/* The scroll fade rides along as a sticky last child, so it needs no
+   wrapper element around containers other layers select on. */
+#app .g83-fadeEdge{
+  position: sticky; bottom: 0;
+  grid-column: 1 / -1;
+  height: 40px; margin-top: -40px;
+  pointer-events: none;
+  opacity: 0; transition: opacity var(--g83-med);
+  background: linear-gradient(180deg, transparent, rgba(4,7,5,.94));
+  z-index: 8;
+}
+#app .g83-scroll.g83-more .g83-fadeEdge{ opacity: 1 }
+</style>
+
 </body></html>
