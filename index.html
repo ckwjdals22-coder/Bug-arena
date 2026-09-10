@@ -34271,7 +34271,12 @@ html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
    straight over "남은 시간" and the round line. They move below the HUD
    band, where they have the arena's empty upper third to themselves. */
 #app.challengeBattle #g23ChallengeHud{
-  top: calc(var(--g83-edge-t) + 104px) !important;
+  /* 104px cleared the clock but still ended inside the bottom 13px of
+     the player's panel, and the panel grew wider once the round tag was
+     dropped from the centre column — so the row now starts below the
+     whole HUD band (10px inset + its 117px height) rather than beside
+     part of it. */
+  top: calc(var(--g83-edge-t) + 122px) !important;
   gap: var(--g83-s2) !important;
   z-index: 78 !important;
 }
@@ -34293,7 +34298,7 @@ html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
 }
 /* The rank chip sat under the right-hand block; keep it clear of it too. */
 #app.challengeBattle #g23ChallengeMark{
-  top: calc(var(--g83-edge-t) + 104px) !important;
+  top: calc(var(--g83-edge-t) + 122px) !important;
   right: max(4vw, var(--g83-edge-r)) !important;
   font-size: var(--g83-fs-micro) !important;
   padding: 4px 9px !important;
@@ -34302,7 +34307,7 @@ html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
 @media (max-height: 430px){
   #app.challengeBattle #g23ChallengeHud,
   #app.challengeBattle #g23ChallengeMark{
-    top: calc(var(--g83-edge-t) + 92px) !important;
+    top: calc(var(--g83-edge-t) + 110px) !important;
   }
 }
 
@@ -34495,11 +34500,10 @@ html.v7-boss-battle #app.battle #hud .hudName{ min-height: 0 !important }
    the button with top padding instead. */
 #app .g28Shell{ padding-top: 62px !important }
 #app .g23Shell{ padding-top: clamp(58px,10vh,80px) !important }
-#app #g23Close, #app #g28Close{
-  left: var(--g83-edge-l) !important;
-  top: var(--g83-edge-t) !important;
-  z-index: 140 !important;
-}
+/* The left/top that used to live here moved to G88, which anchors every
+   panel's close button to one place; only the stacking order is still
+   set from here. */
+#app #g23Close, #app #g28Close{ z-index: 140 !important }
 
 /* ================= LAUNCH GATE ================= */
 #app #launchGate .launchLogo{ font-size: var(--g83-fs-3xl) !important; line-height: .92 !important }
@@ -34761,51 +34765,181 @@ function ownText(el){
   for(const n of el.childNodes) if(n.nodeType===3&&n.textContent.trim()) return true;
   return false;
 }
-/* The hub panels are appended to #app or straight to <body>, not into
-   #ui — scoping the sweep to #ui is why the first version of this pass
-   left 5.4px text untouched in every one of them. */
-function uiScope(){ return $('app')||document.body }
+/* Scan the whole document, not just #app. Several shells (the shop and
+   the equipment panels among them) are appended to <body>, which is why
+   text inside them was still being popped by the older inline floor pass
+   in G77 — this one never reached it. */
+function uiScope(){ return document.body }
+function ruleScope(el){ const a=$('app'); return (a&&a.contains(el))?'#app ':'' }
+
+/* ---------------------------------------------------------------
+   LEGIBILITY FLOOR — as stylesheet rules, not inline styles.
+
+   The first version of this pass wrote `font-size` inline on each
+   element it found below the floor. That is what made the UI "grow and
+   shrink" while the player kept tapping: several screens rebuild their
+   markup (the boss grid re-sorts, counters re-render), every rebuild
+   drops the inline styles, and the next sweep put them back — so the
+   text visibly popped between its authored 5-6.5px and the 10px floor
+   on every rebuild. Measured on the boss menu: 28 flips per element
+   over eight open/close cycles, and 149 on one counter.
+
+   Emitting a CSS rule instead fixes it at the source. A rule keyed on
+   the element's own class chain applies the moment the markup is
+   recreated, so a rebuild comes back already floored and there is
+   nothing to re-apply and nothing to flip. It also means the pass does
+   not have to run on mutations at all.
+   --------------------------------------------------------------- */
+let sheet=null, emitted=new Set();
+/* The sheet has to be the LAST stylesheet in the document.
+
+   Every rule this pass emits is `!important` at specificity (1,1,1)
+   — `#app .v5Exact p`. Several of the layers it has to beat are also
+   `!important` at exactly (1,1,1) — `#classicShop .v5Exact p` sets
+   7px, `#classicShop .v5Req > small` sets 6.3px. When specificity and
+   priority tie, document order decides, and those layers are <style>
+   elements inside <body>, i.e. after anything appended to <head>.
+   Appending to the head therefore lost every one of those ties: the
+   text stayed at 7px, G77's own pass then pushed it to 9px as an
+   important INLINE style, the next rebuild dropped the inline, and the
+   size flipped 7 <-> 9 for as long as the player kept opening the
+   panel. Keeping this node last makes the rule actually apply, which
+   is what ends the flip. */
+function styleSheetEl(){
+  if(!(sheet&&sheet.isConnected)){
+    sheet=document.createElement('style');
+    sheet.id='bugArenaG83FloorRules';
+  }
+  const host=document.body||document.documentElement;
+  if(sheet.parentNode!==host||sheet.nextElementSibling) host.appendChild(sheet);
+  return sheet;
+}
+function esc(v){
+  try{ return CSS.escape(v) }catch(_){ return String(v).replace(/[^\w-]/g,'\\$&') }
+}
+/* A selector built from what the element is, so it keeps matching after
+   the markup is rebuilt. */
+function keyFor(el){
+  const own=c=>c&&!c.startsWith('g83-')&&!/^(active|open|on|sel|selected)$/.test(c);
+  if(el.id) return '#'+esc(el.id);
+  const cls=(typeof el.className==='string'?el.className.trim().split(/\s+/):[]).filter(own).slice(0,2);
+  const self=el.tagName.toLowerCase()+cls.map(c=>'.'+esc(c)).join('');
+  let a=el.parentElement, guard=0;
+  while(a&&a!==document.body&&guard++<4){
+    if(a.id) return '#'+esc(a.id)+' '+self;
+    const ac=(typeof a.className==='string'?a.className.trim().split(/\s+/):[]).filter(own)[0];
+    if(ac) return '.'+esc(ac)+' '+self;
+    a=a.parentElement;
+  }
+  return cls.length?self:null;         // too generic to be safe
+}
+/* Only emit when every element the selector reaches is genuinely small —
+   otherwise the rule would shrink text that was already fine. */
+function safeToEmit(pre,sel,floor){
+  let list;
+  try{ list=document.querySelectorAll(pre+sel) }catch(_){ return false }
+  if(!list.length)return false;
+  for(const e of list){
+    const fs=parseFloat(getComputedStyle(e).fontSize);
+    if(!isFinite(fs))return false;
+    if(fs===0)return false;
+    if(fs>=floor+1.5)return false;   // would shrink text that is already fine
+  }
+  return true;
+}
 function applyFloor(){
   const floor=floorPx();
   const scope=uiScope();
+  /* Re-seat the sheet before measuring: a layer that appended its own
+     <style> since the last sweep would otherwise outrank ours, and every
+     size read below would be the pre-floor one. */
+  styleSheetEl();
+  let css='';
   for(const el of scope.querySelectorAll('*')){
-    if(!ownText(el)) continue;
+    if(!ownText(el))continue;
     const cs=getComputedStyle(el);
-    if(cs.display==='none'||cs.visibility==='hidden') continue;
+    /* Hidden panels are scanned too, on purpose. A rule can only be
+       emitted for markup that exists, and the shop and equipment shells
+       spend most of their life closed — waiting until one is open means
+       the first frame after it opens is still unfloored, which is exactly
+       the pop this pass is meant to remove. Computed styles are readable
+       while display:none, and the floor is only ever a minimum. */
     const fs=parseFloat(cs.fontSize);
-    if(!isFinite(fs)||fs>=floor) continue;
-    /* font-size:0 is always deliberate — nobody arrives at exactly zero by
-       accident. It is how this build hides a label it replaces some other
-       way: #classicQuickBtn reprints its text from ::after, and #fs is an
-       icon-only 38px square whose "⛶ 전체 화면" is meant to stay hidden.
-       An earlier version of this pass only skipped the cases it could
-       positively identify, and so un-hid #fs, whose label then spilled
-       57px of text out of a 38px button. Zero is left alone, full stop. */
-    if(fs===0) continue;
-    el.style.setProperty('font-size', floor+'px', 'important');
-    if(parseFloat(cs.lineHeight) < floor*1.25)
+    if(!isFinite(fs)||fs>=floor)continue;
+    /* font-size:0 is always a deliberate hide — see the #fs case. */
+    if(fs===0)continue;
+    let sel=keyFor(el);
+    const pre=ruleScope(el);
+    /* A selector built from the element's own identity can be too broad:
+       the 환경설정 button holds an 8px label and a larger icon in two
+       bare <span>s, so `#g35SettingsBtn span` reaches both and
+       safeToEmit refuses it — correctly, since raising it would also
+       inflate the icon. Narrowing by position keeps the rule (which
+       survives a rebuild) instead of dropping to an inline style (which
+       does not, and pops the text on every rebuild). */
+    if(sel&&!emitted.has(pre+sel)&&!safeToEmit(pre,sel,floor)){
+      const par=el.parentElement;
+      if(par){
+        const n=[...par.children].indexOf(el)+1;
+        const selN=sel+':nth-child('+n+')';
+        if(emitted.has(pre+selN)||safeToEmit(pre,selN,floor)) sel=selN;
+      }
+    }
+    if(sel&&(emitted.has(pre+sel)||safeToEmit(pre,sel,floor))){
+      if(!emitted.has(pre+sel)){
+        emitted.add(pre+sel);
+        css+=pre+sel+'{font-size:'+floor.toFixed(2)+'px!important;line-height:1.45!important}\n';
+      }
+      /* G77 ships its own floor pass that writes `font-size:9px` as an
+         IMPORTANT INLINE style, and an important inline beats an important
+         stylesheet rule — so a stale 9px from that pass would pin this
+         element below our floor forever. Clearing it hands control back to
+         the rule above; G77 then measures 10px, decides nothing needs
+         fixing, and stops rewriting it. That is what finally settles the
+         size instead of the two passes trading values. */
+      const inlineFs=parseFloat(el.style.fontSize);
+      if(isFinite(inlineFs)&&inlineFs<floor){
+        el.style.removeProperty('font-size');
+        el.style.removeProperty('line-height');
+      }
+      continue;
+    }
+    /* No safe selector: fall back to this one element, once. Marked so a
+       later pass does not keep rewriting it. */
+    if(!sel&&el.dataset.g83Floor!=='1'){
+      el.style.setProperty('font-size',floor+'px','important');
       el.style.setProperty('line-height','1.45','important');
-    el.dataset.g83Floor='1';
+      el.dataset.g83Floor='1';
+    }
   }
+  if(css) styleSheetEl().appendChild(document.createTextNode(css));
 }
 
-/* Latin display tracking on Hangul produces "제 한 시 간". The named
-   classes were handled in Part 1; this catches the same mistake in the
-   hub panels, whatever they call their elements. */
+/* Latin display tracking on Hangul produces "제 한 시 간". Same rule-based
+   treatment, for the same reason. */
+let emittedTrack=new Set();
 function normaliseTracking(){
   const scope=uiScope();
+  let css='';
   for(const el of scope.querySelectorAll('*')){
-    if(!ownText(el)) continue;
-    if(el.dataset.g83Track==='1') continue;
+    if(!ownText(el))continue;
     const cs=getComputedStyle(el);
     const ls=parseFloat(cs.letterSpacing);
-    if(!isFinite(ls)||ls<=0) continue;
+    if(!isFinite(ls)||ls<=0)continue;
     const fs=parseFloat(cs.fontSize)||12;
-    if(ls/fs < 0.055) continue;                  // ordinary tracking, leave it
-    if(!HANGUL.test(el.textContent||'')) continue; // Latin may keep it
-    el.style.setProperty('letter-spacing','-0.005em','important');
-    el.dataset.g83Track='1';
+    if(ls/fs<0.055)continue;
+    if(!HANGUL.test(el.textContent||''))continue;
+    const sel=keyFor(el);
+    const pre=ruleScope(el);
+    if(sel&&!emittedTrack.has(pre+sel)){
+      emittedTrack.add(pre+sel);
+      css+=pre+sel+'{letter-spacing:-0.005em!important}\n';
+    }else if(!sel&&el.dataset.g83Track!=='1'){
+      el.style.setProperty('letter-spacing','-0.005em','important');
+      el.dataset.g83Track='1';
+    }
   }
+  if(css) styleSheetEl().appendChild(document.createTextNode(css));
 }
 
 /* ---------------------------------------------------------------
@@ -34929,8 +35063,12 @@ function sweep(){
    seen. The two passes settle rather than fight: G77 only raises text
    under 9px, so once this pass has written 10px it skips the element,
    and this pass only raises text under its own floor, so it stops too. */
+/* `style` is deliberately NOT watched any more. The floor is expressed as
+   stylesheet rules now, so a rebuild comes back already correct and there
+   is nothing to re-apply; watching style attributes only meant this layer
+   woke up for every inline write the rest of the build makes. */
 new MutationObserver(sweep).observe(document.body,{
-  childList:true, subtree:true, attributes:true, attributeFilter:['style','class']
+  childList:true, subtree:true, attributes:true, attributeFilter:['class']
 });
 document.addEventListener('click',sweep,true);
 /* Land after G77's own scheduled passes (60ms debounce, +260ms on scene
@@ -36236,6 +36374,1131 @@ window.BugArenaG86={
   note:'Challenge target drawn as a body with a matching hitbox. Damage, scoring, duration and records unchanged.',
   PUPA_CX, PUPA_HALF, PUPA_H, REACH_BONUS
 };
+})();
+</script>
+
+
+<style id="bugArenaG87BossEntryStyle">
+/* ============================================================
+   G87 · BOSS ENTRY — rail + dossier
+   ------------------------------------------------------------
+   The boss picker was a wrapping grid of cards, and every layer that
+   ever touched it appended one more block to the card: badges, art,
+   name, latin, three trait paragraphs, a loot line, a CTA and a daily
+   reward chip. With the card sized by its content that came to 397px
+   on a 390px-tall phone — one card never fit on screen. The last card
+   (the FEROX emperor, 제왕 리옥크) was worse: it is alone on its flex
+   line, so flex-grow handed it the whole remaining row, 372x485. That
+   is the "so big you can barely see it" case.
+
+   Cards cannot carry that much text at a legible size in 276px of
+   height, so the screen is split the way console and mobile boss
+   pickers do it: a scrolling RAIL of small identical tiles on the
+   left, one DOSSIER on the right showing everything about whichever
+   tile is highlighted. Every boss now renders at exactly the same
+   size, FEROX included, and the dossier has room for the art and the
+   full brief at a readable size.
+   ============================================================ */
+
+/* ---- the two-pane shell ---- */
+#app #bossSelect .bossHub{
+  display: grid !important;
+  grid-template-columns: clamp(148px, 21.5vw, 214px) minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  gap: clamp(8px, 1.2vw, 14px) !important;
+  align-items: stretch !important;
+  min-height: 0 !important;
+}
+
+/* ---- left: the rail ---- */
+#app #bossSelect .bossDiffGrid{
+  display: flex !important;
+  flex-direction: column !important;
+  flex-wrap: nowrap !important;
+  align-content: stretch !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: 2px 6px 6px 2px !important;
+  scroll-snap-type: none !important;
+  scrollbar-width: thin;
+}
+
+/* A tile: thumbnail, name, tier. Nothing else — the rest of what the
+   card carries is shown in the dossier, at a size worth reading. */
+#app #bossSelect .bossDiffGrid > .bossCard{
+  flex: 0 0 auto !important;
+  display: grid !important;
+  grid-template-columns: clamp(38px, 5vw, 50px) minmax(0, 1fr) !important;
+  grid-template-rows: auto auto !important;
+  align-items: center !important;
+  align-self: stretch !important;
+  gap: 1px clamp(6px, .8vw, 9px) !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: clamp(5px, .7vw, 8px) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  text-align: left !important;
+  scroll-snap-align: none !important;
+  transition: border-color var(--g83-fast), background var(--g83-fast), transform var(--g83-fast);
+}
+#app #bossSelect .bossDiffGrid > .bossCard > *{ display: none !important }
+#app #bossSelect .bossDiffGrid > .bossCard > .bossArtWrap{
+  display: block !important;
+  grid-column: 1 !important; grid-row: 1 / span 2 !important;
+  width: 100% !important; height: auto !important;
+  aspect-ratio: 1 / 1 !important;
+  border-radius: 9px !important;
+  flex: none !important;
+  box-shadow: none !important;
+}
+#app #bossSelect .bossDiffGrid > .bossCard > .bossName{
+  grid-column: 2 !important; grid-row: 1 !important;
+  font-size: clamp(10px, 1.12vw, 12.5px) !important;
+  font-weight: 900 !important;
+  line-height: 1.24 !important;
+  letter-spacing: -.01em !important;
+  overflow: hidden !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+#app #bossSelect .bossDiffGrid > .bossCard > .bossBadgeRow{
+  display: flex !important;
+  grid-column: 2 !important; grid-row: 2 !important;
+  align-items: center !important; justify-content: flex-start !important;
+  gap: 5px !important; min-width: 0 !important;
+}
+#app #bossSelect .bossDiffGrid .bossRank,
+#app #bossSelect .bossDiffGrid .bossUnlock{
+  font-size: var(--g83-fs-micro) !important;
+  line-height: 1.35 !important;
+  padding: 1px 6px !important;
+  white-space: nowrap !important;
+}
+#app #bossSelect .bossDiffGrid .bossTier{ padding: 0 !important; border: 0 !important; background: none !important }
+#app #bossSelect .bossDiffGrid > .bossCard::after{ display: none !important }
+/* Three layers stamp a '보스 일러스트' caption chip into the art box.
+   It reads at card size; on a 40px rail thumbnail it is a grey smear
+   over the artwork, so it is dropped in the rail only — the dossier
+   art is the one that is actually being looked at. */
+#app #bossSelect .bossDiffGrid > .bossCard .bossArtWrap::before{ display: none !important; content: none !important }
+#app #bossSelect .bossDiffGrid > .bossCard .bossArtShade{ display: none !important }
+#app #bossSelect .bossDiffGrid > .bossCard.locked,
+#app #bossSelect .bossDiffGrid > .bossCard.g45Locked{ opacity: .62 !important }
+#app #bossSelect .bossDiffGrid > .bossCard.g87Sel{
+  border-color: #cfe6a4b0 !important;
+  box-shadow: 0 0 0 1px #cfe6a480 inset, 0 8px 20px #0008 !important;
+  transform: none !important;
+}
+#app #bossSelect .bossDiffGrid > .bossCard.g87Sel::before{
+  content: ''; position: absolute; left: 0; top: 12%; bottom: 12%;
+  width: 3px; border-radius: 0 3px 3px 0; background: #cfe6a4;
+}
+
+/* ---- right: the dossier ---- */
+#app #bossSelect .g87Dossier{
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 40%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: clamp(8px, 1.1vw, 13px);
+  min-width: 0; min-height: 0; height: 100%;
+  padding: clamp(8px, 1.1vw, 14px);
+  border: 1px solid #ffffff16;
+  border-radius: var(--g83-r-lg, 18px);
+  background: linear-gradient(155deg, #16211a, #0a0e0b 58%, #050705);
+  box-shadow: var(--g83-lift-1, 0 14px 40px #0009);
+  overflow: hidden;
+}
+#app #bossSelect .g87Dossier.normal{ background: linear-gradient(155deg,#252031,#0d0a12 58%,#050406) }
+#app #bossSelect .g87Dossier.hard{ background: linear-gradient(155deg,#33201a,#130b08 58%,#050403) }
+#app #bossSelect .g87Dossier.final{ background: linear-gradient(155deg,#3a1f16,#150a07 58%,#050303) }
+
+#app #bossSelect .g87Art{
+  grid-column: 1; grid-row: 1 / span 2;
+  position: relative; min-height: 0;
+  border-radius: 13px; overflow: hidden;
+  border: 1px solid #ffffff18; background: #050705;
+}
+#app #bossSelect .g87Art img{
+  width: 100%; height: 100%; display: block;
+  object-fit: cover; object-position: center;
+}
+#app #bossSelect .g87Art::after{
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, transparent 45%, rgba(0,0,0,.55));
+}
+/* The rank already has a pill at the top of the brief; a second copy
+   burned into the corner of the art was just saying it twice. */
+#app #bossSelect .g87ArtTag{ display: none }
+
+#app #bossSelect .g87Body{
+  grid-column: 2; grid-row: 1;
+  display: flex; flex-direction: column; gap: 5px;
+  min-width: 0; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+#app #bossSelect .g87Pills{ display: flex; flex-wrap: wrap; align-items: center; gap: 5px }
+#app #bossSelect .g87Pills span{
+  font-size: var(--g83-fs-micro, 10px); font-weight: 900; line-height: 1.35;
+  padding: 2px 8px; border-radius: 999px;
+  background: #ffffff12; border: 1px solid #ffffff1e; color: #ffffffbb;
+  white-space: nowrap;
+}
+#app #bossSelect .g87Pills span.rank{ color: #cfe6a4; background: #cfe6a41c; border-color: #cfe6a43a }
+#app #bossSelect .g87Dossier.normal .g87Pills span.rank{ color: #e6d98f; background: #e6d98f1c; border-color: #e6d98f3a }
+#app #bossSelect .g87Dossier.hard   .g87Pills span.rank,
+#app #bossSelect .g87Dossier.final  .g87Pills span.rank{ color: #f0a279; background: #f0a2791c; border-color: #f0a2793a }
+#app #bossSelect .g87Name{
+  font-size: clamp(15px, 1.9vw, 24px) !important;
+  font-weight: 1000; line-height: 1.16; letter-spacing: -.015em;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+#app #bossSelect .g87Sub{
+  font-size: clamp(10px, 1.02vw, 12px) !important;
+  line-height: 1.42; color: #ffffff92; word-break: keep-all;
+}
+#app #bossSelect .g87Facts{ display: grid; gap: 4px; margin-top: 2px }
+#app #bossSelect .g87Facts p{
+  margin: 0;
+  font-size: clamp(10px, 1.02vw, 12px) !important;
+  line-height: 1.45; color: #ffffff9e;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+#app #bossSelect .g87Facts p b{ color: #fff; font-weight: 900 }
+#app #bossSelect .g87Loot{
+  font-size: clamp(10px, 1.02vw, 12px) !important;
+  line-height: 1.45; font-weight: 900; color: #e2c870;
+  word-break: keep-all;
+}
+#app #bossSelect .g87Daily{
+  align-self: flex-start;
+  font-size: var(--g83-fs-micro, 10px); font-weight: 900; line-height: 1.35;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid #ffffff1e; background: #ffffff0e; color: #ffffffb0;
+}
+#app #bossSelect .g87Daily.ready{ color: #d8ecb4; border-color: #cfe6a43a; background: #cfe6a418 }
+#app #bossSelect .g87Daily.ticket{ color: #f0cf8a; border-color: #f0cf8a3a; background: #f0cf8a18 }
+/* The game announces "this boss is locked" by writing into
+   .bossWarning, which lives in .bossIntro — a panel this overhaul
+   hides. Tapping a locked boss therefore did nothing visible at all.
+   The message is mirrored here instead, next to the button that was
+   just pressed. */
+#app #bossSelect .g87Warn{
+  margin-top: 2px;
+  font-size: clamp(10px, 1.02vw, 12px) !important;
+  line-height: 1.45; font-weight: 900; color: #ffbb88;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+
+#app #bossSelect .g87Go{
+  grid-column: 2; grid-row: 2;
+  width: 100%; min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid #cfe6a44a; border-radius: 12px;
+  background: linear-gradient(180deg, #cfe6a428, #cfe6a410);
+  color: #f2f7ea; font-weight: 1000; letter-spacing: .01em;
+  font-size: clamp(12px, 1.25vw, 15px) !important;
+  line-height: 1.3; text-align: center;
+  box-shadow: inset 0 1px 0 #ffffff18, 0 8px 20px #0007;
+  transition: transform var(--g83-fast), filter var(--g83-fast);
+}
+#app #bossSelect .g87Go:active{ transform: scale(.985); filter: brightness(1.08) }
+#app #bossSelect .g87Go.locked{
+  border-color: #ffffff20; background: #ffffff0c; color: #ffffff80;
+  box-shadow: none;
+}
+
+/* Short landscape (a 375px-tall SE): the brief was overflowing its
+   scroller by 5px, which is readable but means the daily chip sits
+   against the button. Reclaimed from the paddings. */
+@media (max-height: 400px){
+  #app #bossSelect .g87Dossier{ padding: 8px; gap: 9px }
+  #app #bossSelect .g87Body{ gap: 4px }
+  #app #bossSelect .g87Facts{ gap: 3px }
+  #app #bossSelect .g87Go{ min-height: 36px; padding: 8px 12px }
+}
+
+/* Portrait phones: the dossier drops below the rail instead of beside
+   it, and the rail becomes a short horizontal strip. (The game itself
+   asks to be rotated in portrait, so this is a safety net rather than a
+   layout players normally see.) */
+@media (max-width: 620px){
+  #app #bossSelect .bossHub{
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+  }
+  #app #bossSelect .bossDiffGrid{
+    flex-direction: row !important;
+    overflow-x: auto !important; overflow-y: hidden !important;
+    height: auto !important;
+    padding-bottom: 4px !important;
+  }
+  #app #bossSelect .bossDiffGrid > .bossCard{
+    width: clamp(128px, 42vw, 170px) !important;
+    flex: 0 0 auto !important;
+  }
+  #app #bossSelect .g87Dossier{
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(72px, 34%) minmax(0, 1fr) auto;
+  }
+  #app #bossSelect .g87Art{ grid-column: 1; grid-row: 1 }
+  #app #bossSelect .g87Body{ grid-column: 1; grid-row: 2 }
+  #app #bossSelect .g87Go{ grid-column: 1; grid-row: 3 }
+}
+</style>
+
+<script id="bugArenaG87BossEntry">
+(function(){
+'use strict';
+const VERSION='G87';
+const $=id=>document.getElementById(id);
+
+const screenEl=()=>$('bossSelect');
+const grid=()=>document.querySelector('#bossSelect .bossDiffGrid');
+
+/* Every card in the rail, in DOM order, whatever layer created it. */
+function cards(){
+  const g=grid(); if(!g) return [];
+  return [...g.children].filter(c=>c.classList&&c.classList.contains('bossCard'));
+}
+function keyOf(c){
+  return c.dataset.bossId || c.id || ('diff:'+(c.dataset.diff||''));
+}
+function txt(c,sel){ const e=c.querySelector(sel); return e?(e.textContent||'').trim():'' }
+function esc(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])) }
+
+let selKey=null, forwarding=false, dossier=null, lastSig='';
+
+function ensureDossier(){
+  const hub=document.querySelector('#bossSelect .bossHub');
+  if(!hub) return null;
+  if(dossier&&dossier.isConnected&&dossier.parentNode===hub) return dossier;
+  dossier=document.createElement('div');
+  dossier.className='g87Dossier';
+  dossier.innerHTML=
+    '<div class="g87Art"><img alt=""><div class="g87ArtTag"></div></div>'+
+    '<div class="g87Body">'+
+      '<div class="g87Pills"></div>'+
+      '<div class="g87Name"></div>'+
+      '<div class="g87Sub"></div>'+
+      '<div class="g87Facts"></div>'+
+      '<div class="g87Loot"></div>'+
+      '<div class="g87Daily"></div>'+
+      '<div class="g87Warn"></div>'+
+    '</div>'+
+    '<button type="button" class="g87Go"></button>';
+  hub.appendChild(dossier);
+  dossier.querySelector('.g87Go').addEventListener('click',e=>{
+    e.preventDefault(); e.stopPropagation();
+    forward();
+  });
+  return dossier;
+}
+
+/* The rail tile keeps every handler the original card was given by the
+   ten layers that built it. Tapping the dossier's button replays that
+   tap on the real card, so unlock checks, difficulty, FEROX selection
+   and the daily-ticket path all run exactly as before. */
+function warnEl(){ const d=ensureDossier(); return d?d.querySelector('.g87Warn'):null }
+function showWarn(t){
+  const w=warnEl(); if(!w) return;
+  w.textContent=t||''; w.style.display=t?'':'none';
+}
+function forward(){
+  const c=cards().find(x=>keyOf(x)===selKey);
+  if(!c) return;
+  const before=(document.querySelector('#bossSelect .bossWarning')||{}).textContent||'';
+  forwarding=true;
+  try{ c.click() }finally{ forwarding=false }
+  const after=(document.querySelector('#bossSelect .bossWarning')||{}).textContent||'';
+  if(after!==before&&/LOCKED|잠김/.test(after)) showWarn(after);
+}
+
+function isLocked(c){
+  return c.classList.contains('locked')||c.classList.contains('g45Locked')||
+         c.getAttribute('aria-disabled')==='true';
+}
+
+function pick(c,fromUser){
+  if(!c) return;
+  selKey=keyOf(c);
+  for(const x of cards()) x.classList.toggle('g87Sel', x===c);
+  if(fromUser){ try{ c.scrollIntoView({block:'nearest',inline:'nearest'}) }catch(_){} }
+  showWarn('');
+  lastSig='';
+  render();
+}
+
+function render(){
+  const d=ensureDossier(); if(!d) return;
+  let c=cards().find(x=>keyOf(x)===selKey);
+  if(!c){
+    c=cards().find(x=>!isLocked(x))||cards()[0];
+    if(!c) return;
+    selKey=keyOf(c);
+    for(const x of cards()) x.classList.toggle('g87Sel', x===c);
+  }
+
+  const locked=isLocked(c);
+  const img=c.querySelector('.bossArtImg');
+  const facts=[...c.querySelectorAll('.bossTraits > span')].map(s=>s.innerHTML);
+  const daily=c.querySelector('.g75BossDaily');
+  const sig=[keyOf(c),locked,img?(img.getAttribute('src')||''):'',txt(c,'.bossName'),txt(c,'.bossLatin'),
+             facts.join('|'),txt(c,'.g48BossLootHint'),daily?daily.className+'/'+daily.textContent:'',
+             txt(c,'.bossSelectBtn'),txt(c,'.bossConcept')].join('');
+  if(sig===lastSig) return;              /* nothing changed: no rewrite, no flicker */
+  lastSig=sig;
+
+  d.classList.remove('normal','hard','final');
+  if(c.id==='g45FeroxCard') d.classList.add('final');
+  else if(c.classList.contains('hard')) d.classList.add('hard');
+  else if(c.classList.contains('normal')) d.classList.add('normal');
+
+  const di=d.querySelector('.g87Art img');
+  const src=img?(img.getAttribute('src')||img.src||''):'';
+  if(src&&di.getAttribute('src')!==src){ di.setAttribute('src',src); di.alt=(img&&img.alt)||'' }
+  /* FEROX is the one card built by a different layer: it has no
+     .bossRank and it prints its tier as a <span class="g45FinalTag">
+     inside the name. Both are read off it explicitly so the emperor
+     shows the same pill row as the other nine. */
+  const finalCard=c.id==='g45FeroxCard';
+  const pills=d.querySelector('.g87Pills');
+  const rank=txt(c,'.bossRank')||(finalCard?txt(c,'.g45FinalTag')||'최종':'');
+  const unlock=txt(c,'.bossUnlock');
+  let ph='<span class="rank">'+esc(rank||'보스')+'</span>';
+  if(unlock) ph+='<span>'+esc(unlock)+'</span>';
+  let meta=txt(c,'.bossMeta');
+  if(meta){
+    /* '최종 · 12라운드' with 최종 already in the rank pill next to it. */
+    meta=meta.split('·').map(x=>x.trim()).filter(x=>x&&x!==rank).join(' · ');
+    if(meta) ph+='<span>'+esc(meta)+'</span>';
+  }
+  if(pills.innerHTML!==ph) pills.innerHTML=ph;
+
+  let nm=txt(c,'.bossName')||'???';
+  if(finalCard) nm=txt(c,'.g45FeroxName')||'???';
+  d.querySelector('.g87Name').textContent=nm;
+  d.querySelector('.g87Sub').textContent =txt(c,'.bossLatin')||txt(c,'.bossConcept')||'';
+
+  const fh=facts.map(f=>'<p>'+f+'</p>').join('');
+  const fe=d.querySelector('.g87Facts');
+  if(fe.innerHTML!==fh) fe.innerHTML=fh;
+
+  const loot=txt(c,'.g48BossLootHint');
+  const le=d.querySelector('.g87Loot');
+  le.textContent=loot; le.style.display=loot?'':'none';
+
+  const de=d.querySelector('.g87Daily');
+  if(daily){
+    de.textContent=daily.textContent||'';
+    de.className='g87Daily '+(daily.classList.contains('ready')?'ready':
+                              daily.classList.contains('ticket')?'ticket':'');
+    de.style.display=de.textContent?'':'none';
+  }else{ de.textContent=''; de.style.display='none' }
+
+  const w=d.querySelector('.g87Warn');
+  if(!w.textContent) w.style.display='none';
+
+  const go=d.querySelector('.g87Go');
+  const goText=txt(c,'.bossSelectBtn')||(locked?'잠김':'도전하기');
+  if(go.textContent!==goText) go.textContent=goText;
+  go.classList.toggle('locked',locked);
+}
+
+/* A tap on a tile highlights it; it no longer jumps straight into the
+   fight. That is what gives the brief somewhere to live — and it is
+   still one tap either way, because a second tap on the tile already
+   highlighted goes in, and the dossier button sits under the thumb on
+   the right of a landscape screen. */
+function onRailClick(e){
+  if(forwarding) return;
+  const c=e.target&&e.target.closest?e.target.closest('.bossCard'):null;
+  const g=grid();
+  if(!c||!g||!g.contains(c)) return;
+  e.preventDefault(); e.stopPropagation();
+  if(typeof e.stopImmediatePropagation==='function') e.stopImmediatePropagation();
+  if(keyOf(c)===selKey){ forward(); return }
+  pick(c,true);
+}
+
+/* The interception has to sit on `window`, not on the rail.
+   Two layers put capture-phase click gates on #bossSelect itself
+   (bindBossCardGate, installBossCardGate) and both call
+   stopImmediatePropagation() and jump straight to the fighter screen.
+   Capture runs ancestor-first, so a listener on the rail — a
+   descendant of #bossSelect — never gets a say. `window` is the first
+   node in the capture path, which is the only place a tap can be
+   turned into "highlight this one" before those gates consume it.
+   Forwarding re-dispatches the click with the flag down, so both gates
+   then run exactly as they always did. */
+function attach(){
+  const g=grid(); if(!g) return;
+  ensureDossier();
+  if(g.dataset.g87==='1') return;
+  g.dataset.g87='1';
+  if(!window.__g87Rail){
+    window.__g87Rail=1;
+    window.addEventListener('click',onRailClick,true);
+  }
+}
+
+/* The roster is rebuilt by renderBossRoster() and rewritten by half a
+   dozen refresh passes; the dossier follows whatever is in the rail. */
+let t=0;
+function sync(){
+  const s=screenEl();
+  if(!s||!s.classList.contains('active')) return;
+  attach();
+  const list=cards();
+  if(!list.length) return;
+  if(!list.some(x=>keyOf(x)===selKey)){
+    const first=list.find(x=>!isLocked(x))||list[0];
+    selKey=keyOf(first);
+    for(const x of list) x.classList.toggle('g87Sel', x===first);
+    lastSig='';
+  }
+  render();
+}
+function schedule(){ clearTimeout(t); t=setTimeout(sync,60) }
+
+function boot(){
+  const s=screenEl(); if(!s) return;
+  new MutationObserver(schedule).observe(s,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class','src']});
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(n){
+      const r=base.apply(this,arguments);
+      if(n==='boss'){ lastSig=''; schedule() }   /* setScene's name for #bossSelect */
+      return r;
+    };
+  }
+  /* setScene is not the only way in — some paths swap .active directly. */
+  document.addEventListener('click',schedule,true);
+  schedule();
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+
+window.BugArenaG87={version:VERSION,note:'Boss picker rebuilt as a rail + dossier so every boss, FEROX included, renders at one size.'};
+})();
+</script>
+
+
+<style id="bugArenaG88CloseStyle">
+/* ============================================================
+   G88 · ONE CLOSE BUTTON, ONE PLACE
+   ------------------------------------------------------------
+   G21 established a single close control at the top-left and hid the
+   legacy ones. Every panel added since then shipped its own, and they
+   drifted apart — measured on a 844x390 phone:
+
+     #g21Close        (hub, shop, codex, guide, boss)   left  7,7   58x44
+     #g23Close        (challenge)                       left 12,10  64x44
+     #g28Close        (enhance, sovereign marks)        left 12,10  64x44
+     #g45SovClose     (sovereign, standalone)           right 3.5vw
+     #g48Close        (boss workshop)                   right 797,13 32x44
+     #g49Close        (quick match)                     right 798,7  34x44
+     #g75MissionClose (missions)                        right 768,35 38x44, labelled "X"
+
+   So the button a player is looking for jumps corner to corner
+   depending on which menu they opened, and the two narrow ones were
+   squeezed so hard by the currency chips beside them that 닫기 wrapped
+   to two lines — 보스 공방's is 32px wide and reads 닫 / 기.
+
+   All of them are pinned to the same anchor here, at one size, and
+   every header that would have run underneath gets that width reserved
+   as padding so no title is covered or clipped.
+   ============================================================ */
+:root{
+  --g88-close-l: max(10px, env(safe-area-inset-left));
+  --g88-close-t: max(10px, env(safe-area-inset-top));
+  --g88-close-w: 64px;
+  --g88-close-h: 40px;
+  /* button + a finger's worth of breathing room */
+  --g88-lane: calc(var(--g88-close-l) + var(--g88-close-w) + 14px);
+}
+
+#g21Close,
+#g23Close,
+#g28Close,
+#g45SovClose,
+#g48Close,
+#g49Close,
+#g75MissionClose{
+  position: fixed !important;
+  left: var(--g88-close-l) !important;
+  right: auto !important;
+  top: var(--g88-close-t) !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  width: var(--g88-close-w) !important;
+  min-width: var(--g88-close-w) !important;
+  max-width: var(--g88-close-w) !important;
+  height: var(--g88-close-h) !important;
+  min-height: var(--g88-close-h) !important;
+  max-height: var(--g88-close-h) !important;
+  flex: none !important;
+  padding: 0 !important;
+  z-index: 65535 !important;
+  /* `display` is deliberately NOT set. #g21Close is shown and hidden by
+     script; forcing a display value here pinned it visible on top of
+     every panel's own close button. Centring is done with line-height
+     instead, which works whatever display each button already has. */
+  text-align: center !important;
+  box-sizing: border-box !important;
+  border: 1px solid rgba(255,255,255,.22) !important;
+  border-radius: 11px !important;
+  background: linear-gradient(180deg, rgba(26,32,27,.97), rgba(9,12,10,.97)) !important;
+  box-shadow: 0 8px 22px rgba(0,0,0,.45) !important;
+  color: #fff !important;
+  font-size: var(--g83-fs-sm, 12px) !important;
+  font-weight: 1000 !important;
+  line-height: var(--g88-close-h) !important;
+  letter-spacing: 0 !important;
+  /* 닫기 is two syllables; it must never wrap to 닫 / 기 again. */
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+}
+#g21Close:active,
+#g23Close:active,
+#g28Close:active,
+#g45SovClose:active,
+#g48Close:active,
+#g49Close:active,
+#g75MissionClose:active{
+  transform: translateY(1px) !important;
+  background: #202820 !important;
+}
+/* G45 hides its own close when the sovereign shell is embedded inside
+   the enhance panel; that hide has to keep winning over the block above. */
+#g28Enhance > .g45SovShell.g46Embedded #g45SovClose{ display: none !important }
+
+/* ---- the reserved lane -------------------------------------------
+   Each of these is the top-left block of a panel whose close button
+   now sits above it. */
+/* .g23Shell and .g28Shell are not listed: their headings sit in a
+   narrow left column where an 84px indent wraps them one word per line,
+   so those two clear the button with top padding instead (set in G83). */
+/* .g45SovHead is not listed either, for the same reason: it is the
+   heading of the narrow sovereign column, and an 86px indent turns
+   "SOVEREIGN IMPRINT / 제왕의 각인" into one character per line. Its
+   shell already starts below the button. */
+.g49Top,
+.g75MissionHead,
+.g48Head{
+  padding-left: var(--g88-lane) !important;
+  /* Pulling the button out of the flow shortened these header rows, and
+     the content below then slid up underneath it — quick match's status
+     card was half-covered. The row keeps the button's height either way. */
+  min-height: calc(var(--g88-close-h) + 8px) !important;
+  box-sizing: border-box !important;
+}
+
+/* The mission board and the workshop keep their currency chips on the
+   right of the same header row; with the button gone from that corner
+   the row has its full width back. */
+.g75HeadRight,
+.g48Head > *:last-child{ margin-right: 0 !important }
+</style>
+
+<script id="bugArenaG88Close">
+(function(){
+'use strict';
+const VERSION='G88';
+
+/* The missions panel labels its close control "X" while every other
+   panel says 닫기. One label, since they are now one control in one
+   place. Written once per element and re-checked only when that panel
+   rebuilds, so nothing is rewritten frame to frame. */
+const LABEL='닫기';
+const IDS=['g21Close','g23Close','g28Close','g45SovClose','g48Close','g49Close','g75MissionClose'];
+
+function relabel(){
+  for(const id of IDS){
+    const e=document.getElementById(id);
+    if(!e) continue;
+    const t=(e.textContent||'').trim();
+    if(!t||/^(x|×|✕|✖|close)$/i.test(t)){
+      if(t!==LABEL) e.textContent=LABEL;
+      if(!e.getAttribute('aria-label')) e.setAttribute('aria-label','닫기');
+    }
+  }
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(relabel,80) }
+
+function boot(){
+  relabel();
+  /* Triggered by input, not by a MutationObserver on <body>. A
+     subtree observer here fires on every HUD write during a fight —
+     that is 60 times a second — and it measured +1.5ms on the boss
+     battle's frame time for a pass that only ever has work to do when
+     a panel opens. Every panel in this game opens from a tap, so the
+     tap is the trigger; setScene covers the paths that do not.
+     pointerdown as well, because several panels build themselves in a
+     pointerdown handler and a drag ends without a click at all. */
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('pointerup',schedule,true);
+  document.addEventListener('click',schedule,true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(){ const r=base.apply(this,arguments); schedule(); return r };
+  }
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+
+window.BugArenaG88={version:VERSION,ids:IDS,note:'Every full-screen panel closes from the same top-left control.'};
+})();
+</script>
+
+
+<style id="bugArenaG89ShopArtStyle">
+/* ============================================================
+   G89 · SHOP ITEM ART
+   ------------------------------------------------------------
+   Every item was a 4px monoline glyph, in one flat rarity colour,
+   centred on a plain dark rounded rectangle. Nothing separated a 750
+   coin 희귀 from an 오리진 except the hue of the outline, and the
+   drawings read as wireframes rather than as objects.
+
+   The line art itself is kept — it is consistent and it scales — and
+   given the treatment an item slot gets in a mobile RPG: a lit socket
+   with a rim and an inner shadow, a rarity-graded ground, a raking
+   sheen, a corner flash whose weight rises with rarity, and a glyph
+   that is now filled with a vertical metal ramp, backed by its own
+   dark outline and lifted off the plate by a coloured glow.
+   ============================================================ */
+
+/* ---- the socket ---- */
+#classicShop .v5Icon,
+#classicShop .v5BigIcon,
+#v5Acquire > div{
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 13px !important;
+  border: 1px solid color-mix(in srgb, var(--r) 46%, transparent) !important;
+  background:
+    radial-gradient(120% 96% at 50% 6%, color-mix(in srgb, var(--r) 40%, transparent), transparent 62%),
+    radial-gradient(84% 70% at 50% 112%, color-mix(in srgb, var(--r) 26%, transparent), transparent 70%),
+    linear-gradient(168deg, #1b211d 0%, #0a0e0b 46%, #050806 100%) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--r) 55%, transparent),
+    inset 0 -14px 22px rgba(0,0,0,.55),
+    0 6px 16px rgba(0,0,0,.45),
+    0 0 0 1px rgba(0,0,0,.5) !important;
+}
+/* raking light across the top-left corner */
+#classicShop .v5Icon::before,
+#classicShop .v5BigIcon::before,
+#v5Acquire > div::before{
+  content: '';
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(128deg,
+    rgba(255,255,255,.16) 0%,
+    rgba(255,255,255,.05) 26%,
+    transparent 48%);
+}
+/* rarity flash in the lower-right corner */
+#classicShop .v5Icon::after,
+#classicShop .v5BigIcon::after,
+#v5Acquire > div::after{
+  content: '';
+  position: absolute; z-index: 0; pointer-events: none;
+  right: -34%; bottom: -46%; width: 92%; height: 92%;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--r) 60%, transparent), transparent 68%);
+  filter: blur(5px);
+  opacity: .75;
+}
+
+/* The socket was stretching to the full height of the card row — a
+   50x92 bar, which reads as a strip of colour rather than as an item
+   slot. Squared off and centred, at the size a thumb actually aims for. */
+#classicShop .v5Item{ grid-template-columns: 58px minmax(0,1fr) !important }
+#classicShop .v5Item .v5Icon{
+  width: 58px !important; height: 58px !important;
+  align-self: center !important;
+}
+#classicShop .v5Item .v5Icon svg{ width: 44px !important; height: 44px !important }
+#classicShop .v5DetailHero{ grid-template-columns: 68px minmax(0,1fr) !important }
+#classicShop .v5DetailHero .v5BigIcon{
+  width: 68px !important; height: 68px !important; align-self: center !important;
+}
+#classicShop .v5DetailHero .v5BigIcon svg{ width: 52px !important; height: 52px !important }
+
+/* ---- the glyph ---- */
+#classicShop .v5Icon svg,
+#classicShop .v5BigIcon svg,
+#v5Acquire > div svg{
+  position: relative; z-index: 1;
+  /* the gradient stops read currentColor, so the ramp is per-rarity */
+  color: var(--r);
+  overflow: visible;
+  filter:
+    drop-shadow(0 0 7px color-mix(in srgb, var(--r) 62%, transparent))
+    drop-shadow(0 2px 1px rgba(0,0,0,.75));
+}
+/* Upgraded by the script below: a dark copy of the paths sits behind the
+   lit ones, so the drawing keeps its shape against a bright plate. */
+#classicShop svg .g89Back,
+#v5Acquire svg .g89Back{
+  fill: none;
+  stroke: rgba(3,5,4,.8);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#classicShop svg[data-g89="1"] > path,
+#classicShop svg[data-g89="1"] > circle,
+#v5Acquire svg[data-g89="1"] > path,
+#v5Acquire svg[data-g89="1"] > circle{
+  stroke-width: 4.4 !important;
+}
+
+/* An 오리진 item is the top of the ladder and should look like it. */
+#classicShop .v5Item[style*="ff746d"] .v5Icon,
+#classicShop .v5DetailHero[style*="ff746d"] .v5BigIcon{
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--r) 78%, transparent),
+    inset 0 -14px 22px rgba(0,0,0,.55),
+    0 8px 20px color-mix(in srgb, var(--r) 26%, transparent),
+    0 0 0 1px rgba(0,0,0,.5) !important;
+}
+
+/* A locked item reads as not-yet-yours, but it keeps its rarity: on a
+   fresh save almost everything is locked, and draining the colour out of
+   all of it turned the whole shop grey. */
+#classicShop .v5Item.locked .v5Icon{
+  filter: saturate(.72) brightness(.86);
+}
+#classicShop .v5Item.locked .v5Icon::after{ opacity: .45 }
+
+/* The 해금 장비 badge is pinned to the card's top-right corner, on top
+   of the build tag that the meta row right-aligns into the same spot —
+   which is the "two labels printed over each other" case on this screen.
+   The row gives the badge its own lane. */
+#classicShop .v5Item.g44Prestige::after,
+#classicShop .v5Cos.g44Prestige::after{
+  font-size: 9px !important;
+  padding: 2px 7px !important;
+  line-height: 1.35 !important;
+  white-space: nowrap !important;
+}
+#classicShop .v5Item.g44Prestige .v5Meta{ padding-right: 58px !important }
+#classicShop .v5Cos.g44Prestige > div{ padding-right: 58px !important }
+/* and the row itself stays one line — a 58px lane on a 263px card is
+   enough to clear the badge but not enough to wrap "오리진 · 전설" into
+   two, which pushed the price off the bottom of the card. */
+#classicShop .v5Item .v5Meta{ flex-wrap: nowrap !important; gap: 6px !important }
+#classicShop .v5Item .v5Meta > span,
+#classicShop .v5Item .v5Meta > b{
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  min-width: 0 !important;
+}
+
+/* An equipped item is marked on the socket, where the eye already is. */
+#classicShop .v5Item.equipped .v5Icon{
+  border-color: color-mix(in srgb, var(--r) 85%, transparent) !important;
+}
+</style>
+
+<script id="bugArenaG89ShopArt">
+(function(){
+'use strict';
+const VERSION='G89';
+const NS='http://www.w3.org/2000/svg';
+
+/* iconSvg() is a top-level `const`, so it is a lexical binding and not a
+   property of the global object — it cannot be wrapped from out here.
+   The drawings are upgraded in the DOM after they are rendered instead,
+   which also covers the purchase flash and anything a later layer draws
+   with the same helper. The pass only ADDS nodes inside the <svg>; it
+   never touches a size, so a shop rebuild cannot make anything jump. */
+let seq=0;
+function upgrade(svg){
+  if(!svg||svg.dataset.g89==='1') return;
+  svg.dataset.g89='1';
+
+  const kids=[...svg.children].filter(n=>n.namespaceURI===NS&&n.tagName!=='defs');
+  if(!kids.length) return;
+
+  /* per-svg defs: the stops read currentColor, which the CSS above sets
+     to the item's rarity colour, so one definition serves every rarity */
+  /* Each drawing gets its OWN gradient id. A single shared id would be
+     duplicated across every card, url(#id) resolves to the first match
+     in the document, and every item would then inherit the first card's
+     rarity colour through that gradient's currentColor. */
+  const gid='g89Metal'+(++seq);
+  const defs=document.createElementNS(NS,'defs');
+  const lg=document.createElementNS(NS,'linearGradient');
+  lg.setAttribute('id',gid);
+  lg.setAttribute('x1','0'); lg.setAttribute('y1','0');
+  lg.setAttribute('x2','0'); lg.setAttribute('y2','1');
+  /* A short white highlight at the very top, then the rarity colour for
+     most of the drop. A long white ramp washed the hue out completely
+     and every item looked the same pale grey. */
+  const stops=[
+    ['0',    '#ffffff',      '.85'],
+    ['.22',  'currentColor', '1'],
+    ['.72',  'currentColor', '1'],
+    ['1',    '#000000',      '.30']
+  ];
+  for(const [o,c,a] of stops){
+    const st=document.createElementNS(NS,'stop');
+    st.setAttribute('offset',o);
+    st.setAttribute('stop-color',c);
+    st.setAttribute('stop-opacity',a);
+    lg.appendChild(st);
+  }
+  defs.appendChild(lg);
+  svg.insertBefore(defs,svg.firstChild);
+
+  const back=document.createElementNS(NS,'g');
+  back.setAttribute('class','g89Back');
+  for(const k of kids) back.appendChild(k.cloneNode(true));
+  svg.insertBefore(back,defs.nextSibling);
+
+  /* Set as an important inline style: the stylesheet rules above are
+     themselves !important, and a presentation attribute would lose. */
+  for(const k of kids) k.style.setProperty('stroke','url(#'+gid+')','important');
+}
+
+function sweep(){
+  const shop=document.getElementById('classicShop');
+  if(shop) for(const s of shop.querySelectorAll('.v5Icon svg, .v5BigIcon svg')) upgrade(s);
+  const fx=document.getElementById('v5Acquire');
+  if(fx) for(const s of fx.querySelectorAll('svg')) upgrade(s);
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(sweep,40) }
+
+function boot(){
+  sweep();
+  /* The shop rebuilds its whole grid on every tab change and every
+     purchase, and both are driven from a pointer event on the shop
+     itself — so the pointer event is the trigger. A <body> subtree
+     observer would also have to run through every HUD write of every
+     fight, for a pass whose only subject is a panel that is closed at
+     the time. All three of pointerdown/pointerup/click: the shop's own
+     handlers run on pointerdown — that is where the tab switch and the
+     purchase rebuild the grid — and a drag ends without a click. */
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('pointerup',schedule,true);
+  document.addEventListener('click',schedule,true);
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+
+window.BugArenaG89={version:VERSION,note:'Shop items rendered as lit rarity sockets with metal-ramped glyphs.'};
+})();
+</script>
+
+
+<style id="bugArenaG90ChallengeStyle">
+/* ============================================================
+   G90 · 불멸왕 CHALLENGE — read the mode, not a boss fight
+   ------------------------------------------------------------
+   The challenge target is immortal: its hp is 1e9 and nothing the
+   player does moves it. The battle HUD still gave it the standard boss
+   plate, so the top-right corner showed a 체력 bar frozen at 100% for
+   the whole 90 seconds, next to a 1라운드 tag for a mode that has no
+   rounds. Two pieces of furniture that can never say anything.
+
+   Both are dropped, and the plate keeps the one line that matters —
+   what you are hitting. The run's actual numbers already have their
+   own row (누적 피해 / 초당 피해 / 최고 기록) right below.
+   ============================================================ */
+#app.challengeBattle #hud .hudSide.right .meterRow,
+#app.challengeBattle #hud .hudSide.right .g83NameTag{
+  display: none !important;
+}
+#app.challengeBattle #hud .hudSide.right .g83Meters{
+  height: auto !important;
+  min-height: 0 !important;
+}
+/* With the bar gone the plate is one line; it should not keep a boss
+   plate's height reserved under it. */
+#app.challengeBattle #hud .hudSide.right{
+  align-content: start !important;
+  align-items: start !important;
+}
+/* Same reasoning for the round tag under the clock: the challenge is a
+   single 90-second run, so "1라운드 · 0승" is a counter that stays at
+   1 and 0 from the first frame to the last. The clock keeps the space. */
+#app.challengeBattle #hud .timer .roundTag{ display: none !important }
+</style>
+
+<script id="bugArenaG90ChallengeTarget">
+(function(){
+'use strict';
+const VERSION='G90';
+const TAU=Math.PI*2;
+const root=document.documentElement;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* Same body the hitbox was matched to in G86. */
+const PUPA_CX=657, PUPA_HALF=228, PUPA_H=380;
+
+function GND(){ const g=G('GROUND'); return isFinite(g)?g:560 }
+function inChallenge(){
+  const s=G('state');
+  return !!(s&&s.battle&&(s.battle.challenge||s.challengeMode)) ||
+         document.getElementById('app')?.classList.contains('challengeBattle');
+}
+
+/* ------------------------------------------------------------------
+   The cocoon is painted into the arena background — it is not a sprite,
+   which is exactly why hitting it felt like hitting the map. It cannot
+   be moved or redrawn, so it is lit instead: a contact shadow that puts
+   it ON the floor rather than in the wall, a separation halo, a rim
+   that traces its silhouette, a core that breathes, and embers rising
+   off its base. None of it repaints the artwork; all of it is light,
+   and light is what makes the difference between scenery and a thing
+   standing in front of you.
+   ------------------------------------------------------------------ */
+function presence(c){
+  const s=G('state');
+  const t=num(s&&s.now,0)/1000;
+  const ch=s&&s.battle&&s.battle.challenge;
+  const wear=cl(num(ch&&ch.score,0)/2400,0,1);
+  const f=s&&s.battle&&s.battle.e;
+  const hurt=cl(num(f&&f.hurtT,0)/0.18,0,1);
+
+  const x=PUPA_CX, yBase=GND()+4;
+  const hw=PUPA_HALF, hh=PUPA_H;
+  /* one slow breath, ~4.5s; everything below rides on it */
+  const breath=0.5+0.5*Math.sin(t*1.4);
+  const cy=yBase-hh*0.52-breath*2.5;
+
+  c.save();
+
+  /* 1 — contact shadow. Without it the body reads as painted onto the
+         back wall; with it, it is sitting on the ground the player
+         walks on. */
+  c.save();
+  c.globalAlpha=0.42+0.06*breath;
+  const sh=c.createRadialGradient(x,yBase,hw*0.05,x,yBase,hw*1.02);
+  sh.addColorStop(0,'rgba(0,0,0,.85)');
+  sh.addColorStop(0.6,'rgba(0,0,0,.42)');
+  sh.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=sh;
+  c.translate(x,yBase); c.scale(1,0.17); c.translate(-x,-yBase);
+  c.beginPath(); c.arc(x,yBase,hw*1.02,0,TAU); c.fill();
+  c.restore();
+
+  /* 2 — backlight. A dark separation ring was tried here first and it
+         read as a grey smear painted around the body: the cave is
+         already dark, so darkening it further separates nothing. Bleeding
+         the cocoon's own light OUT into the cave is what lifts it off
+         the wall, and it costs the player no visibility. */
+  c.save();
+  c.globalCompositeOperation='lighter';
+  c.globalAlpha=0.16+0.09*breath+0.10*wear;
+  const back=c.createRadialGradient(x,cy+hh*0.10,hw*0.55,x,cy+hh*0.06,hw*1.55);
+  back.addColorStop(0,'rgba(255,186,96,.52)');
+  back.addColorStop(0.45,'rgba(196,110,44,.24)');
+  back.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=back;
+  c.translate(x,cy); c.scale(1,(hh*0.62)/(hw*1.55)); c.translate(-x,-cy);
+  c.beginPath(); c.arc(x,cy,hw*1.55,0,TAU); c.fill();
+  c.restore();
+
+  /* 3 — the core, breathing. The cave art lights the cocoon from below,
+         so the swell is warm and seated low in the body. */
+  c.save();
+  c.globalCompositeOperation='lighter';
+  c.globalAlpha=(0.16+0.20*breath)*(0.65+0.35*wear)+0.30*hurt;
+  const core=c.createRadialGradient(x,cy+hh*0.16,hw*0.06,x,cy+hh*0.10,hw*0.95);
+  core.addColorStop(0,'rgba(255,214,132,.95)');
+  core.addColorStop(0.42,'rgba(226,140,58,.42)');
+  core.addColorStop(1,'rgba(0,0,0,0)');
+  c.fillStyle=core;
+  c.translate(x,cy); c.scale(1,(hh*0.52)/(hw*0.95)); c.translate(-x,-cy);
+  c.beginPath(); c.arc(x,cy,hw*0.95,0,TAU); c.fill();
+  c.restore();
+
+  /* 4 — NO outline. A stroked ellipse along the silhouette was the first
+         attempt and it was the worst thing on the screen: the painted
+         cocoon is an egg that narrows at the top, so a mathematical
+         ellipse traced a visibly wrong shape floating over the art. Any
+         hard edge here has to match a painting it cannot know, so the
+         separation is carried entirely by light that has no edge — the
+         backlight above and the core below. */
+
+  /* 5 — embers off the base. Deterministic, so nothing flickers between
+         frames and no allocation happens per frame. */
+  c.save();
+  c.globalCompositeOperation='lighter';
+  for(let i=0;i<9;i++){
+    const seed=i*1.913;
+    const life=(t*0.26+i*0.111)%1;
+    const ex=x+Math.sin(seed*3.1+life*2.2)*hw*0.62;
+    const ey=yBase-life*hh*0.86;
+    const a=(1-life)*(0.20+0.26*wear);
+    if(a<=0.01) continue;
+    c.globalAlpha=a;
+    const r=1.4+2.2*(1-life);
+    const gd=c.createRadialGradient(ex,ey,0,ex,ey,r*3.2);
+    gd.addColorStop(0,'rgba(255,226,158,.95)');
+    gd.addColorStop(1,'rgba(255,150,60,0)');
+    c.fillStyle=gd;
+    c.beginPath(); c.arc(ex,ey,r*3.2,0,TAU); c.fill();
+  }
+  c.restore();
+
+  c.restore();
+}
+
+/* The light goes in the target's own draw slot, not over the finished
+   frame. Wrapping drawBattle was tried first and it painted the halo
+   and the rim over the player whenever he closed in — an object cannot
+   cast its separation shadow onto the thing standing in front of it.
+   In the entity slot it stacks like any other fighter, and G86's hit
+   reaction still runs after it through the delegate below. */
+function isTarget(f){
+  const s=G('state');
+  return !!(f && s && s.battle && f===s.battle.e);
+}
+try{
+  const prev=G('drawSpriteFrame');
+  if(typeof prev==='function'){
+    globalThis.drawSpriteFrame=function(c,f,override,alpha){
+      if(c && isTarget(f) && inChallenge()){
+        const s=G('state');
+        if(!(s&&s.battle&&s.battle.origin)){
+          try{
+            c.save();
+            c.globalAlpha=alpha==null?1:alpha;
+            presence(c);
+            c.restore();
+          }catch(_){}
+        }
+      }
+      return prev.apply(this,arguments);
+    };
+  }
+}catch(_){}
+
+window.BugArenaG90={version:VERSION,note:'Challenge target lit as an object standing in the arena; immortal health bar removed from the plate.'};
 })();
 </script>
 
