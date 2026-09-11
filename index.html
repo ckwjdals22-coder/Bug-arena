@@ -37226,20 +37226,28 @@ const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
    the pixels it needs instead of a fifth.
    ------------------------------------------------------------------ */
 function hiRes(id){
+  /* The boss's OWN illustration — the one the entry cut-in shows — is
+     BugOriginalV18.INTRO_ART, keyed by boss id, 1280x720 each. That is
+     what the card should draw.
+
+     Two wrong sources were tried before this one and both are worth
+     naming so they are not tried again:
+       · roster `art`, 760x520 — sharp, but it is the generated
+         schematic plate, not a painting
+       · ASSETS.origin_<species>, 1280x720 — a painting, but it is the
+         PLAYER character's ORIGIN cut-in for that species, so the boss
+         card ended up showing the same picture as the character select
+     What the card used to draw, G40_BOSS_THUMBS, is a 256x144 downscale
+     of the right image: correct subject, but blown up past 1:1 to
+     335x208 device pixels and cropped to a different aspect on top of
+     that, which is the blur. */
+  const IA=window.BugOriginalV18&&window.BugOriginalV18.INTRO_ART;
+  if(IA&&typeof IA[id]==='string'&&IA[id].startsWith('data:')) return IA[id];
+  /* FEROX has no plate of its own; it wears a species, declared as
+     visual:'sia'. */
   const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
   const meta=by&&by[id];
   const A=G('ASSETS'); if(!A) return null;
-  /* `visual` is the species key this boss wears; FEROX declares
-     visual:'sia' the same way. ASSETS.origin_<species> is a 1280x720
-     painting of that creature — against the card's 335x208 device
-     pixels that is four times the detail it needs, where the
-     G40_BOSS_THUMBS entry the card used to draw is 256x144 and had to
-     be blown up past 1:1 and then cropped to a different aspect on top
-     of that. That double resample is the blur.
-
-     The roster's own `art` field was tried first and rejected: it is
-     760x520 and sharp, but it is the generated schematic plate, not a
-     painting of the boss. */
   let v=meta&&meta.visual;
   if(!v&&typeof id==='string') v=id.split('_')[0];
   if(!v) return null;
@@ -37811,6 +37819,123 @@ setTimeout(arm,0);
 setTimeout(arm,600);
 
 window.BugArenaG93={version:VERSION,setMode:m=>{MODE=m},getMode:()=>MODE,note:'Special-move VFX composited through a bloom buffer and given a core flash, shockwave, streaks and sparks.'};
+})();
+</script>
+
+
+<script id="bugArenaG94BossLadder">
+(function(){
+'use strict';
+const VERSION='G94';
+
+/* ============================================================
+   G94 · BOSS UNLOCK LADDER
+
+   The nine bosses sat on three rungs — three at LV.1, three at LV.10,
+   three at LV.30 — so the whole roster opened in three jumps and there
+   was nothing to reach for between 10 and 30. They are spread over five
+   rungs instead:
+
+     LV.1   참수자 · 베르단트        LV.20  천공여제 · 레기나
+            그물의 악몽 · 녹티스            마하 사냥꾼 · 아주르
+     LV.10  심연 포획자 · 네펜테스   LV.30  철갑 폭군 · 골리앗
+            독제 · 아크라브                 천족재앙 · 카타클리즘
+                                     LV.40  대악의 처형왕 · 모드레드
+
+   The 제왕 리옥크 (FEROX) keeps its own condition: clear 12 rounds.
+
+   Only the unlock LEVEL moves. The 쉬움 / 보통 / 어려움 tier drives the
+   fight itself — stat scaling and rewards — and the request was about
+   when a boss opens, not how hard it hits, so those are left alone.
+   ============================================================ */
+const LADDER={
+  mantis_verdant:       1,
+  tarantula_noctis:     1,
+  waterbug_abyss:      10,
+  scorpion_akrab:      10,
+  hornet_regina:       20,
+  dragonfly_mach:      20,
+  beetle_goliath:      30,
+  centipede_cataclysm: 30,
+  stag_mordred:        40
+};
+
+/* ROSTER and BY_ID hold the SAME objects — verified, not assumed — so
+   one write per boss reaches every reader: the card builder, the two
+   capture-phase unlock gates, the refresh pass that rewrites the
+   "LV.n 해금" pill, and the locked message. Every one of them reads
+   `req` at the moment it runs. */
+function applyLadder(){
+  const V9=window.BugOriginalV9;
+  if(!V9||!V9.ROSTER) return false;
+  let n=0;
+  for(const m of V9.ROSTER){
+    const want=LADDER[m.id];
+    if(want!=null&&m.req!==want){ m.req=want; n++; }
+  }
+  const by=V9.BY_ID;
+  if(by) for(const id in LADDER){ if(by[id]&&by[id].req!==LADDER[id]) by[id].req=LADDER[id]; }
+  return true;
+}
+
+/* The blurb under the boss heading still described the old three rungs.
+   It is inside .bossIntro, which this overhaul hides, but a refresh
+   pass rewrites it on every open and it should not be carrying a wrong
+   number if it is ever shown again. */
+const BLURB='해금 조건 · LV.1 / LV.10 / LV.20 / LV.30 / LV.40 · 제왕 리옥크는 12라운드 돌파로 해금됩니다.';
+function fixBlurb(){
+  const w=document.querySelector('#bossSelect .bossWarning');
+  if(w&&!/LOCKED|잠김/.test(w.textContent||'')&&w.textContent!==BLURB) w.textContent=BLURB;
+}
+
+/* Tapping a locked boss used to write its reason into .bossWarning, and
+   that element is hidden on this layout, so the tap produced nothing a
+   player could see. The card already reads "LV.30 필요" before the tap;
+   this makes the tap itself answer too, through the game's own callout
+   channel. */
+let lastToast=0;
+function onTap(e){
+  const card=e.target&&e.target.closest?e.target.closest('#bossSelect .bossCard'):null;
+  if(!card) return;
+  const locked=card.classList.contains('locked')||card.classList.contains('g45Locked')||
+               card.getAttribute('aria-disabled')==='true';
+  if(!locked) return;
+  const now=Date.now();
+  if(now-lastToast<700) return;       /* one per tap, not one per event */
+  lastToast=now;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[card.dataset.bossId];
+  let msg;
+  if(card.id==='g45FeroxCard') msg='12라운드를 돌파하면 해금됩니다';
+  else if(m) msg='LV.'+m.req+' 달성 후 도전할 수 있습니다';
+  else msg='아직 해금되지 않았습니다';
+  try{ if(typeof showMessage==='function') showMessage(msg,.9,'#f0b98a') }catch(_){}
+}
+
+function boot(){
+  applyLadder();
+  fixBlurb();
+  /* The roster is rebuilt on every open; re-assert after each, and keep
+     it off a <body> observer for the same reason as the other passes —
+     it would run through every HUD write of every fight. */
+  document.addEventListener('pointerdown',onTap,true);
+  document.addEventListener('click',()=>{ applyLadder(); setTimeout(fixBlurb,60) },true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(n){ applyLadder(); const r=base.apply(this,arguments);
+      if(n==='boss') setTimeout(fixBlurb,60); return r };
+  }
+  const s=document.getElementById('bossSelect');
+  if(s) new MutationObserver(()=>{ applyLadder() }).observe(s,{childList:true,subtree:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+/* BugOriginalV9 is built earlier in the file, but re-assert once more in
+   case a later layer rebuilds the roster from its own copy. */
+setTimeout(applyLadder,0);
+setTimeout(applyLadder,800);
+
+window.BugArenaG94={version:VERSION,ladder:LADDER,note:'Nine bosses spread over LV.1/10/20/30/40; FEROX still unlocks on 12 rounds.'};
 })();
 </script>
 
