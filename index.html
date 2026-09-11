@@ -36378,520 +36378,7 @@ window.BugArenaG86={
 </script>
 
 
-<style id="bugArenaG87BossEntryStyle">
-/* ============================================================
-   G87 · BOSS ENTRY — rail + dossier
-   ------------------------------------------------------------
-   The boss picker was a wrapping grid of cards, and every layer that
-   ever touched it appended one more block to the card: badges, art,
-   name, latin, three trait paragraphs, a loot line, a CTA and a daily
-   reward chip. With the card sized by its content that came to 397px
-   on a 390px-tall phone — one card never fit on screen. The last card
-   (the FEROX emperor, 제왕 리옥크) was worse: it is alone on its flex
-   line, so flex-grow handed it the whole remaining row, 372x485. That
-   is the "so big you can barely see it" case.
 
-   Cards cannot carry that much text at a legible size in 276px of
-   height, so the screen is split the way console and mobile boss
-   pickers do it: a scrolling RAIL of small identical tiles on the
-   left, one DOSSIER on the right showing everything about whichever
-   tile is highlighted. Every boss now renders at exactly the same
-   size, FEROX included, and the dossier has room for the art and the
-   full brief at a readable size.
-   ============================================================ */
-
-/* ---- the two-pane shell ---- */
-#app #bossSelect .bossHub{
-  display: grid !important;
-  grid-template-columns: clamp(148px, 21.5vw, 214px) minmax(0, 1fr) !important;
-  grid-template-rows: minmax(0, 1fr) !important;
-  gap: clamp(8px, 1.2vw, 14px) !important;
-  align-items: stretch !important;
-  min-height: 0 !important;
-}
-
-/* ---- left: the rail ---- */
-#app #bossSelect .bossDiffGrid{
-  display: flex !important;
-  flex-direction: column !important;
-  flex-wrap: nowrap !important;
-  align-content: stretch !important;
-  align-items: stretch !important;
-  gap: 6px !important;
-  height: 100% !important;
-  min-height: 0 !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  padding: 2px 6px 6px 2px !important;
-  scroll-snap-type: none !important;
-  scrollbar-width: thin;
-}
-
-/* A tile: thumbnail, name, tier. Nothing else — the rest of what the
-   card carries is shown in the dossier, at a size worth reading. */
-#app #bossSelect .bossDiffGrid > .bossCard{
-  flex: 0 0 auto !important;
-  display: grid !important;
-  grid-template-columns: clamp(38px, 5vw, 50px) minmax(0, 1fr) !important;
-  grid-template-rows: auto auto !important;
-  align-items: center !important;
-  align-self: stretch !important;
-  gap: 1px clamp(6px, .8vw, 9px) !important;
-  width: auto !important;
-  min-width: 0 !important;
-  max-width: none !important;
-  height: auto !important;
-  min-height: 0 !important;
-  padding: clamp(5px, .7vw, 8px) !important;
-  border-radius: 12px !important;
-  overflow: hidden !important;
-  text-align: left !important;
-  scroll-snap-align: none !important;
-  transition: border-color var(--g83-fast), background var(--g83-fast), transform var(--g83-fast);
-}
-#app #bossSelect .bossDiffGrid > .bossCard > *{ display: none !important }
-#app #bossSelect .bossDiffGrid > .bossCard > .bossArtWrap{
-  display: block !important;
-  grid-column: 1 !important; grid-row: 1 / span 2 !important;
-  width: 100% !important; height: auto !important;
-  aspect-ratio: 1 / 1 !important;
-  border-radius: 9px !important;
-  flex: none !important;
-  box-shadow: none !important;
-}
-#app #bossSelect .bossDiffGrid > .bossCard > .bossName{
-  grid-column: 2 !important; grid-row: 1 !important;
-  font-size: clamp(10px, 1.12vw, 12.5px) !important;
-  font-weight: 900 !important;
-  line-height: 1.24 !important;
-  letter-spacing: -.01em !important;
-  overflow: hidden !important;
-  display: -webkit-box !important;
-  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
-#app #bossSelect .bossDiffGrid > .bossCard > .bossBadgeRow{
-  display: flex !important;
-  grid-column: 2 !important; grid-row: 2 !important;
-  align-items: center !important; justify-content: flex-start !important;
-  gap: 5px !important; min-width: 0 !important;
-}
-#app #bossSelect .bossDiffGrid .bossRank,
-#app #bossSelect .bossDiffGrid .bossUnlock{
-  font-size: var(--g83-fs-micro) !important;
-  line-height: 1.35 !important;
-  padding: 1px 6px !important;
-  white-space: nowrap !important;
-}
-#app #bossSelect .bossDiffGrid .bossTier{ padding: 0 !important; border: 0 !important; background: none !important }
-#app #bossSelect .bossDiffGrid > .bossCard::after{ display: none !important }
-/* Three layers stamp a '보스 일러스트' caption chip into the art box.
-   It reads at card size; on a 40px rail thumbnail it is a grey smear
-   over the artwork, so it is dropped in the rail only — the dossier
-   art is the one that is actually being looked at. */
-#app #bossSelect .bossDiffGrid > .bossCard .bossArtWrap::before{ display: none !important; content: none !important }
-#app #bossSelect .bossDiffGrid > .bossCard .bossArtShade{ display: none !important }
-#app #bossSelect .bossDiffGrid > .bossCard.locked,
-#app #bossSelect .bossDiffGrid > .bossCard.g45Locked{ opacity: .62 !important }
-#app #bossSelect .bossDiffGrid > .bossCard.g87Sel{
-  border-color: #cfe6a4b0 !important;
-  box-shadow: 0 0 0 1px #cfe6a480 inset, 0 8px 20px #0008 !important;
-  transform: none !important;
-}
-#app #bossSelect .bossDiffGrid > .bossCard.g87Sel::before{
-  content: ''; position: absolute; left: 0; top: 12%; bottom: 12%;
-  width: 3px; border-radius: 0 3px 3px 0; background: #cfe6a4;
-}
-
-/* ---- right: the dossier ---- */
-#app #bossSelect .g87Dossier{
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 40%) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: clamp(8px, 1.1vw, 13px);
-  min-width: 0; min-height: 0; height: 100%;
-  padding: clamp(8px, 1.1vw, 14px);
-  border: 1px solid #ffffff16;
-  border-radius: var(--g83-r-lg, 18px);
-  background: linear-gradient(155deg, #16211a, #0a0e0b 58%, #050705);
-  box-shadow: var(--g83-lift-1, 0 14px 40px #0009);
-  overflow: hidden;
-}
-#app #bossSelect .g87Dossier.normal{ background: linear-gradient(155deg,#252031,#0d0a12 58%,#050406) }
-#app #bossSelect .g87Dossier.hard{ background: linear-gradient(155deg,#33201a,#130b08 58%,#050403) }
-#app #bossSelect .g87Dossier.final{ background: linear-gradient(155deg,#3a1f16,#150a07 58%,#050303) }
-
-#app #bossSelect .g87Art{
-  grid-column: 1; grid-row: 1 / span 2;
-  position: relative; min-height: 0;
-  border-radius: 13px; overflow: hidden;
-  border: 1px solid #ffffff18; background: #050705;
-}
-#app #bossSelect .g87Art img{
-  width: 100%; height: 100%; display: block;
-  object-fit: cover; object-position: center;
-}
-#app #bossSelect .g87Art::after{
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(180deg, transparent 45%, rgba(0,0,0,.55));
-}
-/* The rank already has a pill at the top of the brief; a second copy
-   burned into the corner of the art was just saying it twice. */
-#app #bossSelect .g87ArtTag{ display: none }
-
-#app #bossSelect .g87Body{
-  grid-column: 2; grid-row: 1;
-  display: flex; flex-direction: column; gap: 5px;
-  min-width: 0; min-height: 0;
-  overflow-y: auto; overflow-x: hidden;
-  padding-right: 4px;
-  scrollbar-width: thin;
-}
-#app #bossSelect .g87Pills{ display: flex; flex-wrap: wrap; align-items: center; gap: 5px }
-#app #bossSelect .g87Pills span{
-  font-size: var(--g83-fs-micro, 10px); font-weight: 900; line-height: 1.35;
-  padding: 2px 8px; border-radius: 999px;
-  background: #ffffff12; border: 1px solid #ffffff1e; color: #ffffffbb;
-  white-space: nowrap;
-}
-#app #bossSelect .g87Pills span.rank{ color: #cfe6a4; background: #cfe6a41c; border-color: #cfe6a43a }
-#app #bossSelect .g87Dossier.normal .g87Pills span.rank{ color: #e6d98f; background: #e6d98f1c; border-color: #e6d98f3a }
-#app #bossSelect .g87Dossier.hard   .g87Pills span.rank,
-#app #bossSelect .g87Dossier.final  .g87Pills span.rank{ color: #f0a279; background: #f0a2791c; border-color: #f0a2793a }
-#app #bossSelect .g87Name{
-  font-size: clamp(15px, 1.9vw, 24px) !important;
-  font-weight: 1000; line-height: 1.16; letter-spacing: -.015em;
-  word-break: keep-all; overflow-wrap: anywhere;
-}
-#app #bossSelect .g87Sub{
-  font-size: clamp(10px, 1.02vw, 12px) !important;
-  line-height: 1.42; color: #ffffff92; word-break: keep-all;
-}
-#app #bossSelect .g87Facts{ display: grid; gap: 4px; margin-top: 2px }
-#app #bossSelect .g87Facts p{
-  margin: 0;
-  font-size: clamp(10px, 1.02vw, 12px) !important;
-  line-height: 1.45; color: #ffffff9e;
-  word-break: keep-all; overflow-wrap: anywhere;
-}
-#app #bossSelect .g87Facts p b{ color: #fff; font-weight: 900 }
-#app #bossSelect .g87Loot{
-  font-size: clamp(10px, 1.02vw, 12px) !important;
-  line-height: 1.45; font-weight: 900; color: #e2c870;
-  word-break: keep-all;
-}
-#app #bossSelect .g87Daily{
-  align-self: flex-start;
-  font-size: var(--g83-fs-micro, 10px); font-weight: 900; line-height: 1.35;
-  padding: 3px 9px; border-radius: 999px;
-  border: 1px solid #ffffff1e; background: #ffffff0e; color: #ffffffb0;
-}
-#app #bossSelect .g87Daily.ready{ color: #d8ecb4; border-color: #cfe6a43a; background: #cfe6a418 }
-#app #bossSelect .g87Daily.ticket{ color: #f0cf8a; border-color: #f0cf8a3a; background: #f0cf8a18 }
-/* The game announces "this boss is locked" by writing into
-   .bossWarning, which lives in .bossIntro — a panel this overhaul
-   hides. Tapping a locked boss therefore did nothing visible at all.
-   The message is mirrored here instead, next to the button that was
-   just pressed. */
-#app #bossSelect .g87Warn{
-  margin-top: 2px;
-  font-size: clamp(10px, 1.02vw, 12px) !important;
-  line-height: 1.45; font-weight: 900; color: #ffbb88;
-  word-break: keep-all; overflow-wrap: anywhere;
-}
-
-#app #bossSelect .g87Go{
-  grid-column: 2; grid-row: 2;
-  width: 100%; min-height: 40px;
-  padding: 10px 14px;
-  border: 1px solid #cfe6a44a; border-radius: 12px;
-  background: linear-gradient(180deg, #cfe6a428, #cfe6a410);
-  color: #f2f7ea; font-weight: 1000; letter-spacing: .01em;
-  font-size: clamp(12px, 1.25vw, 15px) !important;
-  line-height: 1.3; text-align: center;
-  box-shadow: inset 0 1px 0 #ffffff18, 0 8px 20px #0007;
-  transition: transform var(--g83-fast), filter var(--g83-fast);
-}
-#app #bossSelect .g87Go:active{ transform: scale(.985); filter: brightness(1.08) }
-#app #bossSelect .g87Go.locked{
-  border-color: #ffffff20; background: #ffffff0c; color: #ffffff80;
-  box-shadow: none;
-}
-
-/* Short landscape (a 375px-tall SE): the brief was overflowing its
-   scroller by 5px, which is readable but means the daily chip sits
-   against the button. Reclaimed from the paddings. */
-@media (max-height: 400px){
-  #app #bossSelect .g87Dossier{ padding: 8px; gap: 9px }
-  #app #bossSelect .g87Body{ gap: 4px }
-  #app #bossSelect .g87Facts{ gap: 3px }
-  #app #bossSelect .g87Go{ min-height: 36px; padding: 8px 12px }
-}
-
-/* Portrait phones: the dossier drops below the rail instead of beside
-   it, and the rail becomes a short horizontal strip. (The game itself
-   asks to be rotated in portrait, so this is a safety net rather than a
-   layout players normally see.) */
-@media (max-width: 620px){
-  #app #bossSelect .bossHub{
-    grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: auto minmax(0, 1fr) !important;
-  }
-  #app #bossSelect .bossDiffGrid{
-    flex-direction: row !important;
-    overflow-x: auto !important; overflow-y: hidden !important;
-    height: auto !important;
-    padding-bottom: 4px !important;
-  }
-  #app #bossSelect .bossDiffGrid > .bossCard{
-    width: clamp(128px, 42vw, 170px) !important;
-    flex: 0 0 auto !important;
-  }
-  #app #bossSelect .g87Dossier{
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(72px, 34%) minmax(0, 1fr) auto;
-  }
-  #app #bossSelect .g87Art{ grid-column: 1; grid-row: 1 }
-  #app #bossSelect .g87Body{ grid-column: 1; grid-row: 2 }
-  #app #bossSelect .g87Go{ grid-column: 1; grid-row: 3 }
-}
-</style>
-
-<script id="bugArenaG87BossEntry">
-(function(){
-'use strict';
-const VERSION='G87';
-const $=id=>document.getElementById(id);
-
-const screenEl=()=>$('bossSelect');
-const grid=()=>document.querySelector('#bossSelect .bossDiffGrid');
-
-/* Every card in the rail, in DOM order, whatever layer created it. */
-function cards(){
-  const g=grid(); if(!g) return [];
-  return [...g.children].filter(c=>c.classList&&c.classList.contains('bossCard'));
-}
-function keyOf(c){
-  return c.dataset.bossId || c.id || ('diff:'+(c.dataset.diff||''));
-}
-function txt(c,sel){ const e=c.querySelector(sel); return e?(e.textContent||'').trim():'' }
-function esc(s){ return String(s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])) }
-
-let selKey=null, forwarding=false, dossier=null, lastSig='';
-
-function ensureDossier(){
-  const hub=document.querySelector('#bossSelect .bossHub');
-  if(!hub) return null;
-  if(dossier&&dossier.isConnected&&dossier.parentNode===hub) return dossier;
-  dossier=document.createElement('div');
-  dossier.className='g87Dossier';
-  dossier.innerHTML=
-    '<div class="g87Art"><img alt=""><div class="g87ArtTag"></div></div>'+
-    '<div class="g87Body">'+
-      '<div class="g87Pills"></div>'+
-      '<div class="g87Name"></div>'+
-      '<div class="g87Sub"></div>'+
-      '<div class="g87Facts"></div>'+
-      '<div class="g87Loot"></div>'+
-      '<div class="g87Daily"></div>'+
-      '<div class="g87Warn"></div>'+
-    '</div>'+
-    '<button type="button" class="g87Go"></button>';
-  hub.appendChild(dossier);
-  dossier.querySelector('.g87Go').addEventListener('click',e=>{
-    e.preventDefault(); e.stopPropagation();
-    forward();
-  });
-  return dossier;
-}
-
-/* The rail tile keeps every handler the original card was given by the
-   ten layers that built it. Tapping the dossier's button replays that
-   tap on the real card, so unlock checks, difficulty, FEROX selection
-   and the daily-ticket path all run exactly as before. */
-function warnEl(){ const d=ensureDossier(); return d?d.querySelector('.g87Warn'):null }
-function showWarn(t){
-  const w=warnEl(); if(!w) return;
-  w.textContent=t||''; w.style.display=t?'':'none';
-}
-function forward(){
-  const c=cards().find(x=>keyOf(x)===selKey);
-  if(!c) return;
-  const before=(document.querySelector('#bossSelect .bossWarning')||{}).textContent||'';
-  forwarding=true;
-  try{ c.click() }finally{ forwarding=false }
-  const after=(document.querySelector('#bossSelect .bossWarning')||{}).textContent||'';
-  if(after!==before&&/LOCKED|잠김/.test(after)) showWarn(after);
-}
-
-function isLocked(c){
-  return c.classList.contains('locked')||c.classList.contains('g45Locked')||
-         c.getAttribute('aria-disabled')==='true';
-}
-
-function pick(c,fromUser){
-  if(!c) return;
-  selKey=keyOf(c);
-  for(const x of cards()) x.classList.toggle('g87Sel', x===c);
-  if(fromUser){ try{ c.scrollIntoView({block:'nearest',inline:'nearest'}) }catch(_){} }
-  showWarn('');
-  lastSig='';
-  render();
-}
-
-function render(){
-  const d=ensureDossier(); if(!d) return;
-  let c=cards().find(x=>keyOf(x)===selKey);
-  if(!c){
-    c=cards().find(x=>!isLocked(x))||cards()[0];
-    if(!c) return;
-    selKey=keyOf(c);
-    for(const x of cards()) x.classList.toggle('g87Sel', x===c);
-  }
-
-  const locked=isLocked(c);
-  const img=c.querySelector('.bossArtImg');
-  const facts=[...c.querySelectorAll('.bossTraits > span')].map(s=>s.innerHTML);
-  const daily=c.querySelector('.g75BossDaily');
-  const sig=[keyOf(c),locked,img?(img.getAttribute('src')||''):'',txt(c,'.bossName'),txt(c,'.bossLatin'),
-             facts.join('|'),txt(c,'.g48BossLootHint'),daily?daily.className+'/'+daily.textContent:'',
-             txt(c,'.bossSelectBtn'),txt(c,'.bossConcept')].join('');
-  if(sig===lastSig) return;              /* nothing changed: no rewrite, no flicker */
-  lastSig=sig;
-
-  d.classList.remove('normal','hard','final');
-  if(c.id==='g45FeroxCard') d.classList.add('final');
-  else if(c.classList.contains('hard')) d.classList.add('hard');
-  else if(c.classList.contains('normal')) d.classList.add('normal');
-
-  const di=d.querySelector('.g87Art img');
-  const src=img?(img.getAttribute('src')||img.src||''):'';
-  if(src&&di.getAttribute('src')!==src){ di.setAttribute('src',src); di.alt=(img&&img.alt)||'' }
-  /* FEROX is the one card built by a different layer: it has no
-     .bossRank and it prints its tier as a <span class="g45FinalTag">
-     inside the name. Both are read off it explicitly so the emperor
-     shows the same pill row as the other nine. */
-  const finalCard=c.id==='g45FeroxCard';
-  const pills=d.querySelector('.g87Pills');
-  const rank=txt(c,'.bossRank')||(finalCard?txt(c,'.g45FinalTag')||'최종':'');
-  const unlock=txt(c,'.bossUnlock');
-  let ph='<span class="rank">'+esc(rank||'보스')+'</span>';
-  if(unlock) ph+='<span>'+esc(unlock)+'</span>';
-  let meta=txt(c,'.bossMeta');
-  if(meta){
-    /* '최종 · 12라운드' with 최종 already in the rank pill next to it. */
-    meta=meta.split('·').map(x=>x.trim()).filter(x=>x&&x!==rank).join(' · ');
-    if(meta) ph+='<span>'+esc(meta)+'</span>';
-  }
-  if(pills.innerHTML!==ph) pills.innerHTML=ph;
-
-  let nm=txt(c,'.bossName')||'???';
-  if(finalCard) nm=txt(c,'.g45FeroxName')||'???';
-  d.querySelector('.g87Name').textContent=nm;
-  d.querySelector('.g87Sub').textContent =txt(c,'.bossLatin')||txt(c,'.bossConcept')||'';
-
-  const fh=facts.map(f=>'<p>'+f+'</p>').join('');
-  const fe=d.querySelector('.g87Facts');
-  if(fe.innerHTML!==fh) fe.innerHTML=fh;
-
-  const loot=txt(c,'.g48BossLootHint');
-  const le=d.querySelector('.g87Loot');
-  le.textContent=loot; le.style.display=loot?'':'none';
-
-  const de=d.querySelector('.g87Daily');
-  if(daily){
-    de.textContent=daily.textContent||'';
-    de.className='g87Daily '+(daily.classList.contains('ready')?'ready':
-                              daily.classList.contains('ticket')?'ticket':'');
-    de.style.display=de.textContent?'':'none';
-  }else{ de.textContent=''; de.style.display='none' }
-
-  const w=d.querySelector('.g87Warn');
-  if(!w.textContent) w.style.display='none';
-
-  const go=d.querySelector('.g87Go');
-  const goText=txt(c,'.bossSelectBtn')||(locked?'잠김':'도전하기');
-  if(go.textContent!==goText) go.textContent=goText;
-  go.classList.toggle('locked',locked);
-}
-
-/* A tap on a tile highlights it; it no longer jumps straight into the
-   fight. That is what gives the brief somewhere to live — and it is
-   still one tap either way, because a second tap on the tile already
-   highlighted goes in, and the dossier button sits under the thumb on
-   the right of a landscape screen. */
-function onRailClick(e){
-  if(forwarding) return;
-  const c=e.target&&e.target.closest?e.target.closest('.bossCard'):null;
-  const g=grid();
-  if(!c||!g||!g.contains(c)) return;
-  e.preventDefault(); e.stopPropagation();
-  if(typeof e.stopImmediatePropagation==='function') e.stopImmediatePropagation();
-  if(keyOf(c)===selKey){ forward(); return }
-  pick(c,true);
-}
-
-/* The interception has to sit on `window`, not on the rail.
-   Two layers put capture-phase click gates on #bossSelect itself
-   (bindBossCardGate, installBossCardGate) and both call
-   stopImmediatePropagation() and jump straight to the fighter screen.
-   Capture runs ancestor-first, so a listener on the rail — a
-   descendant of #bossSelect — never gets a say. `window` is the first
-   node in the capture path, which is the only place a tap can be
-   turned into "highlight this one" before those gates consume it.
-   Forwarding re-dispatches the click with the flag down, so both gates
-   then run exactly as they always did. */
-function attach(){
-  const g=grid(); if(!g) return;
-  ensureDossier();
-  if(g.dataset.g87==='1') return;
-  g.dataset.g87='1';
-  if(!window.__g87Rail){
-    window.__g87Rail=1;
-    window.addEventListener('click',onRailClick,true);
-  }
-}
-
-/* The roster is rebuilt by renderBossRoster() and rewritten by half a
-   dozen refresh passes; the dossier follows whatever is in the rail. */
-let t=0;
-function sync(){
-  const s=screenEl();
-  if(!s||!s.classList.contains('active')) return;
-  attach();
-  const list=cards();
-  if(!list.length) return;
-  if(!list.some(x=>keyOf(x)===selKey)){
-    const first=list.find(x=>!isLocked(x))||list[0];
-    selKey=keyOf(first);
-    for(const x of list) x.classList.toggle('g87Sel', x===first);
-    lastSig='';
-  }
-  render();
-}
-function schedule(){ clearTimeout(t); t=setTimeout(sync,60) }
-
-function boot(){
-  const s=screenEl(); if(!s) return;
-  new MutationObserver(schedule).observe(s,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class','src']});
-  if(typeof setScene==='function'){
-    const base=setScene;
-    globalThis.setScene=function(n){
-      const r=base.apply(this,arguments);
-      if(n==='boss'){ lastSig=''; schedule() }   /* setScene's name for #bossSelect */
-      return r;
-    };
-  }
-  /* setScene is not the only way in — some paths swap .active directly. */
-  document.addEventListener('click',schedule,true);
-  schedule();
-}
-if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
-else boot();
-
-window.BugArenaG87={version:VERSION,note:'Boss picker rebuilt as a rail + dossier so every boss, FEROX included, renders at one size.'};
-})();
-</script>
 
 
 <style id="bugArenaG88CloseStyle">
@@ -37499,6 +36986,831 @@ try{
 }catch(_){}
 
 window.BugArenaG90={version:VERSION,note:'Challenge target lit as an object standing in the arena; immortal health bar removed from the plate.'};
+})();
+</script>
+
+
+<style id="bugArenaG91BossGridStyle">
+/* ============================================================
+   G91 · BOSS SELECT — the card grid, tidied
+   ------------------------------------------------------------
+   The previous version replaced this screen with a rail and a detail
+   pane. That solved the sizing but it is not how this game reads, so
+   the grid is back and the sizing is fixed in place instead.
+
+   What was actually wrong with the grid:
+     · a card came to 397px on a 390px-tall phone, because every layer
+       that ever touched it appended one more block — badges, art,
+       name, latin, three trait paragraphs, a loot line, a CTA and a
+       daily chip
+     · the FEROX card sat alone on the last flex line, and flex-grow
+       handed it the whole remaining row: 372x485 against its
+       neighbours' 183x397
+
+   So: the art banner comes down, the type tightens, the trait
+   paragraphs get a line clamp, and no card may grow past one column.
+   The card keeps everything it said before — it just says it in the
+   space a phone actually has.
+   ============================================================ */
+
+/* The header above the grid was taking 94px of a 390px screen for a
+   title and a one-line blurb. Tightened, it hands that back to the
+   cards. */
+#app #bossSelect .hubHead{
+  margin-bottom: 2px !important;
+}
+#app #bossSelect .hubHead .hubTitle{
+  font-size: clamp(20px, 2.6vw, 30px) !important;
+  line-height: 1.05 !important;
+  margin: 1px 0 0 !important;
+}
+#app #bossSelect .hubHead .hubLead{
+  font-size: var(--g83-fs-xs, 11px) !important;
+  line-height: 1.35 !important;
+  margin-top: 1px !important;
+}
+
+/* Back to a real grid. As a wrapping flex container the last row's
+   cards grew to their max-width while full rows sat at the shared
+   basis, so the FEROX row rendered 211px cards next to 186px ones. A
+   grid column is the same width on every row by construction. */
+#app #bossSelect .bossDiffGrid{
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(150px, 19vw, 200px), 1fr)) !important;
+  grid-auto-rows: max-content !important;
+  align-content: start !important;
+  align-items: start !important;
+  gap: clamp(8px, 1.1vw, 13px) !important;
+  padding: 2px 4px 10px 2px !important;
+  /* G83 pinned this to height:100%, which makes the block definite;
+     `auto` rows then resolved against it and every row came out at one
+     third of the box (87px), which squeezed each card's flex children
+     to zero. max-content rows sized from the cards, plus a box that is
+     only CAPPED at the available height, lets the cards decide and the
+     list scroll. */
+  height: auto !important;
+  max-height: 100% !important;
+  overflow-y: auto !important;
+}
+
+#app #bossSelect .bossCard,
+#app #bossSelect .bossDiffGrid > button{
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: clamp(7px, .85vw, 10px) !important;
+  gap: 3px !important;
+  border-radius: 14px !important;
+}
+
+/* The banner was clamp(132px,22vh,176px) — a third of the screen for
+   one card's art. */
+#app #bossSelect .bossArtWrap{
+  height: auto !important;
+  aspect-ratio: 16 / 9 !important;
+  max-height: 78px !important;
+  flex: none !important;
+  border-radius: 10px !important;
+}
+
+/* On a short landscape phone the screen's own header was taking 84px
+   of 390 for a title and a decorative blurb, which is what forced the
+   card's button below the fold. The blurb goes, the title comes down,
+   and the grid gets the space back. */
+@media (max-height: 460px){
+  #app #bossSelect .hubHead{ margin-bottom: 0 !important }
+  #app #bossSelect .hubHead .hubLead{ display: none !important }
+  #app #bossSelect .hubHead .hubTitle{ font-size: 21px !important }
+  #app #bossSelect .hubHead .brandSmall{ font-size: var(--g83-fs-micro, 10px) !important; line-height: 1.3 !important }
+  /* The grid starts where the shortened header now ends; G83 pinned
+     this to 84px for the full-height header. */
+  #app #bossSelect .bossHub{ top: 58px !important }
+  #app #bossSelect .bossArtWrap{ max-height: 72px !important }
+  /* The daily chip and the button under it were saying the same thing
+     twice — the chip reads "오늘 보상 1회 가능" and the button it sits
+     above reads "오늘 1회 도전", and the button already switches to
+     "오늘 보상 완료" / "재도전권으로 도전" as the day is used up. On a
+     short screen the duplicate is what pushed the button off the
+     bottom of the card, so the button keeps the message. */
+  #app #bossSelect .g75BossDaily{ display: none !important }
+  /* The clamp belongs to the short screen only. A tablet has 820px of
+     height and no reason to cut a sentence — clamping there was the
+     audit's one finding, and cutting text is the thing this whole pass
+     exists to stop. */
+  #app #bossSelect .bossTraits span{
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden !important;
+  }
+}
+
+#app #bossSelect .bossName{
+  font-size: clamp(12px, 1.35vw, 16px) !important;
+  line-height: 1.2 !important;
+  letter-spacing: -.015em !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden !important;
+  word-break: keep-all !important;
+}
+#app #bossSelect .bossLatin{
+  margin-top: 0 !important;
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.35 !important;
+  letter-spacing: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important; text-overflow: ellipsis !important;
+}
+
+/* Three paragraphs of strategy, each clamped so one long one cannot
+   push the price and the button off the bottom of the card. */
+#app #bossSelect .bossTraits{
+  margin-top: 1px !important;
+  gap: 3px !important;
+}
+#app #bossSelect .bossTraits span{
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.38 !important;
+  word-break: keep-all !important;
+}
+#app #bossSelect .g48BossLootHint{
+  margin-top: 2px !important;
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.35 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important; text-overflow: ellipsis !important;
+}
+/* The whole card is the tap target, so the button inside it is a label
+   and does not need to carry a 44px touch box of its own. */
+#app #bossSelect .bossSelectBtn{
+  margin-top: auto !important;
+  padding: 6px 8px !important;
+  min-height: 0 !important;
+  height: auto !important;
+  font-size: var(--g83-fs-xs, 11px) !important;
+  line-height: 1.3 !important;
+  border-radius: 9px !important;
+}
+#app #bossSelect .g75BossDaily{
+  margin-top: 3px !important;
+  padding: 2px 6px !important;
+  min-height: 0 !important;
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.35 !important;
+  text-align: center !important;
+}
+#app #bossSelect .bossBadgeRow{ min-height: 0 !important }
+
+/* The badge row is two pills, not two paragraphs. */
+#app #bossSelect .bossRank,
+#app #bossSelect .bossUnlock{
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.35 !important;
+  padding: 2px 8px !important;
+  white-space: nowrap !important;
+}
+
+/* FEROX is built by a different layer and carries its own blocks; they
+   are brought onto the same rhythm as the other nine. */
+#app #bossSelect .g45FeroxCard .bossMeta{
+  display: flex !important; gap: 2px !important;
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.35 !important;
+  white-space: nowrap !important;
+}
+#app #bossSelect .g45FeroxCard .bossConcept{
+  font-size: var(--g83-fs-micro, 10px) !important;
+  line-height: 1.38 !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden !important;
+  word-break: keep-all !important;
+}
+#app #bossSelect .g45FinalTag{
+  font-size: var(--g83-fs-micro, 10px) !important;
+  padding: 1px 7px !important;
+  border-radius: 999px !important;
+}
+
+/* The art is the thing a player looks at on this screen; it should not
+   also carry a grey caption chip across its corner. */
+#app #bossSelect .bossArtWrap::before{ display: none !important; content: none !important }
+
+/* The selected card is marked, since tapping one now enters directly
+   again and the press needs to read. */
+#app #bossSelect .bossCard:active{ transform: scale(.985) !important }
+</style>
+
+<script id="bugArenaG91BossArt">
+(function(){
+'use strict';
+const VERSION='G91';
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+
+/* ------------------------------------------------------------------
+   HIGH-RESOLUTION BOSS ART
+
+   The cards draw from G40_BOSS_THUMBS, which is a 256x144 webp per
+   boss — about 10KB each. The card displays that banner at 159x98 CSS,
+   which on a 2x phone is 317x197 device pixels, so the thumbnail is
+   being blown up past 1.2x and then cropped to a different aspect on
+   top of that. That is the blur.
+
+   The game already ships a 1280x720 illustration of every one of these
+   species as `origin_<visual>`, and it is already decoded and in
+   memory because the loader preloads it. Pointing the card at that
+   costs no extra download and no extra decode — the same data URL
+   resolves to the same image object — and gives the banner five times
+   the pixels it needs instead of a fifth.
+   ------------------------------------------------------------------ */
+function hiRes(id){
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const meta=by&&by[id];
+  const A=G('ASSETS'); if(!A) return null;
+  /* `visual` is the species key this boss wears; FEROX declares
+     visual:'sia' the same way. ASSETS.origin_<species> is a 1280x720
+     painting of that creature — against the card's 335x208 device
+     pixels that is four times the detail it needs, where the
+     G40_BOSS_THUMBS entry the card used to draw is 256x144 and had to
+     be blown up past 1:1 and then cropped to a different aspect on top
+     of that. That double resample is the blur.
+
+     The roster's own `art` field was tried first and rejected: it is
+     760x520 and sharp, but it is the generated schematic plate, not a
+     painting of the boss. */
+  let v=meta&&meta.visual;
+  if(!v&&typeof id==='string') v=id.split('_')[0];
+  if(!v) return null;
+  return A['origin_'+v]||null;
+}
+
+function upgrade(){
+  const cards=document.querySelectorAll('#bossSelect .bossCard[data-boss-id], #bossSelect #g45FeroxCard');
+  for(const card of cards){
+    const img=card.querySelector('.bossArtImg');
+    if(!img) continue;
+    const id=card.dataset.bossId||(card.id==='g45FeroxCard'?'sia_ferox':'');
+    const src=hiRes(id);
+    if(!src) continue;
+    /* A locked FEROX deliberately shows a "???" plate, not its art. */
+    if(card.id==='g45FeroxCard'&&card.classList.contains('g45Locked')) continue;
+    if(img.getAttribute('src')!==src){
+      img.setAttribute('src',src);
+      img.dataset.g91='1';
+    }
+  }
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(upgrade,60) }
+
+function boot(){
+  upgrade();
+  /* The roster is rebuilt by renderBossRoster() whenever the screen is
+     opened, which resets every src back to the thumbnail. Driven from
+     the same pointer events the rest of the UI uses rather than a
+     <body> observer, which would run on every HUD write of every
+     fight for a screen that is closed at the time. */
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('pointerup',schedule,true);
+  document.addEventListener('click',schedule,true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(n){ const r=base.apply(this,arguments); if(n==='boss') schedule(); return r };
+  }
+  const s=document.getElementById('bossSelect');
+  if(s) new MutationObserver(schedule).observe(s,{childList:true,subtree:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+
+window.BugArenaG91={version:VERSION,note:'Boss card grid restored and fitted; card art drawn from the 1280x720 origin illustrations.'};
+})();
+</script>
+
+
+<style id="bugArenaG92LightStyle">
+/* ============================================================
+   G92 · MAIN AND SELECT — visibility
+   ------------------------------------------------------------
+   Both screens read as almost black. Measured on the live page:
+
+     #start            scrim rgba(0,0,0,.88) over the arena art
+     #select           scrim rgba(1,3,2,.92)
+     #select .selectArtShade   a SECOND scrim, rgba(3,6,4,.88)
+                       — stacked, those two leave about 1% of the
+                         character illustration visible
+     .profileCard      rgba(15,20,16,.92)
+     .menuChoice       rgba(28,34,27,.94)
+     .charBtn          rgba(14,20,15,.95)
+     build rows        rgba(255,255,255,.553) on rgba(9,13,11,.8)
+
+   So the art is hidden behind a wall and every panel on top of it is
+   the same near-black as the wall, which is why nothing separates from
+   anything. Two changes, in that order: let the art through, and lift
+   the surfaces off it so they still read as panels.
+
+   Text is not made to rely on the art: every block that carries type
+   keeps — and slightly deepens — its own backing, so raising the
+   scrim cannot drop a single contrast ratio below where it was.
+   ============================================================ */
+
+/* ---------- 1. let the illustrations through ---------- */
+#app #start.screen{
+  background-image: linear-gradient(90deg,
+    rgba(0,0,0,.72) 0%,
+    rgba(0,0,0,.44) 42%,
+    rgba(0,0,0,.30) 62%,
+    rgba(0,0,0,.62) 100%) !important;
+  /* No background-color here: the arena art on this screen is painted
+     by the <canvas> BEHIND the screen layer, not by the screen itself.
+     An opaque colour was tried and it blacked the art out completely —
+     the screen's only job is to be the scrim in front of it. */
+  background-color: transparent !important;
+}
+#app #select.screen{
+  background-image: linear-gradient(90deg,
+    rgba(2,4,3,.58) 0%,
+    rgba(2,4,3,.30) 40%,
+    rgba(2,4,3,.46) 100%) !important;
+  background-color: transparent !important;
+}
+/* The second scrim was doing the same job again on top of the first.
+   It keeps a gentle floor-to-ceiling grade — enough to seat the art —
+   instead of a flat 88% blackout. */
+#app #select .selectArtShade{
+  background: linear-gradient(180deg,
+    rgba(3,6,4,.34) 0%,
+    rgba(3,6,4,.18) 38%,
+    rgba(3,6,4,.52) 100%) !important;
+}
+/* With less scrim in front of it the art can carry its own weight. */
+#app #select .selectArt{
+  filter: saturate(1.06) contrast(1.04) brightness(1.1) !important;
+}
+
+/* ---------- 2. lift the surfaces ---------- */
+/* These were 5-8% luminance, i.e. the same value as the scrim behind
+   them, so a card and the background were one flat field. */
+#app #start .profileCard{
+  background: linear-gradient(145deg, rgba(34,42,35,.93), rgba(20,26,21,.95)) !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  box-shadow: 0 14px 34px rgba(0,0,0,.5) !important;
+}
+#app #start .menuChoice:not(.primary){
+  background: linear-gradient(135deg, rgba(46,55,45,.94), rgba(27,34,27,.96)) !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+}
+#app #start .menuChoice:not(.primary):active{
+  background: linear-gradient(135deg, rgba(60,71,58,.96), rgba(36,45,36,.97)) !important;
+}
+#app #start #bossBtn.menuChoice{
+  background: linear-gradient(135deg, rgba(46,74,46,.96), rgba(26,42,27,.96)) !important;
+  border-color: rgba(178,222,150,.34) !important;
+}
+#app #start #g48ForgeBtn.menuChoice{
+  background: linear-gradient(135deg, rgba(84,66,25,.86), rgba(45,36,14,.92)) !important;
+  border-color: rgba(232,205,127,.34) !important;
+}
+
+#app #select .charBtn{
+  background: linear-gradient(160deg, rgba(40,49,41,.95), rgba(23,30,24,.96)) !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+}
+#app #select .charBtn:active{ background: rgba(56,67,55,.96) !important }
+#app #select .charBtn.active{
+  background: linear-gradient(160deg, rgba(109,86,40,.96), rgba(74,58,27,.96)) !important;
+  border-color: rgba(240,214,140,.62) !important;
+  box-shadow: 0 0 0 1px rgba(240,214,140,.34), 0 8px 20px rgba(0,0,0,.45) !important;
+}
+#app #select .selectInfo{
+  background: linear-gradient(160deg, rgba(22,28,23,.93), rgba(12,17,13,.95)) !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+}
+#app #select #v5SelectBuild{
+  background: rgba(26,33,27,.88) !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+#app #select .levelPill{
+  background: rgba(24,30,25,.92) !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+}
+
+/* ---------- 3. lift the type that sits on them ---------- */
+/* ink-3 is the caption tone; on these two screens it was doing the
+   work of body text on a near-black card. */
+#app #start .menuChoiceSub,
+#app #select .selEn,
+#app #select .selectInfo span,
+#app #select .selectInfo small{
+  color: var(--g83-ink-2, #c6cec4) !important;
+}
+/* The build row was white at 55% — the dimmest readable thing on the
+   screen and the one a player checks before every fight. */
+#app #select #v5SelectBuild > *{
+  color: rgba(255,255,255,.9) !important;
+}
+#app #select #v5SelectBuild > span:first-child{
+  color: #edd489 !important;
+}
+#app #start .profileCard .classicWallet,
+#app #start .profileCard #classicProfileBadge,
+#app #start .profileCard #g75TicketChip{
+  background: rgba(16,21,17,.78) !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+}
+
+/* The fade masks at the bottom of both scroll panes were nearly opaque
+   black, so the last row of a list looked cut off rather than
+   continued. */
+#app #start .g83-fadeEdge,
+#app #select .g83-fadeEdge{
+  background: linear-gradient(180deg, rgba(10,14,11,0), rgba(10,14,11,.72)) !important;
+}
+</style>
+
+
+<script id="bugArenaG93SpecialBloom">
+(function(){
+'use strict';
+const VERSION='G93';
+const TAU=Math.PI*2;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G93 · SPECIAL MOVE — give the effect a body
+
+   Every character's 특수기 was drawn as 1-2px strokes: an arc of thin
+   segments, a wireframe dome, a few dots. Flat line art on top of a
+   painted arena, with no light coming off it — which is why it read as
+   "lines" rather than as a move.
+
+   Nothing about the moves changes. What changes is how the same
+   drawing is put on the screen:
+
+     1. it is rendered to an offscreen buffer instead of straight to
+        the arena
+     2. that buffer is composited three times — a wide blurred pass and
+        a tight blurred pass, both additive, then the sharp original on
+        top
+
+   That is a real bloom, so a 2px stroke arrives as a lit filament with
+   a halo instead of a hairline, and it works for all ten specials and
+   the guard dome at once without touching any of their code.
+
+   On top of that the release itself gets what line art cannot carry:
+   a core flash, a shockwave, forward streaks and sparks with length.
+   ============================================================ */
+
+/* ---------- the offscreen buffers ---------- */
+let buf=null, bctx=null, small=null, sctx=null;
+const DOWN=4;   /* bloom is blurred at a quarter on each axis */
+function buffer(w,h){
+  if(!buf){ buf=document.createElement('canvas'); bctx=buf.getContext('2d'); }
+  if(buf.width!==w||buf.height!==h){ buf.width=w; buf.height=h; }
+  /* Fixed size, used as a scratch pad: only the top-left dw x dh of it
+     is ever touched. Resizing a canvas reallocates it, and the bloom
+     rectangle changes every frame. */
+  if(!small){ small=document.createElement('canvas'); small.width=420; small.height=260; sctx=small.getContext('2d'); }
+  return bctx;
+}
+
+/* The effect lives around the fighter, not across the arena. Compositing
+   the whole 1280x720 measured +22ms a frame — 38ms against a 16.5ms
+   baseline — and almost all of it was two additive upscales over
+   921,600 pixels. Bounding the composite to where the effect actually
+   is cuts that by roughly seven times. */
+function boundsOf(c,f,reach,tf,W,H){
+  const x=num(f.x), y=num(f.y);
+  const GR=G('GROUND'); const gy=isFinite(GR)?GR:y;
+  const x1=x-reach*0.75, x2=x+reach*1.7;
+  const y1=y-360, y2=gy+110;
+  const pts=[[x1,y1],[x2,y1],[x1,y2],[x2,y2]];
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for(const [px,py] of pts){
+    let dx=px, dy=py;
+    if(tf){ dx=tf.a*px+tf.c*py+tf.e; dy=tf.b*px+tf.d*py+tf.f; }
+    if(dx<minX)minX=dx; if(dx>maxX)maxX=dx;
+    if(dy<minY)minY=dy; if(dy>maxY)maxY=dy;
+  }
+  const PAD=26;   /* the blur bleeds past the drawing */
+  const sx=Math.max(0,Math.floor(minX-PAD)), sy=Math.max(0,Math.floor(minY-PAD));
+  const ex=Math.min(W,Math.ceil(maxX+PAD)),  ey=Math.min(H,Math.ceil(maxY+PAD));
+  if(ex<=sx||ey<=sy) return null;
+  return {sx,sy,sw:ex-sx,sh:ey-sy};
+}
+/* Chromium supports canvas2d `filter`, but not every engine does; when
+   it is missing the layer degrades to the sharp pass alone rather than
+   drawing nothing. */
+/* A knob for measuring: 'full' composites the bloom, 'sharp' skips the
+   blurred passes, 'off' bypasses the layer entirely. */
+let MODE='full';
+let blurOK=null;
+function canBlur(c){
+  if(blurOK!==null) return blurOK;
+  try{ const f=c.filter; c.filter='blur(2px)'; blurOK=(c.filter!=='none'&&c.filter!==f||c.filter==='blur(2px)'); c.filter=f||'none'; }
+  catch(_){ blurOK=false }
+  return blurOK;
+}
+
+function colOf(f){
+  const C=G('COL');
+  return (C&&f&&f.data&&C[f.data.id])||'#ffe6a8';
+}
+function rgb(hex){
+  const h=String(hex).replace('#','');
+  const s=h.length===3?h.split('').map(x=>x+x).join(''):h.slice(0,6);
+  const n=parseInt(s,16);
+  return isFinite(n)?[(n>>16)&255,(n>>8)&255,n&255]:[255,230,168];
+}
+
+/* ---------- the extra body, drawn into the same buffer ---------- */
+/* A first pass at this drew a full ellipse, a soft blob of ground light
+   and a handful of dots. Blown up by the bloom it read as a big yellow
+   bubble around the fighter — bright, but still not a strike. What a
+   strike needs is direction: the light has to leave the fighter and go
+   somewhere. Everything below is built along the facing axis. */
+function release(c,f){
+  const sp=f.special; if(!sp) return;
+  const t=num(sp.t,0);
+  const fac=num(sp.lockedFacing,0)||num(f.facing,1)||1;
+  const [r,g,b]=rgb(colOf(f));
+  const K=a=>'rgba('+r+','+g+','+b+','+a+')';
+  const W=a=>'rgba(255,255,255,'+a+')';
+  const cfg=sp.cfg||{};
+  const reach=cl(num(cfg.range,260),160,520);
+
+  const x0=num(f.x)+fac*26, y0=num(f.y)-70;
+
+  /* windup 0 -> .09, release .07 -> .33, afterglow to .5 */
+  const wu=cl(1-t/0.09,0,1);
+  const rp=cl((t-0.07)/0.26,0,1);
+  const live=cl(1-t/0.5,0,1);
+  if(live<=0) return;
+
+  c.save();
+  c.globalCompositeOperation='lighter';
+  c.lineCap='round';
+  c.lineJoin='round';
+
+  /* 1 — the charge. Light pulled in along the axis, so the release has
+         somewhere to come from. */
+  if(wu>0.01){
+    for(let i=0;i<8;i++){
+      const a=(i/8)*TAU+t*6;
+      const d=30+120*wu;
+      const x1=x0+Math.cos(a)*d, y1=y0+Math.sin(a)*d*0.6;
+      const gd=c.createLinearGradient(x1,y1,x0,y0);
+      gd.addColorStop(0,K(0)); gd.addColorStop(1,K(0.9));
+      c.globalAlpha=0.55*wu; c.strokeStyle=gd; c.lineWidth=2+4*wu;
+      c.beginPath(); c.moveTo(x1,y1); c.lineTo(x0,y0); c.stroke();
+    }
+    c.globalAlpha=0.9*wu;
+    const og=c.createRadialGradient(x0,y0,0,x0,y0,54);
+    og.addColorStop(0,W(0.95)); og.addColorStop(0.4,K(0.7)); og.addColorStop(1,K(0));
+    c.fillStyle=og; c.beginPath(); c.arc(x0,y0,54,0,TAU); c.fill();
+  }
+
+  if(rp>0){
+    const ease=1-Math.pow(1-rp,2.2);
+    const fade=1-rp;
+
+    /* 2 — the cone. One bright wedge leaving the fighter is what makes
+           the move read as thrown rather than worn. */
+    const len=reach*(0.45+0.55*ease);
+    const half=26+92*ease;
+    const wedge=(hw,grad,alpha)=>{
+      c.globalAlpha=alpha; c.fillStyle=grad;
+      c.beginPath();
+      c.moveTo(x0,y0-12);
+      c.quadraticCurveTo(x0+fac*len*0.55,y0-hw*0.85,x0+fac*len,y0-hw);
+      c.lineTo(x0+fac*len,y0+hw);
+      c.quadraticCurveTo(x0+fac*len*0.55,y0+hw*0.85,x0,y0+12);
+      c.closePath(); c.fill();
+    };
+    const cg=c.createLinearGradient(x0,y0,x0+fac*len,y0);
+    cg.addColorStop(0,K(0.95*fade));
+    cg.addColorStop(0.22,K(0.72*fade));
+    cg.addColorStop(1,K(0));
+    wedge(half,cg,1);
+    /* A narrower, near-white wedge inside the coloured one. Without a
+       hot core every element came out the same mid-value amber and the
+       whole thing read as a wash rather than as light. */
+    const hg=c.createLinearGradient(x0,y0,x0+fac*len*0.86,y0);
+    hg.addColorStop(0,W(0.98*fade));
+    hg.addColorStop(0.3,W(0.6*fade));
+    hg.addColorStop(1,W(0));
+    wedge(half*0.42,hg,1);
+
+    /* 3 — three blades riding the cone. Stroking an arc with a fat
+           lineWidth was the first attempt and it came out as a blunt
+           vertical bar; a blade has to taper to a point at both tips,
+           so the shape is built as a filled crescent instead — an outer
+           sweep and an inner sweep that meet at the ends. */
+    const blade=(cxp,rr,thick,spread,fill)=>{
+      const N=22;
+      c.beginPath();
+      for(let k=0;k<=N;k++){
+        const u=k/N, a=(-1+2*u)*spread;
+        c.lineTo(cxp+fac*Math.cos(a)*rr*0.44, y0+Math.sin(a)*rr);
+      }
+      for(let k=N;k>=0;k--){
+        const u=k/N, a=(-1+2*u)*spread;
+        const taper=Math.pow(Math.cos(a/spread*Math.PI/2),0.7);
+        const ri=rr-thick*taper;
+        c.lineTo(cxp+fac*Math.cos(a)*ri*0.44, y0+Math.sin(a)*ri);
+      }
+      c.closePath();
+      c.fillStyle=fill; c.fill();
+    };
+    for(let i=0;i<3;i++){
+      const s=(rp-i*0.13);
+      if(s<=0||s>=1) continue;
+      const d=40+reach*0.92*s;
+      const rr=62+126*s;
+      const al=(1-s)*(1-i*0.22);
+      const cxp=x0+fac*d;
+      const th=(30-i*7)*(1-s)+3;
+      c.globalAlpha=Math.min(1,0.8*al);
+      blade(cxp,rr*1.06,th*1.5,1.18,K(0.85));
+      c.globalAlpha=Math.min(1,1.1*al);
+      blade(cxp,rr,th,1.06,W(0.96));
+    }
+
+    /* 4 — speed lines, dense on the axis and thinning outward. */
+    for(let i=0;i<11;i++){
+      const s=(i*0.6180339887)%1;
+      const off=(s-0.5)*2;
+      const y=y0+off*104;
+      const axis=1-Math.abs(off);
+      const L=(140+reach*0.95*axis)*(0.45+0.55*ease);
+      const sx=x0+fac*(16+reach*0.5*ease*s);
+      const gd=c.createLinearGradient(sx,y,sx+fac*L,y);
+      gd.addColorStop(0,K(0));
+      gd.addColorStop(0.26,W(0.95*fade*(0.35+0.65*axis)));
+      gd.addColorStop(0.6,K(0.8*fade));
+      gd.addColorStop(1,K(0));
+      c.globalAlpha=fade;
+      c.strokeStyle=gd;
+      c.lineWidth=1.4+6.4*axis*fade;
+      c.beginPath(); c.moveTo(sx,y); c.lineTo(sx+fac*L,y); c.stroke();
+    }
+
+    /* 5 — the shock ring: small and thick at the start, gone by the
+           time the cone has landed. A large thin ellipse was the first
+           attempt and it read as a drawn circle. */
+    const sr=cl(rp/0.45,0,1);
+    if(sr<1){
+      /* Centred on the fighter the ring cut a white arc straight across
+         the sprite, so it is seated ahead of the front instead. */
+      c.globalAlpha=Math.min(1,0.95*(1-sr));
+      c.strokeStyle=W(0.95);
+      c.lineWidth=22*(1-sr)+1.5;
+      const rad=22+96*sr;
+      c.beginPath(); c.ellipse(x0+fac*(30+rad*0.5),y0,rad*0.72,rad*0.62,0,0,TAU); c.stroke();
+    }
+
+    /* 6 — the muzzle. A hot core at the fighter's front for the first
+           instant, which is what sells the release as an event. */
+    const mf=cl(1-rp/0.3,0,1);
+    if(mf>0){
+      c.globalAlpha=Math.min(1,1.2*mf);
+      const R=104+72*mf;
+      const mg=c.createRadialGradient(x0,y0,0,x0,y0,R);
+      mg.addColorStop(0,W(1)); mg.addColorStop(0.14,W(0.85));
+      mg.addColorStop(0.34,K(0.85)); mg.addColorStop(1,K(0));
+      c.fillStyle=mg; c.beginPath(); c.arc(x0,y0,R,0,TAU); c.fill();
+    }
+  }
+
+  /* 7 — sparks with length. A dot has no direction; a short tapered
+         stroke does, which is the difference between confetti and
+         impact. */
+  if(live>0){
+    for(let i=0;i<20;i++){
+      const s=(i*0.7548776662)%1, u=(i*0.5698402909)%1;
+      const a=(s-0.5)*1.5;
+      const d=(50+reach*1.15*u)*(1-Math.pow(1-cl(t/0.42,0,1),2));
+      const x=x0+fac*Math.cos(a)*d;
+      const y=y0+Math.sin(a)*d*0.52-52*cl(t/0.42,0,1)*u;
+      const L=9+30*live;
+      c.globalAlpha=0.95*live*(0.3+0.7*u);
+      const gd=c.createLinearGradient(x,y,x-fac*Math.cos(a)*L,y-Math.sin(a)*0.52*L);
+      gd.addColorStop(0,W(0.98)); gd.addColorStop(1,K(0));
+      c.strokeStyle=gd; c.lineWidth=1+2.6*live;
+      c.beginPath(); c.moveTo(x,y); c.lineTo(x-fac*Math.cos(a)*L,y-Math.sin(a)*0.52*L); c.stroke();
+    }
+  }
+
+  /* 8 — a narrow band of light on the floor under the cone, so the move
+         lights the arena instead of floating over it. */
+  if(live>0.02){
+    const GR=G('GROUND'); const gy=isFinite(GR)?GR:num(f.y);
+    const bx=x0+fac*reach*0.42;
+    c.globalAlpha=0.34*live;
+    const pg=c.createLinearGradient(x0,gy,x0+fac*reach*1.05,gy);
+    pg.addColorStop(0,K(0.75)); pg.addColorStop(0.45,K(0.4)); pg.addColorStop(1,K(0));
+    c.fillStyle=pg;
+    c.save(); c.translate(bx,gy); c.scale(1,0.1); c.translate(-bx,-gy);
+    c.beginPath(); c.ellipse(bx,gy,reach*0.7,reach*0.7,0,0,TAU); c.fill();
+    c.restore();
+  }
+
+  c.restore();
+}
+
+/* ---------- the composite ---------- */
+function wrap(){
+  const prev=G('drawSpecialFX');
+  if(typeof prev!=='function') return false;
+  globalThis.drawSpecialFX=function(c,f){
+    if(MODE==='off') return prev.apply(this,arguments);
+    if(!c||!f||!f.special||!c.canvas) return prev.apply(this,arguments);
+
+    const W=c.canvas.width, H=c.canvas.height;
+    if(!W||!H) return prev.apply(this,arguments);
+
+    let bc;
+    try{ bc=buffer(W,H) }catch(_){ return prev.apply(this,arguments) }
+    if(!bc) return prev.apply(this,arguments);
+
+    /* The arena draws inside a camera transform (shake and zoom). The
+       buffer has to be painted under the same transform or the effect
+       would sit still while the camera moves. */
+    let tf=null;
+    try{ tf=c.getTransform() }catch(_){}
+
+    bc.setTransform(1,0,0,1,0,0);
+    bc.clearRect(0,0,W,H);
+    if(tf) try{ bc.setTransform(tf) }catch(_){}
+
+    let out;
+    try{
+      out=prev.call(this,bc,f);
+      release(bc,f);
+    }catch(_){
+      /* If the original draw threw halfway, fall back to letting it
+         paint straight to the arena rather than dropping the effect. */
+      bc.setTransform(1,0,0,1,0,0);
+      return prev.apply(this,arguments);
+    }
+
+    const cfgR=(f.special&&f.special.cfg&&f.special.cfg.range)||260;
+    const box=boundsOf(c,f,cl(num(cfgR,260),160,520),tf,W,H);
+
+    c.save();
+    try{
+      c.setTransform(1,0,0,1,0,0);
+      c.globalAlpha=1;
+      /* The bloom is blurred at a QUARTER on each axis and scaled back
+         up. Blurring the full backing store instead — two
+         `filter:blur()` passes over 2560x1440 — measured 44.5ms a frame
+         against 16.6ms without the layer, which is 22fps for an effect
+         that is supposed to make the game feel better. A blur of 2.5px
+         on the small canvas lands at ~10px once it is upscaled, and the
+         bilinear upscale does some of the smoothing for free, so the
+         result is the same halo for a sixteenth of the pixels. */
+      if(sctx&&MODE!=='sharp'&&box){
+        const dw=Math.max(1,Math.min(small.width, Math.round(box.sw/DOWN)));
+        const dh=Math.max(1,Math.min(small.height,Math.round(box.sh/DOWN)));
+        sctx.setTransform(1,0,0,1,0,0);
+        sctx.clearRect(0,0,dw,dh);
+        if(canBlur(sctx)) sctx.filter='blur(2.5px)';
+        sctx.drawImage(buf,box.sx,box.sy,box.sw,box.sh,0,0,dw,dh);
+        sctx.filter='none';
+        c.globalCompositeOperation='lighter';
+        /* One pass, not two: each additive upscale is the expensive
+           half of this layer, and a single pass at a higher alpha
+           reads the same. */
+        c.globalAlpha=1;
+        c.drawImage(small,0,0,dw,dh,box.sx,box.sy,box.sw,box.sh);
+      }
+      c.globalCompositeOperation='source-over';
+      c.globalAlpha=1;
+      c.drawImage(buf,0,0);
+    }catch(_){}
+    c.restore();
+    bc.setTransform(1,0,0,1,0,0);
+    return out;
+  };
+  return true;
+}
+
+/* Every layer that touches drawSpecialFX does so at parse time, so the
+   wrap has to happen after the last of them — one frame after load is
+   enough, and it is re-checked once in case a layer re-wraps late. */
+let done=false;
+function arm(){ if(!done) done=wrap() }
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',arm);
+else arm();
+setTimeout(arm,0);
+setTimeout(arm,600);
+
+window.BugArenaG93={version:VERSION,setMode:m=>{MODE=m},getMode:()=>MODE,note:'Special-move VFX composited through a bloom buffer and given a core flash, shockwave, streaks and sparks.'};
 })();
 </script>
 
