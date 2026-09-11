@@ -38879,4 +38879,224 @@ window.BugArenaG96={version:VERSION,draw,note:'Ten ranged projectiles rebuilt fr
 })();
 </script>
 
+
+
+<script id="bugArenaG97TierBalance">
+(function(){
+'use strict';
+const VERSION='G97';
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+
+/* ============================================================
+   G97 · THE FIGHT MATCHES THE LABEL
+
+   G95 put six tiers on the cards — 매우쉬움 / 쉬움 / 보통 / 어려움 /
+   매우어려움 / 카오스 — but the fight underneath still ran on the three
+   stock steps (easy / normal / hard), so the label and the boss could
+   disagree. Two bosses a whole tier apart played identically, and on
+   LV.10 one boss was `easy` while the other was `normal`.
+
+   The stock ladder is kept for everything it is load-bearing for — the
+   pattern pool, the reach and radius branches, the phase thresholds —
+   and only the numbers a player actually feels are re-pointed at the
+   tier. Those are set ABSOLUTELY rather than as a multiplier on the
+   stock value: a factor would have carried the three-step spread
+   through and left two bosses on the same rung several percent apart,
+   which is the exact thing this is meant to fix.
+
+   Six dials, each chosen for what it does to the fight:
+
+     HP      how long the fight runs — carries most of the separation
+     DMG     what a mistake costs
+     AGGRO   how much cooldown bleeds off per second
+     THINK   how often the boss commits to something
+     WIND    how long it tells you first — floored, see below
+     SPEED   spacing, which is most of what "harder" feels like
+
+   Damage is set on the EFFECTIVE value. A hit is
+   `base * v26DamageMul * bossCfg.damage`, so writing v26DamageMul
+   alone would still leave bossCfg.damage's .88/1.08/1.34 spread
+   underneath. The factor is solved against what the boss is actually
+   carrying instead.
+   ============================================================ */
+
+/* one row per rung, in the order a player climbs them */
+const TIER={
+/*        hp   dmg   aggro think  wind  speed */
+  t1:{hp:240, dmg:0.92, agg:1.06, think:0.82, wind:0.60, spd:96 },
+  t2:{hp:335, dmg:1.01, agg:1.12, think:0.72, wind:0.53, spd:104},
+  t3:{hp:455, dmg:1.11, agg:1.20, think:0.62, wind:0.46, spd:112},
+  t4:{hp:630, dmg:1.23, agg:1.28, think:0.53, wind:0.40, spd:120},
+  t5:{hp:825, dmg:1.36, agg:1.37, think:0.45, wind:0.35, spd:129}
+};
+
+/* XP, so the ladder pays what it costs. The stock bases are 120/185/280
+   on a win and 35/45/60 on a loss. */
+const XP_WIN ={t1:120,t2:165,t3:215,t4:285,t5:370,tx:480};
+const XP_LOSS={t1:32, t2:40, t3:50, t4:62, t5:76, tx:95};
+
+const BY_REQ={1:'t1',10:'t2',20:'t3',30:'t4',40:'t5'};
+
+function tierOf(b){
+  const id=b&&b.v9BossId;
+  if(!id) return null;
+  if(/ferox/i.test(String(id))) return 'tx';
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[id];
+  return (m&&BY_REQ[m.req])||null;
+}
+function diffOf(bt,b){
+  return (bt&&bt.bossDifficulty)||(b&&b.bossCfg&&b.bossCfg.key)||
+         (function(){const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;const m=by&&by[b&&b.v9BossId];return m&&m.diff})()||'normal';
+}
+
+function applyTier(){
+  const s=G('state'); const bt=s&&s.battle; const b=bt&&bt.e;
+  if(!bt||!bt.boss||!b) return;
+  if(b.g97Tier) return;
+  const tier=tierOf(b);
+  if(!tier) return;
+
+  /* FEROX is left alone on purpose. Its own layer builds it at a fixed
+     560hp with phase thresholds and a 180-point 대악 part keyed to that
+     number; rewriting the total would move the phases without moving
+     what triggers them. It already sits above every tier, and it still
+     takes the 카오스 reward below. */
+  if(tier==='tx'){ b.g97Tier=tier; return; }
+  const T=TIER[tier];
+  if(!T) return;
+  b.g97Tier=tier;
+
+  /* bossFighter assigns the SHARED BOSS_DIFF row — `f.bossCfg=cfg` —
+     so writing think or tongueWind straight onto it would not just
+     change this fight, it would change every later fight at that
+     difficulty, compounding each time. The row is copied onto this
+     boss first; everything downstream reads b.bossCfg, so the copy is
+     what the fight sees and the table stays pristine. */
+  const cfg=(b.bossCfg&&typeof b.bossCfg==='object')?Object.assign({},b.bossCfg):null;
+  if(cfg) b.bossCfg=cfg;
+
+  /* durability */
+  const oldMax=Math.max(1,num(b.maxHp,num(b.hp,1)));
+  const ratio=num(b.hp,oldMax)/oldMax;      /* keep whatever it has left */
+  b.maxHp=T.hp;
+  b.hp=Math.max(1,Math.round(b.maxHp*ratio));
+  if(b.data) b.data.hp=b.maxHp;
+  /* The breakable part scales with the body it is attached to, by the
+     same factor rather than to a flat number — each boss has its own
+     part fraction and that is part of how it plays, not of its tier. */
+  if(isFinite(b.v6PartMax)&&b.v6PartMax>0){
+    const hpF=b.maxHp/oldMax;
+    const pr=num(b.v6PartHp,b.v6PartMax)/b.v6PartMax;
+    b.v6PartMax=Math.max(20,Math.round(b.v6PartMax*hpF));
+    b.v6PartHp=Math.max(1,Math.round(b.v6PartMax*pr));
+  }
+
+  /* hitting power, solved so the EFFECTIVE multiplier lands on the tier */
+  const stockDmg=Math.max(0.05,num(cfg&&cfg.damage,1));
+  b.v26DamageMul=T.dmg/stockDmg;
+
+  /* pressure */
+  b.v26Aggro=T.agg;
+  /* V26 derives both cooldowns from aggro; re-derive them the same way
+     rather than scaling whatever is left, so the rung is exact. */
+  b.v14Cd=0.52/T.agg;
+  b.bossCd=0.72/T.agg;
+  if(cfg){
+    cfg.think=T.think;
+    /* The wind-up is the thing a player reads to dodge, so it is the one
+       dial that does not simply keep shrinking: it is set per tier and
+       never goes below about a quarter second, because past that there
+       is nothing left to react to and the tier stops being difficulty
+       and starts being a coin flip. */
+    cfg.tongueWind=Math.max(0.27,T.wind);
+  }
+  /* speed changes spacing, and spacing is most of what makes a boss feel
+     harder without making it feel unfair */
+  if(b.data&&isFinite(b.data.speed)) b.data.speed=T.spd;
+  if(isFinite(b.speed)) b.speed=T.spd;
+
+  /* V26 refreshes the HUD at the end of its own pass, which is before
+     this one, so the health bar would spend a frame drawn against the
+     maximum this just replaced. */
+  try{ const u=G('updateHud'); if(typeof u==='function') u(); }catch(_){}
+}
+
+/* V26 does its own pass per battle from inside a closure, so it cannot
+   be wrapped from out here. It runs off startBossBattle, which is
+   global — this waits for its mark and then refines on top, so the two
+   never race and never double-apply. */
+function armTier(){
+  let tries=0;
+  const tick=()=>{
+    const s=G('state'); const bt=s&&s.battle; const b=bt&&bt.e;
+    if(!bt||!bt.boss||!b) return;
+    if(b.g97Tier) return;
+    if(b.v26DifficultyApplied||++tries>40){ applyTier(); return; }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+try{
+  const prev=G('startBossBattle');
+  if(typeof prev==='function'){
+    globalThis.startBossBattle=function(){
+      const r=prev.apply(this,arguments);
+      if(r!==false) try{ armTier() }catch(_){}
+      return r;
+    };
+  }
+}catch(_){}
+
+/* ---------- rewards ----------
+   awardMatchProgress computes its XP base from bossDifficulty, adds the
+   grade and streak bonuses, then runs its own level-up loop. Rather
+   than duplicate any of that, the difference between the tier's base
+   and the stock base is credited BEFORE the call: the function's own
+   loop then handles levels, rank breaks and the save exactly as it
+   always does. The snapshot it takes of the old total would otherwise
+   include the credit, so it is corrected on the way out and the numbers
+   the result screen prints still add up. */
+try{
+  const prev=G('awardMatchProgress');
+  if(typeof prev==='function'){
+    globalThis.awardMatchProgress=function(b,w){
+      let bonus=0;
+      try{
+        if(b&&!b.rewarded&&b.boss&&b.e){
+          const tier=tierOf(b.e);
+          if(tier){
+            const won=(w===b.p);
+            const diff=diffOf(b,b.e);
+            const stock=won?(diff==='hard'?280:diff==='normal'?185:120)
+                           :(diff==='hard'?60 :diff==='normal'?45 :35);
+            const want=won?num(XP_WIN[tier],stock):num(XP_LOSS[tier],stock);
+            bonus=Math.round(want-stock);
+            const pr=G('profile');
+            if(bonus&&pr) pr.xp=Math.max(0,num(pr.xp,0)+bonus);
+          }
+        }
+      }catch(_){ bonus=0 }
+      const info=prev.apply(this,arguments);
+      try{
+        if(bonus&&info){
+          info.base=num(info.base,0)+bonus;
+          info.gain=num(info.gain,0)+bonus;
+          if(info.old) info.old.xp=num(info.old.xp,0)-bonus;
+        }
+      }catch(_){}
+      return info;
+    };
+  }
+}catch(_){}
+
+window.BugArenaG97={
+  version:VERSION,
+  note:'Boss stats and XP set onto the six displayed tiers; stock difficulty kept for pattern pools.',
+  TIER,XP_WIN,XP_LOSS
+};
+})();
+</script>
+
 </body></html>
