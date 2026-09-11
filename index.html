@@ -37587,99 +37587,339 @@ function release(c,f){
     const ease=1-Math.pow(1-rp,2.2);
     const fade=1-rp;
 
-    /* 2 — the cone. One bright wedge leaving the fighter is what makes
-           the move read as thrown rather than worn. */
-    const len=reach*(0.45+0.55*ease);
-    const half=26+92*ease;
-    const wedge=(hw,grad,alpha)=>{
-      c.globalAlpha=alpha; c.fillStyle=grad;
-      c.beginPath();
-      c.moveTo(x0,y0-12);
-      c.quadraticCurveTo(x0+fac*len*0.55,y0-hw*0.85,x0+fac*len,y0-hw);
-      c.lineTo(x0+fac*len,y0+hw);
-      c.quadraticCurveTo(x0+fac*len*0.55,y0+hw*0.85,x0,y0+12);
-      c.closePath(); c.fill();
-    };
-    const cg=c.createLinearGradient(x0,y0,x0+fac*len,y0);
-    cg.addColorStop(0,K(0.95*fade));
-    cg.addColorStop(0.22,K(0.72*fade));
-    cg.addColorStop(1,K(0));
-    wedge(half,cg,1);
-    /* A narrower, near-white wedge inside the coloured one. Without a
-       hot core every element came out the same mid-value amber and the
-       whole thing read as a wash rather than as light. */
-    const hg=c.createLinearGradient(x0,y0,x0+fac*len*0.86,y0);
-    hg.addColorStop(0,W(0.98*fade));
-    hg.addColorStop(0.3,W(0.6*fade));
-    hg.addColorStop(1,W(0));
-    wedge(half*0.42,hg,1);
+    /* ----------------------------------------------------------
+       2-5 — THE SIGNATURE
 
-    /* 3 — three blades riding the cone. Stroking an arc with a fat
-           lineWidth was the first attempt and it came out as a blunt
-           vertical bar; a blade has to taper to a point at both tips,
-           so the shape is built as a filled crescent instead — an outer
-           sweep and an inner sweep that meet at the ends. */
-    const blade=(cxp,rr,thick,spread,fill)=>{
+       One generic cone-and-blades was drawn for all ten characters, so
+       every special looked like the same move in a different colour.
+       Each now draws what its own mechanic actually is — the mechanic
+       string is the game's own, not a guess:
+
+         flip           rhino     a battering wedge, then the lift
+         vise           stag      mandibles clamping shut on a point
+         blitz          mantis    the X-crossed triple cut
+         sky_sting      hornet    a dive from above onto the point
+         burrow_ambush  sia       the ground tearing open along a line
+         water_drag     waterbug  a current sweeping the target back IN
+         coil           centipede an S-wave of segments running forward
+         tail_lock      scorpion  the tail arcing over and slamming down
+         web_trap       tarantula a net laid on the floor — no forward
+                                  attack at all, because the move does
+                                  not have one: range 0, damage 0
+         sonic_pass     dragonfly a pierce line ringed with shock discs
+       ---------------------------------------------------------- */
+    const mech=String(cfg.mechanic||'');
+    const len=reach*(0.45+0.55*ease);
+
+    /* shared helper: a tapered blade, pointed at both tips */
+    const blade=(cxp,cyp,rr,thick,spread,fill,rotAng)=>{
       const N=22;
+      c.save();
+      if(rotAng){ c.translate(cxp,cyp); c.rotate(rotAng); c.translate(-cxp,-cyp); }
       c.beginPath();
       for(let k=0;k<=N;k++){
-        const u=k/N, a=(-1+2*u)*spread;
-        c.lineTo(cxp+fac*Math.cos(a)*rr*0.44, y0+Math.sin(a)*rr);
+        const u=k/N, ang=(-1+2*u)*spread;
+        c.lineTo(cxp+fac*Math.cos(ang)*rr*0.44, cyp+Math.sin(ang)*rr);
       }
       for(let k=N;k>=0;k--){
-        const u=k/N, a=(-1+2*u)*spread;
-        const taper=Math.pow(Math.cos(a/spread*Math.PI/2),0.7);
+        const u=k/N, ang=(-1+2*u)*spread;
+        const taper=Math.pow(Math.cos(ang/spread*Math.PI/2),0.7);
         const ri=rr-thick*taper;
-        c.lineTo(cxp+fac*Math.cos(a)*ri*0.44, y0+Math.sin(a)*ri);
+        c.lineTo(cxp+fac*Math.cos(ang)*ri*0.44, cyp+Math.sin(ang)*ri);
       }
-      c.closePath();
-      c.fillStyle=fill; c.fill();
+      c.closePath(); c.fillStyle=fill; c.fill();
+      c.restore();
     };
-    for(let i=0;i<3;i++){
-      const s=(rp-i*0.13);
-      if(s<=0||s>=1) continue;
-      const d=40+reach*0.92*s;
-      const rr=62+126*s;
-      const al=(1-s)*(1-i*0.22);
-      const cxp=x0+fac*d;
-      const th=(30-i*7)*(1-s)+3;
-      c.globalAlpha=Math.min(1,0.8*al);
-      blade(cxp,rr*1.06,th*1.5,1.18,K(0.85));
-      c.globalAlpha=Math.min(1,1.1*al);
-      blade(cxp,rr,th,1.06,W(0.96));
-    }
+    /* shared helper: speed lines along the axis */
+    const streaks=(n,spread,alpha)=>{
+      for(let i=0;i<n;i++){
+        const sN=(i*0.6180339887)%1;
+        const off=(sN-0.5)*2;
+        const yy=y0+off*spread;
+        const axis=1-Math.abs(off);
+        const L=(140+reach*0.95*axis)*(0.45+0.55*ease);
+        const sx=x0+fac*(16+reach*0.5*ease*sN);
+        const gd=c.createLinearGradient(sx,yy,sx+fac*L,yy);
+        gd.addColorStop(0,K(0));
+        gd.addColorStop(0.26,W(0.95*fade*(0.35+0.65*axis)));
+        gd.addColorStop(0.6,K(0.8*fade));
+        gd.addColorStop(1,K(0));
+        c.globalAlpha=fade*alpha;
+        c.strokeStyle=gd; c.lineWidth=1.4+6.4*axis*fade;
+        c.beginPath(); c.moveTo(sx,yy); c.lineTo(sx+fac*L,yy); c.stroke();
+      }
+    };
 
-    /* 4 — speed lines, dense on the axis and thinning outward. */
-    for(let i=0;i<11;i++){
-      const s=(i*0.6180339887)%1;
-      const off=(s-0.5)*2;
-      const y=y0+off*104;
-      const axis=1-Math.abs(off);
-      const L=(140+reach*0.95*axis)*(0.45+0.55*ease);
-      const sx=x0+fac*(16+reach*0.5*ease*s);
-      const gd=c.createLinearGradient(sx,y,sx+fac*L,y);
-      gd.addColorStop(0,K(0));
-      gd.addColorStop(0.26,W(0.95*fade*(0.35+0.65*axis)));
-      gd.addColorStop(0.6,K(0.8*fade));
-      gd.addColorStop(1,K(0));
+    /* ---- 장수풍뎅이 · ram, then the lift ---- */
+    if(mech==='flip'){
+      const half=30+96*ease;
+      const cg=c.createLinearGradient(x0,y0,x0+fac*len,y0);
+      cg.addColorStop(0,K(0.95*fade)); cg.addColorStop(0.22,K(0.72*fade)); cg.addColorStop(1,K(0));
+      c.globalAlpha=1; c.fillStyle=cg;
+      c.beginPath();
+      c.moveTo(x0+fac*len,y0);
+      c.lineTo(x0,y0-half); c.lineTo(x0-fac*26,y0); c.lineTo(x0,y0+half);
+      c.closePath(); c.fill();
+      /* the ram's leading edge, so the wedge has a point and not just a
+         gradient */
       c.globalAlpha=fade;
-      c.strokeStyle=gd;
-      c.lineWidth=1.4+6.4*axis*fade;
-      c.beginPath(); c.moveTo(sx,y); c.lineTo(sx+fac*L,y); c.stroke();
+      c.strokeStyle=W(0.95); c.lineWidth=6*fade+2;
+      c.beginPath();
+      c.moveTo(x0,y0-half); c.lineTo(x0+fac*len,y0); c.lineTo(x0,y0+half);
+      c.stroke();
+      /* soil banked up either side of the charge */
+      for(const sd of [-1,1]){
+        c.globalAlpha=0.6*fade;
+        c.strokeStyle=K(0.8); c.lineWidth=9*fade+2;
+        c.beginPath();
+        c.moveTo(x0,y0+sd*22);
+        c.quadraticCurveTo(x0+fac*len*0.5,y0+sd*(58+40*ease),x0+fac*len,y0+sd*(30+18*ease));
+        c.stroke();
+      }
+      streaks(11,104,1);
+      /* the flip: an arc kicking upward at the end of the charge */
+      if(rp>0.45){
+        const u=(rp-0.45)/0.55;
+        c.globalAlpha=(1-u)*0.9;
+        c.strokeStyle=W(0.95); c.lineWidth=11*(1-u)+2;
+        c.beginPath();
+        c.arc(x0+fac*len*0.8,y0+30,70+60*u,-Math.PI*0.95,-Math.PI*0.1,fac<0);
+        c.stroke();
+      }
     }
 
-    /* 5 — the shock ring: small and thick at the start, gone by the
-           time the cone has landed. A large thin ellipse was the first
-           attempt and it read as a drawn circle. */
-    const sr=cl(rp/0.45,0,1);
-    if(sr<1){
-      /* Centred on the fighter the ring cut a white arc straight across
-         the sprite, so it is seated ahead of the front instead. */
-      c.globalAlpha=Math.min(1,0.95*(1-sr));
-      c.strokeStyle=W(0.95);
-      c.lineWidth=22*(1-sr)+1.5;
-      const rad=22+96*sr;
-      c.beginPath(); c.ellipse(x0+fac*(30+rad*0.5),y0,rad*0.72,rad*0.62,0,0,TAU); c.stroke();
+    /* ---- 넓적사슴벌레 · the vise ---- */
+    else if(mech==='vise'){
+      const gx=x0+fac*len*0.86;
+      const open=(1-ease)*92+14;
+      for(const sd of [-1,1]){
+        c.globalAlpha=1;
+        blade(gx,y0+sd*open,118,38*fade+9,1.15,K(0.95),sd*0.5*fac);
+        c.globalAlpha=1;
+        blade(gx,y0+sd*open,108,27*fade+5,1.02,W(0.98),sd*0.5*fac);
+      }
+      /* the compression once they meet */
+      if(ease>0.7){
+        const u=(ease-0.7)/0.3;
+        c.globalAlpha=u*0.95;
+        const pg=c.createRadialGradient(gx,y0,0,gx,y0,120);
+        pg.addColorStop(0,W(0.95)); pg.addColorStop(0.35,K(0.8)); pg.addColorStop(1,K(0));
+        c.fillStyle=pg; c.beginPath(); c.arc(gx,y0,120,0,TAU); c.fill();
+      }
+      streaks(7,80,0.7);
+    }
+
+    /* ---- 사마귀 · the X-crossed triple cut ---- */
+    else if(mech==='blitz'){
+      for(let i=0;i<3;i++){
+        const u=(rp-i*0.14)/0.5;
+        if(u<=0||u>=1) continue;
+        const gx=x0+fac*(60+reach*0.55*u);
+        const ang=(i%2?1:-1)*0.72;
+        c.globalAlpha=(1-u)*0.85;
+        blade(gx,y0,150,26*(1-u)+4,1.25,K(0.9),ang);
+        c.globalAlpha=(1-u);
+        blade(gx,y0,138,17*(1-u)+2.5,1.12,W(0.98),ang);
+      }
+      streaks(13,116,1);
+    }
+
+    /* ---- 장수말벌 · the dive ---- */
+    else if(mech==='sky_sting'){
+      const tipX=x0+fac*len*0.92, tipY=y0+34;
+      const sx=tipX-fac*150, sy=tipY-230;
+      const lg=c.createLinearGradient(sx,sy,tipX,tipY);
+      lg.addColorStop(0,K(0)); lg.addColorStop(0.45,K(0.9*fade)); lg.addColorStop(1,W(fade));
+      c.globalAlpha=1; c.strokeStyle=lg; c.lineWidth=15*fade+3;
+      c.beginPath(); c.moveTo(sx,sy); c.lineTo(tipX,tipY); c.stroke();
+      /* wing blur on the way down */
+      for(let i=0;i<5;i++){
+        const u=i/5;
+        const px=sx+(tipX-sx)*u, py=sy+(tipY-sy)*u;
+        c.globalAlpha=fade*(0.5-u*0.35);
+        c.strokeStyle=W(0.8); c.lineWidth=2.2;
+        c.beginPath(); c.ellipse(px,py,34*(1-u)+10,10,-0.9*fac,0,TAU); c.stroke();
+      }
+      /* venom burst where the point lands */
+      if(ease>0.55){
+        const u=(ease-0.55)/0.45;
+        c.globalAlpha=(1-u)*0.95;
+        const bg=c.createRadialGradient(tipX,tipY,0,tipX,tipY,60+90*u);
+        bg.addColorStop(0,W(0.95)); bg.addColorStop(0.3,K(0.85)); bg.addColorStop(1,K(0));
+        c.fillStyle=bg; c.beginPath(); c.arc(tipX,tipY,60+90*u,0,TAU); c.fill();
+      }
+    }
+
+    /* ---- 리옥크 · the ground tearing open ---- */
+    else if(mech==='burrow_ambush'){
+      const GR=G('GROUND'); const gy=isFinite(GR)?GR:num(f.y);
+      /* a rupture running forward along the floor */
+      for(let i=0;i<9;i++){
+        const u=i/9;
+        if(u>ease) break;
+        const px=x0+fac*(30+reach*1.0*u);
+        const h=(1-u*0.5)*(52+40*Math.sin(i*2.1));
+        c.globalAlpha=fade*(0.9-u*0.4);
+        const sg=c.createLinearGradient(px,gy,px,gy-h);
+        sg.addColorStop(0,K(0.95)); sg.addColorStop(1,K(0));
+        c.fillStyle=sg;
+        c.beginPath();
+        c.moveTo(px-14,gy); c.lineTo(px,gy-h); c.lineTo(px+14,gy);
+        c.closePath(); c.fill();
+      }
+      /* the eruption at the end of the line */
+      if(ease>0.6){
+        const u=(ease-0.6)/0.4;
+        const ex=x0+fac*reach*0.98;
+        c.globalAlpha=(1-u)*0.95;
+        const eg=c.createRadialGradient(ex,gy-40,0,ex,gy-40,90+120*u);
+        eg.addColorStop(0,W(0.95)); eg.addColorStop(0.28,K(0.85)); eg.addColorStop(1,K(0));
+        c.fillStyle=eg; c.beginPath(); c.arc(ex,gy-40,90+120*u,0,TAU); c.fill();
+      }
+    }
+
+    /* ---- 물장군 · the current, pulling inward ---- */
+    else if(mech==='water_drag'){
+      /* the flow runs from the target BACK to the caster, because that
+         is the direction the move actually moves the opponent */
+      for(let i=0;i<9;i++){
+        const sN=(i*0.618)%1;
+        const yy=y0+(sN-0.5)*150;
+        const hx=x0+fac*(reach*(1-ease*0.75)+reach*0.25*sN);
+        const tx2=x0+fac*20;
+        const gd=c.createLinearGradient(hx,yy,tx2,y0);
+        gd.addColorStop(0,K(0));
+        gd.addColorStop(0.4,K(0.85*fade));
+        gd.addColorStop(1,W(0.9*fade));
+        c.globalAlpha=fade; c.strokeStyle=gd; c.lineWidth=3+5*fade;
+        c.beginPath();
+        c.moveTo(hx,yy);
+        c.quadraticCurveTo((hx+tx2)/2,yy+(y0-yy)*0.25,tx2,y0);
+        c.stroke();
+      }
+      /* the whirl it collapses into */
+      c.globalAlpha=fade*0.9; c.strokeStyle=W(0.9); c.lineWidth=4;
+      c.beginPath();
+      for(let i=0;i<=34;i++){
+        const u=i/34, ang=u*7*fac+rp*9, rr=(1-u)*76+8;
+        const px=x0+fac*40+Math.cos(ang)*rr, py=y0+Math.sin(ang)*rr*0.66;
+        if(i===0)c.moveTo(px,py); else c.lineTo(px,py);
+      }
+      c.stroke();
+    }
+
+    /* ---- 지네 · the S-wave ---- */
+    else if(mech==='coil'){
+      const segs=13;
+      for(let i=0;i<segs;i++){
+        const u=i/segs;
+        const px=x0+fac*(20+reach*1.05*u*ease);
+        const py=y0+Math.sin(u*5.2-rp*7)*(74*(1-u*0.35));
+        const rr=(26-u*15)*(0.5+0.5*fade);
+        c.globalAlpha=fade*(0.95-u*0.5);
+        const sg=c.createRadialGradient(px-fac*4,py-5,0,px,py,rr);
+        sg.addColorStop(0,W(0.95)); sg.addColorStop(0.4,K(0.9)); sg.addColorStop(1,K(0));
+        c.fillStyle=sg; c.beginPath(); c.arc(px,py,rr,0,TAU); c.fill();
+        /* the forcipules, paired off each segment */
+        if(i%2===0){
+          c.globalAlpha=fade*0.6; c.strokeStyle=W(0.8); c.lineWidth=2.4;
+          for(const sd of [-1,1]){
+            c.beginPath(); c.moveTo(px,py); c.lineTo(px-fac*16,py+sd*(rr+14)); c.stroke();
+          }
+        }
+      }
+    }
+
+    /* ---- 전갈 · the tail slam ---- */
+    else if(mech==='tail_lock'){
+      const gx=x0+fac*len*0.8;
+      const swing=-Math.PI*0.9+ease*Math.PI*0.85;
+      /* the tail arcing over the back */
+      c.globalAlpha=fade; c.strokeStyle=K(0.9); c.lineWidth=17*fade+4;
+      c.beginPath();
+      c.arc(gx,y0+50,150,-Math.PI*0.95,swing,fac<0);
+      c.stroke();
+      c.strokeStyle=W(0.95); c.lineWidth=9*fade+2;
+      c.beginPath();
+      c.arc(gx,y0+50,150,-Math.PI*0.95,swing,fac<0);
+      c.stroke();
+      /* the sting at the end of it */
+      const px=gx+Math.cos(swing)*150*(fac<0?-1:1), py=y0+50+Math.sin(swing)*150;
+      c.globalAlpha=1;
+      const tg=c.createRadialGradient(px,py,0,px,py,44);
+      tg.addColorStop(0,W(1)); tg.addColorStop(0.3,K(0.9)); tg.addColorStop(1,K(0));
+      c.fillStyle=tg; c.beginPath(); c.arc(px,py,44,0,TAU); c.fill();
+      /* the pincers holding the target still */
+      c.globalAlpha=fade*0.8; c.strokeStyle=K(0.9); c.lineWidth=8;
+      for(const sd of [-1,1]){
+        c.beginPath();
+        c.arc(x0+fac*90,y0+sd*54,46,sd>0?-1.2:0.5,sd>0?0.5:1.2,fac<0);
+        c.stroke();
+      }
+    }
+
+    /* ---- 타란툴라 · the net on the floor ---- */
+    else if(mech==='web_trap'){
+      const GR=G('GROUND'); const gy=isFinite(GR)?GR:num(f.y);
+      const R=(60+150*ease);
+      c.save();
+      c.translate(x0,gy); c.scale(1,0.30); c.translate(-x0,-gy);
+      c.globalAlpha=fade*0.95; c.strokeStyle=W(0.85); c.lineWidth=3;
+      for(let i=0;i<12;i++){
+        const ang=i/12*TAU;
+        c.beginPath(); c.moveTo(x0,gy); c.lineTo(x0+Math.cos(ang)*R,gy+Math.sin(ang)*R); c.stroke();
+      }
+      c.strokeStyle=K(0.9); c.lineWidth=2.4;
+      for(let r2=0.3;r2<=1.001;r2+=0.235){
+        c.beginPath();
+        for(let i=0;i<=12;i++){
+          const ang=i/12*TAU, rr=R*r2;
+          const px=x0+Math.cos(ang)*rr, py=gy+Math.sin(ang)*rr;
+          if(i===0)c.moveTo(px,py); else c.lineTo(px,py);
+        }
+        c.closePath(); c.stroke();
+      }
+      c.restore();
+      /* the anchor knot */
+      c.globalAlpha=fade;
+      const kg=c.createRadialGradient(x0,gy,0,x0,gy,54);
+      kg.addColorStop(0,W(0.9)); kg.addColorStop(0.4,K(0.6)); kg.addColorStop(1,K(0));
+      c.fillStyle=kg; c.beginPath(); c.arc(x0,gy,54,0,TAU); c.fill();
+    }
+
+    /* ---- 잠자리 · the pierce line ---- */
+    else if(mech==='sonic_pass'){
+      const L2=reach*1.1*ease;
+      const pg=c.createLinearGradient(x0,y0,x0+fac*L2,y0);
+      pg.addColorStop(0,K(0)); pg.addColorStop(0.3,W(0.95*fade)); pg.addColorStop(1,K(0));
+      c.globalAlpha=1; c.strokeStyle=pg; c.lineWidth=13*fade+2.5;
+      c.beginPath(); c.moveTo(x0,y0); c.lineTo(x0+fac*L2,y0); c.stroke();
+      /* shock discs left standing along the path */
+      for(let i=0;i<6;i++){
+        const u=i/6;
+        if(u>ease) break;
+        const px=x0+fac*reach*1.1*u;
+        const age2=(ease-u)/Math.max(0.001,ease);
+        c.globalAlpha=fade*(1-age2)*0.85;
+        c.strokeStyle=W(0.9); c.lineWidth=4*(1-age2)+1;
+        c.beginPath(); c.ellipse(px,y0,16+70*age2,40+120*age2,0,0,TAU); c.stroke();
+      }
+      streaks(9,70,0.8);
+    }
+
+    /* ---- anything a later layer adds ---- */
+    else{
+      const half=26+92*ease;
+      const cg=c.createLinearGradient(x0,y0,x0+fac*len,y0);
+      cg.addColorStop(0,K(0.95*fade)); cg.addColorStop(0.22,K(0.72*fade)); cg.addColorStop(1,K(0));
+      c.globalAlpha=1; c.fillStyle=cg;
+      c.beginPath();
+      c.moveTo(x0,y0-12);
+      c.quadraticCurveTo(x0+fac*len*0.55,y0-half*0.85,x0+fac*len,y0-half);
+      c.lineTo(x0+fac*len,y0+half);
+      c.quadraticCurveTo(x0+fac*len*0.55,y0+half*0.85,x0,y0+12);
+      c.closePath(); c.fill();
+      streaks(11,104,1);
     }
 
     /* 6 — the muzzle. A hot core at the fighter's front for the first
@@ -37716,10 +37956,15 @@ function release(c,f){
 
   /* 8 — a narrow band of light on the floor under the cone, so the move
          lights the arena instead of floating over it. */
-  if(live>0.02){
+  /* The floor band is deliberately quiet. At 0.34 across the full reach
+     it was the brightest thing in every one of the ten, which put the
+     same wash under all of them and buried the part that differs.
+     web_trap skips it outright — that move's whole effect IS a floor
+     net, and a glow over it hid the silk. */
+  if(live>0.02 && String(cfg.mechanic||'')!=='web_trap'){
     const GR=G('GROUND'); const gy=isFinite(GR)?GR:num(f.y);
     const bx=x0+fac*reach*0.42;
-    c.globalAlpha=0.34*live;
+    c.globalAlpha=0.15*live;
     const pg=c.createLinearGradient(x0,gy,x0+fac*reach*1.05,gy);
     pg.addColorStop(0,K(0.75)); pg.addColorStop(0.45,K(0.4)); pg.addColorStop(1,K(0));
     c.fillStyle=pg;
@@ -37936,6 +38181,701 @@ setTimeout(applyLadder,0);
 setTimeout(applyLadder,800);
 
 window.BugArenaG94={version:VERSION,ladder:LADDER,note:'Nine bosses spread over LV.1/10/20/30/40; FEROX still unlocks on 12 rounds.'};
+})();
+</script>
+
+
+<style id="bugArenaG95TierStyle">
+/* ============================================================
+   G95 · DIFFICULTY TIERS
+
+   Five rungs by unlock level plus one for the emperor:
+
+     LV.1  매우쉬움   green      LV.30 어려움     orange
+     LV.10 쉬움       lime       LV.40 매우어려움 crimson
+     LV.20 보통       gold       리옥크 카오스    violet
+
+   The tier is presentation only. `diff` — easy / normal / hard — is a
+   COMBAT value: it decides the boss's stats directly
+   (`bossDifficulty==='hard'?280:'normal'?185:120`) and several lookups
+   fall back silently on an unknown key, so adding 매우쉬움 and 카오스 to
+   it would quietly reprice every boss. The label and the frame come off
+   the unlock level instead, and the fight is left exactly as it was.
+   ============================================================ */
+#app #bossSelect .bossCard[data-g95tier]{
+  border: 1px solid color-mix(in srgb, var(--tier) 42%, transparent) !important;
+  background:
+    linear-gradient(160deg,
+      color-mix(in srgb, var(--tier) 15%, transparent) 0%,
+      rgba(9,13,10,.96) 58%,
+      rgba(5,8,6,.98) 100%) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--tier) 30%, transparent),
+    0 10px 26px rgba(0,0,0,.45) !important;
+}
+#app #bossSelect .bossCard[data-g95tier="t1"]{ --tier: #7fc96a }
+#app #bossSelect .bossCard[data-g95tier="t2"]{ --tier: #c9d95f }
+#app #bossSelect .bossCard[data-g95tier="t3"]{ --tier: #e8c15a }
+#app #bossSelect .bossCard[data-g95tier="t4"]{ --tier: #ef8a52 }
+#app #bossSelect .bossCard[data-g95tier="t5"]{ --tier: #e35b5b }
+#app #bossSelect .bossCard[data-g95tier="tx"]{ --tier: #b975e8 }
+
+/* The rank pill carries the tier colour; it is the word the player
+   actually reads. */
+#app #bossSelect .bossCard[data-g95tier] .bossRank{
+  color: var(--tier) !important;
+  background: color-mix(in srgb, var(--tier) 16%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--tier) 40%, transparent) !important;
+  font-weight: 1000 !important;
+}
+#app #bossSelect .bossCard[data-g95tier] .bossUnlock{
+  color: color-mix(in srgb, var(--tier) 78%, #ffffff) !important;
+}
+/* The art sits in a frame of the same colour, so the tier reads from
+   across the screen and not only from the pill. */
+#app #bossSelect .bossCard[data-g95tier] .bossArtWrap{
+  border: 1px solid color-mix(in srgb, var(--tier) 38%, transparent) !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5) inset, 0 6px 14px rgba(0,0,0,.42) !important;
+}
+#app #bossSelect .bossCard[data-g95tier] .bossSelectBtn{
+  border-color: color-mix(in srgb, var(--tier) 34%, transparent) !important;
+}
+
+/* The top two rungs should look like a warning, not just another hue. */
+#app #bossSelect .bossCard[data-g95tier="t5"],
+#app #bossSelect .bossCard[data-g95tier="tx"]{
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--tier) 46%, transparent),
+    0 0 22px color-mix(in srgb, var(--tier) 18%, transparent),
+    0 10px 26px rgba(0,0,0,.5) !important;
+}
+#app #bossSelect .bossCard[data-g95tier="tx"] .bossRank{
+  letter-spacing: .06em !important;
+}
+/* A locked card keeps its tier, muted — the colour is how a player sees
+   what they are climbing towards. */
+#app #bossSelect .bossCard[data-g95tier].locked,
+#app #bossSelect .bossCard[data-g95tier].g45Locked{
+  filter: saturate(.72) brightness(.9);
+}
+
+/* The entry cut-in's tier chip, same palette. */
+#v25BossIntro .v25Diff[data-g95tier]{
+  color: var(--tier) !important;
+  border-color: color-mix(in srgb, var(--tier) 46%, transparent) !important;
+  background: color-mix(in srgb, var(--tier) 14%, transparent) !important;
+  font-weight: 1000 !important;
+}
+#v25BossIntro .v25Diff[data-g95tier="t1"]{ --tier: #7fc96a }
+#v25BossIntro .v25Diff[data-g95tier="t2"]{ --tier: #c9d95f }
+#v25BossIntro .v25Diff[data-g95tier="t3"]{ --tier: #e8c15a }
+#v25BossIntro .v25Diff[data-g95tier="t4"]{ --tier: #ef8a52 }
+#v25BossIntro .v25Diff[data-g95tier="t5"]{ --tier: #e35b5b }
+#v25BossIntro .v25Diff[data-g95tier="tx"]{ --tier: #b975e8 }
+</style>
+
+<script id="bugArenaG95Tier">
+(function(){
+'use strict';
+const VERSION='G95';
+
+/* Keyed on the unlock level set in G94, so the two never disagree. */
+const BY_REQ={1:['t1','매우쉬움'],10:['t2','쉬움'],20:['t3','보통'],30:['t4','어려움'],40:['t5','매우어려움']};
+const CHAOS=['tx','카오스'];
+
+function tierOf(card){
+  if(card.id==='g45FeroxCard') return CHAOS;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[card.dataset.bossId];
+  if(!m) return null;
+  return BY_REQ[m.req]||null;
+}
+
+function apply(){
+  for(const card of document.querySelectorAll('#bossSelect .bossCard')){
+    const t=tierOf(card);
+    if(!t) continue;
+    if(card.dataset.g95tier!==t[0]) card.dataset.g95tier=t[0];
+    const rank=card.querySelector('.bossRank');
+    /* FEROX prints its tier as .g45FinalTag inside the name instead of a
+       .bossRank, so it is written where that card actually keeps it. */
+    if(rank){ if(rank.textContent!==t[1]) rank.textContent=t[1]; }
+    else {
+      const fin=card.querySelector('.g45FinalTag');
+      if(fin&&fin.textContent!==t[1]) fin.textContent=t[1];
+    }
+  }
+}
+
+/* The entry cut-in prints DIFF_KO[m.diff]; it should say the same word
+   the card said. */
+function applyIntro(){
+  const el=document.querySelector('#v25BossIntro .v25Diff');
+  if(!el) return;
+  const s=(function(){try{return (0,eval)('state')}catch(_){return null}})();
+  const id=s&&s.v9BossId;
+  if(!id) return;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[id];
+  const t=(m&&BY_REQ[m.req])||(id&&/ferox/i.test(id)?CHAOS:null);
+  if(!t) return;
+  if(el.dataset.g95tier!==t[0]) el.dataset.g95tier=t[0];
+  if(el.textContent!==t[1]) el.textContent=t[1];
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(()=>{apply();applyIntro()},50) }
+
+function boot(){
+  schedule();
+  /* The roster's own refresh pass rewrites .bossRank from DIFF_KO on
+     every open, so this runs after it on the same triggers rather than
+     on a timer. Both write the same string once it has settled, so
+     there is nothing for them to trade back and forth. */
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('pointerup',schedule,true);
+  document.addEventListener('click',schedule,true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(){ const r=base.apply(this,arguments); schedule(); return r };
+  }
+  const s=document.getElementById('bossSelect');
+  if(s) new MutationObserver(schedule).observe(s,{childList:true,subtree:true});
+  const i=document.getElementById('v25BossIntro');
+  if(i) new MutationObserver(()=>{clearTimeout(t);t=setTimeout(applyIntro,40)}).observe(i,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+setTimeout(schedule,800);
+
+window.BugArenaG95={version:VERSION,tiers:BY_REQ,note:'Boss tier label and frame keyed on unlock level; combat diff untouched.'};
+})();
+</script>
+
+
+<script id="bugArenaG96Projectiles">
+(function(){
+'use strict';
+const VERSION='G96';
+const TAU=Math.PI*2;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G96 · RANGED PROJECTILES, ONE PER SPECIES
+
+   Every one of the ten was a few 2-8px strokes: an ellipse, an arc, a
+   line with a dot on the end. Flat line art crossing a painted arena.
+
+   Each is rebuilt from what the animal actually does, because that is
+   what makes a projectile read as belonging to the fighter that threw
+   it rather than as a recoloured copy of the last one:
+
+     rhino      장수풍뎅이 — the horn shoves rivals off branches, so the
+                shot is a ploughed PRESSURE WALL with grit in it
+     stag       넓적사슴벌레 — the mandibles scissor shut, so it is TWO
+                blades closing on each other as they travel
+     mantis     사마귀 — the raptorial foreleg strikes in ~50ms and is
+                lined with spines: a thin SICKLE, spined on the inner
+                edge, with an afterimage because it is that fast
+     hornet     장수말벌 — a smooth stinger it can drive in repeatedly,
+                so it is a banded LANCE with a venom bead at the tip
+     sia        리옥크 — heavy-bodied and blunt: a CONCUSSION RING
+     waterbug   물장군 — it liquefies prey with digestive enzymes, so it
+                is a viscous SPRAY with a wet highlight and dribble
+     centipede  지네 — venom through forcipules, and a body of many
+                segments: a CHAIN of droplets undulating as it flies
+     scorpion   전갈 — the telson strikes over the back: a curved,
+                segmented STINGER with venom running off the point
+     tarantula  타란툴라 — silk: a spinning BOLUS trailing loose filament
+     dragonfly  잠자리 — four wings, the most agile flier there is: a
+                VORTEX blade with curls rolling off both tips
+
+   Drawn with fills and gradients rather than strokes, each with a soft
+   halo, a hot core and a motion trail.
+   ============================================================ */
+
+function rgb(hex,d){
+  const h=String(hex||d||'#ffffff').replace('#','');
+  const s=h.length===3?h.split('').map(x=>x+x).join(''):h.slice(0,6);
+  const n=parseInt(s,16);
+  return isFinite(n)?[(n>>16)&255,(n>>8)&255,n&255]:[255,255,255];
+}
+
+/* A short position history, so anything fast leaves a streak instead of
+   teleporting from frame to frame. Kept on the projectile itself and
+   thrown away with it. */
+const TRAIL_MAX=96;   /* px behind the head, not a count of frames */
+function trail(p){
+  if(!p.__g96) p.__g96=[];
+  const t=p.__g96;
+  const last=t[t.length-1];
+  if(!last||Math.abs(last.x-p.x)>0.5||Math.abs(last.y-p.y)>0.5) t.push({x:p.x,y:p.y});
+  /* Trimmed by DISTANCE. Holding a fixed number of frames made the
+     streak as long as the frame time happened to be — a hornet needle
+     at 1040px/s drew a 400px line and read as a laser beam. */
+  while(t.length>2){
+    const d=Math.hypot(t[0].x-p.x,t[0].y-p.y);
+    if(d<=TRAIL_MAX) break;
+    t.shift();
+  }
+  while(t.length>10) t.shift();
+  return t;
+}
+function drawTrail(c,p,K,W,width,alpha){
+  const t=trail(p);
+  if(t.length<2) return;
+  c.save();
+  c.globalCompositeOperation='lighter';
+  c.lineCap='round'; c.lineJoin='round';
+  for(let i=1;i<t.length;i++){
+    const u=i/(t.length-1);
+    c.globalAlpha=alpha*u*0.9;
+    c.strokeStyle=u>0.72?W(0.9):K(0.75);
+    c.lineWidth=width*u;
+    c.beginPath(); c.moveTo(t[i-1].x,t[i-1].y); c.lineTo(t[i].x,t[i].y); c.stroke();
+  }
+  c.restore();
+}
+/* The halo every shot shares: it is what stops a 20px shape from
+   disappearing into a painted background. */
+function halo(c,x,y,r,K,a){
+  const g=c.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,K(0.55*a)); g.addColorStop(0.45,K(0.22*a)); g.addColorStop(1,K(0));
+  c.save(); c.globalCompositeOperation='lighter'; c.globalAlpha=1;
+  c.fillStyle=g; c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); c.restore();
+}
+
+function draw(c,p){
+  const cfg=p.cfg||{};
+  const x=num(p.x), y=num(p.y);
+  const fac=num(p.fac,1)||1;
+  const q=cl(num(p.life,1)/0.25,0,1);
+  const age=num(p.age,0);
+  const [r,g,b]=rgb(cfg.col,'#ffe6a8');
+  const K=a=>'rgba('+r+','+g+','+b+','+a+')';
+  const W=a=>'rgba(255,255,255,'+a+')';
+  const D=a=>'rgba(14,12,10,'+a+')';
+
+  const actual=Math.atan2(num(p.vy,0),num(p.vx,0)||fac);
+  const base=fac>0?0:Math.PI;
+  let rot=actual-base;
+  while(rot>Math.PI)rot-=TAU;
+  while(rot<-Math.PI)rot+=TAU;
+
+  /* Every shape is drawn at its designed size and then scaled about the
+     projectile's own centre. Reviewed side by side at 1:1 the whole set
+     sat too small against a painted arena — they were legible, but they
+     did not read as an attack. */
+  const S=1.34;
+
+  drawTrail(c,p,K,W,9,0.55*q);
+  halo(c,x,y,52*S,K,q);
+
+  c.save();
+  c.globalAlpha=q;
+  c.translate(x,y); c.rotate(rot); c.scale(S,S); c.translate(-x,-y);
+  c.lineCap='round'; c.lineJoin='round';
+
+  const kind=cfg.kind;
+
+  /* ---- 장수풍뎅이 · ploughed pressure wall ---- */
+  if(kind==='shock'){
+    c.save();
+    c.globalCompositeOperation='lighter';
+    /* The wall is built as two lobes with a gap down the middle, which
+       is the horn's path through it. Cutting the gap with
+       destination-out was tried first and it punched a hole in the
+       ARENA as well — the projectile is drawn onto the finished frame,
+       so erasing there erases the painting behind it too. */
+    const wg=c.createLinearGradient(x-fac*46,y,x+fac*30,y);
+    wg.addColorStop(0,K(0)); wg.addColorStop(0.55,K(0.5)); wg.addColorStop(1,W(0.92));
+    c.fillStyle=wg;
+    for(const s of [-1,1]){
+      c.beginPath();
+      c.moveTo(x+fac*26,y+s*54);
+      c.quadraticCurveTo(x+fac*40,y+s*26,x+fac*22,y+s*9);
+      c.quadraticCurveTo(x-fac*22,y+s*15,x-fac*40,y+s*20);
+      c.quadraticCurveTo(x-fac*34,y+s*40,x+fac*26,y+s*54);
+      c.closePath(); c.fill();
+    }
+    /* the horn itself, driving the gap open */
+    const hg=c.createLinearGradient(x-fac*30,y,x+fac*44,y);
+    hg.addColorStop(0,K(0)); hg.addColorStop(0.5,K(0.85)); hg.addColorStop(1,W(1));
+    c.strokeStyle=hg; c.lineWidth=5;
+    c.beginPath(); c.moveTo(x-fac*30,y); c.lineTo(x+fac*42,y); c.stroke();
+    c.globalAlpha=q;
+    /* chevrons peeling off the back */
+    for(let i=1;i<=3;i++){
+      c.globalAlpha=q*(0.42-i*0.09);
+      c.strokeStyle=K(0.95); c.lineWidth=7-i*1.5;
+      c.beginPath();
+      c.moveTo(x-fac*(20+i*22),y-(40-i*6));
+      c.quadraticCurveTo(x-fac*(4+i*22),y,x-fac*(20+i*22),y+(40-i*6));
+      c.stroke();
+    }
+    /* grit carried in the wave */
+    for(let i=0;i<7;i++){
+      const s=(i*0.6180339887+age*1.7)%1;
+      const gx=x-fac*(10+s*62), gy=y+Math.sin(i*2.3+age*9)*34;
+      c.globalAlpha=q*(0.7-s*0.6);
+      c.fillStyle=W(0.85);
+      c.beginPath(); c.arc(gx,gy,2.4-s*1.5,0,TAU); c.fill();
+    }
+    c.restore();
+  }
+
+  /* ---- 넓적사슴벌레 · mandibles closing ---- */
+  else if(kind==='crescent'){
+    /* the two blades shut as the shot travels, which is the motion the
+       animal actually makes */
+    const close=cl(age*3.4,0,1);
+    for(const s of [-1,1]){
+      const off=(1-close)*26+8;
+      c.save();
+      c.translate(x,y+s*off);
+      c.rotate(s*(0.34-close*0.3)*fac);
+      c.translate(-x,-(y+s*off));
+      const yy=y+s*off;
+      /* chitin body — a warm brown, not near-black. At 0.92 alpha on
+         #0e0c0a the pair read as a black arrowhead with a hairline on
+         it; a beetle's mandible is dark but it still catches light. */
+      c.fillStyle='rgba(58,40,26,'+(0.95*q)+')';
+      c.beginPath();
+      c.moveTo(x-fac*34,yy+s*9);
+      c.quadraticCurveTo(x+fac*6,yy+s*13,x+fac*33,yy);
+      c.quadraticCurveTo(x+fac*4,yy-s*3,x-fac*34,yy-s*2);
+      c.closePath(); c.fill();
+      /* the cutting edge, lit */
+      c.globalCompositeOperation='lighter';
+      const eg=c.createLinearGradient(x-fac*34,yy,x+fac*33,yy);
+      eg.addColorStop(0,K(0)); eg.addColorStop(0.6,K(0.85)); eg.addColorStop(1,W(1));
+      c.strokeStyle=eg; c.lineWidth=5;
+      c.beginPath();
+      c.moveTo(x-fac*34,yy-s*2);
+      c.quadraticCurveTo(x+fac*4,yy-s*3,x+fac*33,yy);
+      c.stroke();
+      c.restore();
+    }
+    /* the shear line where they meet */
+    c.save(); c.globalCompositeOperation='lighter';
+    c.globalAlpha=q*close;
+    const sg=c.createLinearGradient(x-fac*44,y,x+fac*40,y);
+    sg.addColorStop(0,K(0)); sg.addColorStop(0.7,W(0.95)); sg.addColorStop(1,K(0));
+    c.strokeStyle=sg; c.lineWidth=2.6;
+    c.beginPath(); c.moveTo(x-fac*44,y); c.lineTo(x+fac*40,y); c.stroke();
+    c.restore();
+  }
+
+  /* ---- 사마귀 · spined sickle ---- */
+  else if(kind==='slash'){
+    const blade=(scale,alpha,fill)=>{
+      c.beginPath();
+      c.moveTo(x-fac*52*scale,y+30*scale);
+      c.quadraticCurveTo(x+fac*10*scale,y+4*scale,x+fac*40*scale,y-32*scale);
+      c.quadraticCurveTo(x-fac*2*scale,y+16*scale,x-fac*52*scale,y+38*scale);
+      c.closePath();
+      c.globalAlpha=alpha; c.fillStyle=fill; c.fill();
+    };
+    c.save();
+    c.globalCompositeOperation='lighter';
+    /* afterimages, because the real strike is about fifty milliseconds */
+    blade(1.22,q*0.26,K(0.85));
+    blade(1.10,q*0.45,K(0.92));
+    blade(1.0,q*1,W(0.62));
+    blade(0.9,q*1,W(0.9));
+    /* razor edge */
+    const rg=c.createLinearGradient(x-fac*52,y+30,x+fac*40,y-32);
+    rg.addColorStop(0,K(0)); rg.addColorStop(0.55,W(0.92)); rg.addColorStop(1,W(1));
+    c.globalAlpha=q; c.strokeStyle=rg; c.lineWidth=2.8;
+    c.beginPath();
+    c.moveTo(x-fac*52,y+30);
+    c.quadraticCurveTo(x+fac*10,y+4,x+fac*40,y-32);
+    c.stroke();
+    /* the spines that line the inner edge of the foreleg */
+    c.lineWidth=1.8; c.strokeStyle=W(0.8);
+    for(let i=0;i<6;i++){
+      const u=0.16+i*0.14;
+      const bx=x-fac*52+(fac*92)*u, by=y+30-62*u*u-10*u;
+      c.globalAlpha=q*0.75;
+      c.beginPath(); c.moveTo(bx,by); c.lineTo(bx-fac*4,by+9); c.stroke();
+    }
+    c.restore();
+  }
+
+  /* ---- 장수말벌 · banded lance ---- */
+  else if(kind==='needle'){
+    c.save();
+    /* shaft */
+    const lg=c.createLinearGradient(x-fac*40,y,x+fac*30,y);
+    lg.addColorStop(0,K(0)); lg.addColorStop(0.35,K(0.9)); lg.addColorStop(1,W(1));
+    c.fillStyle=lg;
+    c.beginPath();
+    c.moveTo(x+fac*32,y);
+    c.lineTo(x-fac*34,y-7);
+    c.quadraticCurveTo(x-fac*46,y,x-fac*34,y+7);
+    c.closePath(); c.fill();
+    /* the abdomen's banding, carried onto the shaft */
+    c.globalAlpha=q*0.85;
+    c.fillStyle=D(0.9);
+    for(let i=0;i<3;i++){
+      const bx=x-fac*(6+i*11);
+      c.beginPath();
+      c.moveTo(bx,y-5.4+i*0.7); c.lineTo(bx-fac*3.4,y-5.4+i*0.7);
+      c.lineTo(bx-fac*3.4,y+5.4-i*0.7); c.lineTo(bx,y+5.4-i*0.7);
+      c.closePath(); c.fill();
+    }
+    /* a bead of venom riding the point */
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=q;
+    const bg=c.createRadialGradient(x+fac*30,y,0,x+fac*30,y,11);
+    bg.addColorStop(0,W(1)); bg.addColorStop(0.4,K(0.85)); bg.addColorStop(1,K(0));
+    c.fillStyle=bg; c.beginPath(); c.arc(x+fac*30,y,11,0,TAU); c.fill();
+    /* vapour off the back */
+    for(let i=0;i<4;i++){
+      const s=(i*0.37+age*2.2)%1;
+      c.globalAlpha=q*(0.4-s*0.35);
+      c.strokeStyle=K(0.8); c.lineWidth=2.2-s;
+      c.beginPath();
+      c.moveTo(x-fac*(40+s*54),y-4+Math.sin(i*2+age*12)*5);
+      c.lineTo(x-fac*(26+s*40),y+Math.sin(i*2+age*12)*3);
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  /* ---- 리옥크 · concussion ring ---- */
+  else if(kind==='pulse'){
+    c.save();
+    c.globalCompositeOperation='lighter';
+    const gr=c.createRadialGradient(x,y,2,x,y,40);
+    gr.addColorStop(0,W(0.95)); gr.addColorStop(0.2,K(0.8)); gr.addColorStop(1,K(0));
+    c.fillStyle=gr; c.beginPath(); c.arc(x,y,40,0,TAU); c.fill();
+    /* the ring: thick, brightest where it is doing the work */
+    const rr=26+Math.sin(age*16)*2.5;
+    const eg=c.createLinearGradient(x-fac*rr,y,x+fac*rr,y);
+    eg.addColorStop(0,K(0.2)); eg.addColorStop(0.6,K(0.9)); eg.addColorStop(1,W(1));
+    c.strokeStyle=eg; c.lineWidth=9;
+    c.beginPath(); c.ellipse(x-fac*6,y,rr,rr*1.16,0,0,TAU); c.stroke();
+    c.globalAlpha=q*0.45; c.lineWidth=3;
+    c.beginPath(); c.ellipse(x-fac*22,y,rr*1.3,rr*1.4,0,0,TAU); c.stroke();
+    /* dust shaken loose behind it */
+    for(let i=0;i<6;i++){
+      const s=(i*0.618+age*1.4)%1;
+      c.globalAlpha=q*(0.34-s*0.3);
+      c.fillStyle=K(0.9);
+      c.beginPath(); c.arc(x-fac*(26+s*54),y+Math.sin(i*3.1)*24,3.4-s*2,0,TAU); c.fill();
+    }
+    c.restore();
+  }
+
+  /* ---- 물장군 · digestive spray ---- */
+  else if(kind==='fluid'){
+    c.save();
+    /* the leading blob, wobbling the way a liquid does */
+    const w=1+Math.sin(age*22)*0.12, h=1-Math.sin(age*22)*0.12;
+    const bg=c.createRadialGradient(x-fac*5,y-6,1,x,y,26);
+    bg.addColorStop(0,W(0.85)); bg.addColorStop(0.35,K(0.92)); bg.addColorStop(1,K(0.35));
+    c.globalAlpha=q*0.95; c.fillStyle=bg;
+    c.beginPath(); c.ellipse(x,y,31*w,19*h,fac>0?0.14:-0.14,0,TAU); c.fill();
+    /* wet highlight */
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=q*0.8; c.fillStyle=W(0.9);
+    c.beginPath(); c.ellipse(x-fac*7,y-6,7,3.4,fac>0?-0.3:0.3,0,TAU); c.fill();
+    /* dribble */
+    c.globalCompositeOperation='source-over';
+    for(let i=1;i<6;i++){
+      const s=i/6;
+      c.globalAlpha=q*(0.7-s*0.55);
+      const dy=y+Math.sin(i*1.9+age*9)*7;
+      const dg=c.createRadialGradient(x-fac*i*20,dy-2,0,x-fac*i*20,dy,10-i);
+      dg.addColorStop(0,W(0.55)); dg.addColorStop(0.4,K(0.9)); dg.addColorStop(1,K(0));
+      c.fillStyle=dg;
+      c.beginPath(); c.arc(x-fac*i*20,dy,10-i,0,TAU); c.fill();
+    }
+    c.restore();
+  }
+
+  /* ---- 지네 · undulating venom chain ---- */
+  else if(kind==='venom'){
+    c.save();
+    const N=6;
+    /* a filament joining the beads, so the chain reads as one body */
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=q*0.35; c.strokeStyle=K(0.8); c.lineWidth=3;
+    c.beginPath();
+    for(let i=0;i<N;i++){
+      const px=x-fac*i*17, py=y+Math.sin(i*1.1-age*13)*13;
+      if(i===0)c.moveTo(px,py); else c.lineTo(px,py);
+    }
+    c.stroke();
+    for(let i=0;i<N;i++){
+      const px=x-fac*i*17, py=y+Math.sin(i*1.1-age*13)*13;
+      const rad=11-i*1.4;
+      c.globalAlpha=q*(0.95-i*0.13);
+      const dg=c.createRadialGradient(px-fac*2,py-3,0,px,py,rad);
+      dg.addColorStop(0,W(0.95));
+      dg.addColorStop(0.35,i===0?'rgba(244,255,156,.95)':K(0.95));
+      dg.addColorStop(1,K(0));
+      c.fillStyle=dg;
+      c.beginPath(); c.arc(px,py,rad,0,TAU); c.fill();
+    }
+    c.restore();
+  }
+
+  /* ---- 전갈 · telson dart ---- */
+  else if(kind==='dart'){
+    c.save();
+    const spin=Math.sin(age*9)*0.16;
+    c.translate(x,y); c.rotate(spin); c.translate(-x,-y);
+    /* the curved sting: bulbous base tapering to a hooked point */
+    c.globalAlpha=q;
+    const dg=c.createLinearGradient(x-fac*30,y+8,x+fac*30,y-8);
+    dg.addColorStop(0,K(0.35)); dg.addColorStop(0.55,K(0.95)); dg.addColorStop(1,W(1));
+    c.fillStyle=dg;
+    c.beginPath();
+    c.moveTo(x+fac*36,y-17);
+    c.quadraticCurveTo(x+fac*14,y-16,x-fac*18,y+2);
+    c.quadraticCurveTo(x-fac*34,y+11,x-fac*14,y+16);
+    c.quadraticCurveTo(x+fac*12,y+9,x+fac*36,y-17);
+    c.closePath(); c.fill();
+    /* segments */
+    c.globalAlpha=q*0.6; c.strokeStyle=D(0.8); c.lineWidth=1.6;
+    for(let i=0;i<4;i++){
+      const u=0.2+i*0.16;
+      const sx=x-fac*18+fac*54*u, sy=y+9-24*u;
+      c.beginPath(); c.moveTo(sx,sy-6); c.lineTo(sx,sy+6); c.stroke();
+    }
+    /* venom running off the point */
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=q;
+    const vg=c.createRadialGradient(x+fac*36,y-17,0,x+fac*36,y-17,14);
+    vg.addColorStop(0,W(1)); vg.addColorStop(0.35,K(0.9)); vg.addColorStop(1,K(0));
+    c.fillStyle=vg; c.beginPath(); c.arc(x+fac*36,y-17,14,0,TAU); c.fill();
+    for(let i=0;i<3;i++){
+      const s=(i*0.41+age*2.6)%1;
+      c.globalAlpha=q*(0.55-s*0.5);
+      c.fillStyle=K(0.95);
+      c.beginPath(); c.arc(x+fac*(26-s*40),y-6+s*16,3.2-s*2,0,TAU); c.fill();
+    }
+    c.restore();
+  }
+
+  /* ---- 타란툴라 · spinning silk bolus ---- */
+  else if(kind==='web'){
+    c.save();
+    const spin=age*7*fac;
+    c.translate(x,y); c.rotate(spin); c.translate(-x,-y);
+    /* tangle: irregular loops, not a spider-web diagram */
+    c.globalAlpha=q; c.strokeStyle=W(0.85); c.lineWidth=3;
+    for(let i=0;i<5;i++){
+      const a=i/5*TAU, rr=13+((i*37)%11);
+      c.beginPath();
+      c.ellipse(x+Math.cos(a)*7,y+Math.sin(a)*6,rr,rr*0.66,a,0,TAU);
+      c.stroke();
+    }
+    /* radial strands */
+    c.globalAlpha=q*0.55; c.lineWidth=1.5; c.strokeStyle=W(0.8);
+    for(let i=0;i<9;i++){
+      const a=i/9*TAU;
+      c.beginPath(); c.moveTo(x,y); c.lineTo(x+Math.cos(a)*30,y+Math.sin(a)*24); c.stroke();
+    }
+    /* a dense wet core so it has weight */
+    c.globalCompositeOperation='lighter';
+    c.globalAlpha=q;
+    /* A bright core was washing the tangle out into one white blob; the
+       silk is the subject, so the core only seats it. */
+    c.globalAlpha=q*0.55;
+    const cg=c.createRadialGradient(x,y,0,x,y,20);
+    cg.addColorStop(0,K(0.7)); cg.addColorStop(0.55,K(0.28)); cg.addColorStop(1,K(0));
+    c.fillStyle=cg; c.beginPath(); c.arc(x,y,20,0,TAU); c.fill();
+    c.restore();
+    /* loose filament paying out behind */
+    c.save();
+    c.globalAlpha=q*0.5; c.strokeStyle=K(0.8); c.lineWidth=1.6;
+    c.beginPath();
+    for(let i=0;i<7;i++){
+      const px=x-fac*(24+i*15), py=y+Math.sin(i*1.7+age*6)*11;
+      if(i===0)c.moveTo(px,py); else c.lineTo(px,py);
+    }
+    c.stroke();
+    c.restore();
+  }
+
+  /* ---- 잠자리 · vortex blade ---- */
+  else if(kind==='wind'){
+    c.save();
+    c.globalCompositeOperation='lighter';
+    /* the compression lens */
+    const lg=c.createLinearGradient(x-fac*40,y,x+fac*34,y);
+    lg.addColorStop(0,K(0)); lg.addColorStop(0.6,K(0.45)); lg.addColorStop(1,W(0.85));
+    c.globalAlpha=q*0.9; c.fillStyle=lg;
+    c.beginPath();
+    c.moveTo(x+fac*34,y);
+    c.quadraticCurveTo(x-fac*4,y-34,x-fac*40,y-11);
+    c.quadraticCurveTo(x-fac*16,y,x-fac*40,y+11);
+    c.quadraticCurveTo(x-fac*4,y+34,x+fac*34,y);
+    c.closePath(); c.fill();
+    /* the curls rolling off both tips */
+    c.globalAlpha=q*0.85; c.strokeStyle=W(0.9); c.lineWidth=2.4;
+    for(const s of [-1,1]){
+      c.beginPath();
+      for(let i=0;i<=16;i++){
+        const u=i/16, a=u*3.4*s+(fac>0?0:Math.PI);
+        const rr=(1-u)*15+3;
+        const px=x-fac*34+Math.cos(a)*rr, py=y+s*20+Math.sin(a)*rr;
+        if(i===0)c.moveTo(px,py); else c.lineTo(px,py);
+      }
+      c.stroke();
+    }
+    /* the bright seam through the middle */
+    const sg=c.createLinearGradient(x-fac*40,y,x+fac*34,y);
+    sg.addColorStop(0,K(0)); sg.addColorStop(0.75,W(1)); sg.addColorStop(1,K(0));
+    c.globalAlpha=q; c.strokeStyle=sg; c.lineWidth=2.2;
+    c.beginPath(); c.moveTo(x-fac*40,y); c.lineTo(x+fac*34,y); c.stroke();
+    c.restore();
+  }
+
+  c.restore();
+}
+
+/* ------------------------------------------------------------------
+   INSTALL
+
+   drawRangedProjectile and drawRangedOverlay both live inside the V4
+   module's closure — `typeof drawRangedProjectile` is "undefined" from
+   out here — so neither can be replaced by name. What IS reachable is
+   drawBattle, which that module wrapped to call its overlay.
+
+   So the projectile list is emptied for the duration of the original
+   draw and handed back straight after: the old renderer finds nothing
+   to paint, its other job (the bleed and status marks over each
+   fighter) still runs on the untouched fighters, and these are drawn in
+   its place at the same point in the frame. Nothing about how a
+   projectile moves, hits or expires is touched — only what it looks
+   like.
+   ------------------------------------------------------------------ */
+try{
+  const prev=G('drawBattle');
+  if(typeof prev==='function'){
+    globalThis.drawBattle=function(c){
+      const b=G('state')&&G('state').battle;
+      const list=b&&b.v4Projectiles;
+      const swap=!!(list&&list.length);
+      if(swap) b.v4Projectiles=[];
+      let r;
+      try{ r=prev.apply(this,arguments) }
+      finally{ if(swap) b.v4Projectiles=list }
+      if(swap&&c&&!(b&&b.origin)){
+        for(const q of list){ if(!q||q.hit)continue; try{ draw(c,q) }catch(_){} }
+      }
+      return r;
+    };
+  }
+}catch(_){}
+
+window.BugArenaG96={version:VERSION,draw,note:'Ten ranged projectiles rebuilt from each species’ own behaviour.'};
 })();
 </script>
 
