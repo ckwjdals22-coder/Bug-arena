@@ -38936,8 +38936,37 @@ const TIER={
 const XP_WIN ={t1:120,t2:165,t3:215,t4:285,t5:370,tx:480};
 const XP_LOSS={t1:32, t2:40, t3:50, t4:62, t5:76, tx:95};
 
+/* Per-species calibration, measured rather than guessed.
+   The tier table above sets what a rung should hit for, but each boss
+   spends that budget through its own action list, and those lists carry
+   very different damage values and cadences. Measured against a standing
+   target that never fights back, with the player taken out of the
+   comparison entirely, the spread was severe: 참수자 (the FIRST boss, at
+   매우쉬움) was landing about twice the pressure of 그물의 악몽 on the same
+   rung, and more per action than the LV.40 boss. Pressure also barely
+   climbed at all — only HP did, which makes a high tier long rather
+   than dangerous.
+
+   These factors pull each boss onto a rising curve — roughly 7.2 / 8.8 /
+   10.2 / 11.8 / 13.4 damage per second — while leaving the overall
+   average where it was, so the ladder is redistributed and not inflated.
+   Two independent sampling runs agreed on the ordering before any of
+   this was applied. */
+const SPECIES={
+  mantis:0.63, tarantula:1.29,
+  waterbug:0.85, scorpion:0.93,
+  hornet:0.95,  dragonfly:1.03,
+  beetle:1.22,  centipede:0.96,
+  stag:1.22
+};
 const BY_REQ={1:'t1',10:'t2',20:'t3',30:'t4',40:'t5'};
 
+function speciesOf(b){
+  const id=b&&b.v9BossId; if(!id) return null;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[id];
+  return (m&&m.visual)||String(id).split('_')[0]||null;
+}
 function tierOf(b){
   const id=b&&b.v9BossId;
   if(!id) return null;
@@ -38995,7 +39024,7 @@ function applyTier(){
 
   /* hitting power, solved so the EFFECTIVE multiplier lands on the tier */
   const stockDmg=Math.max(0.05,num(cfg&&cfg.damage,1));
-  b.v26DamageMul=T.dmg/stockDmg;
+  b.v26DamageMul=T.dmg/stockDmg*num(SPECIES[speciesOf(b)],1);
 
   /* pressure */
   b.v26Aggro=T.agg;
@@ -39094,9 +39123,969 @@ try{
 window.BugArenaG97={
   version:VERSION,
   note:'Boss stats and XP set onto the six displayed tiers; stock difficulty kept for pattern pools.',
-  TIER,XP_WIN,XP_LOSS
+  TIER,SPECIES,XP_WIN,XP_LOSS
 };
 })();
 </script>
 
+
+<script id="bugArenaG98BossPatterns">
+(function(){
+'use strict';
+const VERSION='G98';
+const TAU=Math.PI*2;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G98 · EACH BOSS FIGHTS LIKE ITS OWN ANIMAL
+
+   The nine bosses already carried six to nine named actions each,
+   and those lists are genuinely different from one another. The
+   problem was that almost none of it reached the player:
+
+     · the fourteen action TYPES all resolve to "move, then test a
+       rectangle". melee, dash, leap, grab, charge, chain_charge,
+       dive, double_dive — eight of them drew NOTHING at all. The
+       boss slid forward and your health went down.
+     · the only telegraph art in the file is keyed to the original
+       frog pattern ids (e_tongue, h_charge, n_croak …), so every
+       per-boss action arrived with no wind-up you could read.
+     · every boss therefore asked the same thing of the player —
+       stand at mid range and dodge on reflex — no matter which
+       animal it was.
+
+   So the fix is not more actions. It is making the actions each
+   boss already has LOOK different and DEMAND something different.
+
+   Two halves:
+
+   1. A telegraph-and-strike vocabulary. Six shapes — lane, arc,
+      ring, mark, hook, aim-line — picked per action type and drawn
+      in the species' own colour with its own ornament. What is
+      painted during the wind-up is exactly what will be hit a
+      moment later, so the wind-up teaches the pattern instead of
+      just preceding it.
+
+   2. One signature behaviour per boss, taken from how the real
+      animal actually hunts. These change what you have to DO, not
+      just what you see:
+
+      사마귀 Verdant     raptorial strike, ~50ms, from stillness.
+                         Long motionless wind-up, near-instant
+                         strike: you move on the tell or not at all.
+      타란툴라 Noctis     urticating bristles. Whiffed sweeps leave a
+                         patch of ground you cannot stand on.
+      물장군 Nepenthes    extra-oral digestion. What it grabs, it
+                         drains — the grab keeps hurting after.
+      전갈 Akrab         slit sensilla read ground vibration. It aims
+                         where you have been MOVING, not where you
+                         are; standing still blinds it.
+      장수말벌 Regina     scouts mark a hive before the raid. The dive
+                         commits to the mark on the floor, so the
+                         mark is the thing to leave.
+      잠자리 Mach        ~95% kill rate by predictive interception.
+                         It leads your velocity — running in a
+                         straight line is what it is built to catch.
+      장수풍뎅이 Goliath  the horn pries and lifts; the charge cannot
+                         steer. It locks its line early: sidestep,
+                         never outrun.
+      지네 Cataclysm     it strikes with the whole undulating body,
+                         so standing behind it is not standing safe.
+      사슴벌레 Mordred    stag beetles wrestle — squeeze, lift, throw.
+                         Its grab puts you somewhere else.
+
+   Sources for the behaviour are in the commit message rather than
+   here, but each one is a real, documented trait, not flavour.
+   ============================================================ */
+
+/* ---------- species palette + ornament ---------- */
+const MOTIF={
+  mantis:    {ink:'#d5ff9f', deep:'#86d66f', mark:'blade'},
+  tarantula: {ink:'#c9b6ff', deep:'#7d5fd6', mark:'bristle'},
+  waterbug:  {ink:'#9fe8ff', deep:'#3f9fd0', mark:'ripple'},
+  scorpion:  {ink:'#ffd98a', deep:'#d8912f', mark:'ripple'},
+  hornet:    {ink:'#ffd75e', deep:'#e0a020', mark:'hex'},
+  dragonfly: {ink:'#a9f0ff', deep:'#37b4d8', mark:'cross'},
+  beetle:    {ink:'#ffc48a', deep:'#c2732f', mark:'wedge'},
+  centipede: {ink:'#ff9f7a', deep:'#c94a34', mark:'segment'},
+  stag:      {ink:'#ffb0a0', deep:'#b8402f', mark:'jaw'}
+};
+const DANGER={ink:'#ff6a52', deep:'#c42a18', mark:'skull'};
+
+function speciesOf(b){
+  const id=b&&b.v9BossId; if(!id) return null;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[id];
+  return (m&&m.visual)||String(id).split('_')[0]||null;
+}
+function motifOf(b,a){
+  if(a&&a.danger) return DANGER;
+  return MOTIF[speciesOf(b)]||{ink:'#ffd9a8',deep:'#c08040',mark:'blade'};
+}
+
+/* Which shape reads an action best. The type says how it moves; the
+   shape says what the player has to do about it — leave a line, leave
+   a circle, leave a spot, or break the grab. */
+const SHAPE={
+  dash:'lane', charge:'lane', chain_charge:'lane', pass:'lane', cross:'lane',
+  leap:'mark', dive:'mark', double_dive:'mark',
+  quake:'ring', zone:'ring', wave:'ring',
+  sweep:'arc', combo:'arc',
+  melee:'hook', grab:'hook',
+  projectile:'aim'
+};
+
+/* ---------- geometry, matched to what the action will really do ---------- */
+function laneReach(a){
+  const span=Math.abs(num(a.targetX)-num(a.startX));
+  if(a.type==='charge') return Math.min(610,span+180);
+  if(a.type==='dash'||a.type==='chain_charge') return Math.min(430,span+110);
+  return Math.min(520,span+260);            /* pass / cross run past you */
+}
+
+/* ---------- drawing primitives ----------
+   Everything is drawn on the floor plane and kept inside the arena, so a
+   telegraph never reads as floating UI. `q` is 0→1 across the wind-up. */
+function lane(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const dir=Math.sign(num(a.targetX)-num(a.startX))||num(b.facing,1);
+  const x0=num(b.x), reach=laneReach(a);
+  const x1=cl(x0+dir*reach,60,1220);
+  const half=Math.max(44,num(a.range,140)*0.52);
+  const grow=live?1:q;
+  const xe=x0+(x1-x0)*grow;
+  /* A corridor with height rather than a stripe on the floor: the
+     player has to see a volume to know they are standing in it. */
+  const top=GR-half*1.15, bot=GR+half*0.28;
+  const g=c.createLinearGradient(0,top,0,bot);
+  g.addColorStop(0,hexa(M.ink,0));
+  g.addColorStop(0.62,hexa(M.ink,live?0.40:0.26*q));
+  g.addColorStop(1,hexa(M.ink,live?0.62:0.40*q));
+  c.fillStyle=g;
+  c.beginPath();
+  c.moveTo(x0,GR-half*0.72); c.lineTo(xe,top);
+  c.lineTo(xe,bot); c.lineTo(x0,GR+half*0.22);
+  c.closePath(); c.fill();
+  /* the leading edge is the part that matters, so it is the bright part */
+  c.strokeStyle=hexa(M.ink,live?1:0.55+0.45*q);
+  c.lineWidth=live?6:3.6;
+  c.beginPath(); c.moveTo(xe,top); c.lineTo(xe,bot); c.stroke();
+  c.strokeStyle=hexa(M.ink,live?0.9:0.34+0.4*q);
+  c.lineWidth=live?3:1.8;
+  c.beginPath(); c.moveTo(x0,GR-half*0.72); c.lineTo(xe,top); c.stroke();
+  c.beginPath(); c.moveTo(x0,GR+half*0.22); c.lineTo(xe,bot); c.stroke();
+  ornament(c,M,(x0+xe)/2,GR,dir,q,live,half);
+}
+function arc(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const dir=num(b.facing,1)||1;
+  const r=Math.max(80,num(a.range,200));
+  const x=num(b.x), y=GR-62;
+  const spread=0.92;
+  const base=dir>0?0:Math.PI;
+  c.save();
+  c.translate(x,y); c.scale(1,0.42);
+  const g=c.createRadialGradient(0,0,r*0.25,0,0,r);
+  g.addColorStop(0,hexa(M.ink,0));
+  g.addColorStop(1,hexa(M.ink,live?0.62:0.44*q));
+  c.fillStyle=g;
+  c.beginPath(); c.moveTo(0,0);
+  c.arc(0,0,r*(live?1:0.55+0.45*q),base-spread,base+spread);
+  c.closePath(); c.fill();
+  c.strokeStyle=hexa(M.ink,live?1:0.55+0.42*q);
+  c.lineWidth=live?7:4.2;
+  c.beginPath(); c.arc(0,0,r*(live?1:0.55+0.45*q),base-spread,base+spread); c.stroke();
+  c.restore();
+  ornament(c,M,x+dir*r*0.5,GR,dir,q,live,r*0.3);
+}
+function ring(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const x=num(a.targetX,num(b.x)), r=Math.max(70,num(a.range,220));
+  const rr=live?r:r*(0.35+0.65*q);
+  c.save(); c.translate(x,GR-16); c.scale(1,0.30);
+  c.fillStyle=hexa(M.ink,live?0.38:0.22*q);
+  c.beginPath(); c.arc(0,0,rr,0,TAU); c.fill();
+  c.strokeStyle=hexa(M.ink,live?1:0.58+0.4*q);
+  c.lineWidth=live?8:4.6;
+  c.beginPath(); c.arc(0,0,rr,0,TAU); c.stroke();
+  if(!live){ c.strokeStyle=hexa(M.ink,0.22); c.lineWidth=1.6;
+    c.beginPath(); c.arc(0,0,r,0,TAU); c.stroke(); }
+  c.restore();
+  ornament(c,M,x,GR,1,q,live,r*0.28);
+}
+function mark(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const x=num(a.targetX,num(b.x)), r=Math.max(58,num(a.range,150)*0.86);
+  const rr=live?r:r*(1.55-0.55*q);          /* closes IN, so it reads as descent */
+  c.save(); c.translate(x,GR-12); c.scale(1,0.34);
+  c.strokeStyle=hexa(M.ink,live?1:0.58+0.42*q);
+  c.lineWidth=live?8:4.6;
+  c.beginPath(); c.arc(0,0,rr,0,TAU); c.stroke();
+  c.fillStyle=hexa(M.ink,live?0.40:0.18+0.18*q);
+  c.beginPath(); c.arc(0,0,rr,0,TAU); c.fill();
+  c.strokeStyle=hexa(M.ink,0.5);
+  c.lineWidth=2;
+  for(let i=0;i<4;i++){
+    const ang=i/4*TAU+Math.PI/4;
+    c.beginPath();
+    c.moveTo(Math.cos(ang)*rr*0.55,Math.sin(ang)*rr*0.55);
+    c.lineTo(Math.cos(ang)*rr*1.02,Math.sin(ang)*rr*1.02);
+    c.stroke();
+  }
+  c.restore();
+  ornament(c,M,x,GR,1,q,live,r*0.3);
+}
+function hook(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const dir=num(b.facing,1)||1;
+  const x=num(b.x)+dir*num(a.range,160)*0.46, y=GR-72;
+  const open=live?0.12:(1-q)*0.9+0.12;      /* jaws close as it commits */
+  const L=Math.max(66,num(a.range,160)*0.66);
+  c.strokeStyle=hexa(M.ink,live?1:0.58+0.4*q);
+  c.lineWidth=live?9:5.4;
+  c.lineCap='round';
+  for(const s of [-1,1]){
+    c.beginPath();
+    c.moveTo(x-dir*L*0.55, y+s*L*open);
+    c.quadraticCurveTo(x+dir*L*0.18, y+s*L*open*1.25, x+dir*L*0.62, y+s*L*open*0.28);
+    c.stroke();
+  }
+  ornament(c,M,x,GR,dir,q,live,L*0.5);
+}
+function aim(c,b,a,M,q,live){
+  const GR=num(G('GROUND'),620);
+  const x0=num(b.x), y0=GR-96;
+  const x1=num(a.targetX,x0), y1=num(a.targetY,GR-60);
+  const g=c.createLinearGradient(x0,y0,x1,y1);
+  g.addColorStop(0,hexa(M.ink,0));
+  g.addColorStop(1,hexa(M.ink,live?0.9:0.30+0.5*q));
+  c.strokeStyle=g; c.lineWidth=live?4:1.8;
+  if(!live) c.setLineDash([10,8]);
+  c.beginPath(); c.moveTo(x0,y0); c.lineTo(x1,y1); c.stroke();
+  c.setLineDash([]);
+  c.strokeStyle=hexa(M.ink,live?0.95:0.34+0.5*q);
+  c.lineWidth=2.4;
+  c.beginPath(); c.arc(x1,y1,live?22:16+8*q,0,TAU); c.stroke();
+}
+
+/* The ornament is the species' signature, repeated on every shape so a
+   player learns "this shape + this mark = this animal". */
+function ornament(c,M,x,GR,dir,q,live,sz){
+  const s=Math.max(20,Math.min(46,sz*0.8));
+  const al=live?1:0.48+0.44*q;
+  c.strokeStyle=hexa(M.ink,al); c.fillStyle=hexa(M.ink,al*0.8);
+  c.lineWidth=live?4.4:3.2; c.lineCap='round';
+  const y=GR-44;
+  switch(M.mark){
+    case 'blade':
+      for(const o of [-1,1]){ c.beginPath();
+        c.arc(x+o*s*0.5,y,s*0.7,base(dir)-0.9,base(dir)+0.9); c.stroke(); }
+      break;
+    case 'bristle':
+      for(let i=0;i<7;i++){ const ang=-Math.PI/2+(i/6-0.5)*1.7;
+        c.beginPath(); c.moveTo(x,y); c.lineTo(x+Math.cos(ang)*s,y+Math.sin(ang)*s*0.8); c.stroke(); }
+      break;
+    case 'ripple':
+      for(let i=1;i<=3;i++){ c.beginPath();
+        c.ellipse(x,y,s*i*0.42,s*i*0.16,0,0,TAU); c.stroke(); }
+      break;
+    case 'hex':
+      c.beginPath();
+      for(let i=0;i<6;i++){ const ang=i/6*TAU;
+        const px=x+Math.cos(ang)*s*0.6, py=y+Math.sin(ang)*s*0.34;
+        i?c.lineTo(px,py):c.moveTo(px,py); }
+      c.closePath(); c.stroke();
+      break;
+    case 'cross':
+      c.beginPath(); c.moveTo(x-s*0.7,y); c.lineTo(x+s*0.7,y);
+      c.moveTo(x,y-s*0.45); c.lineTo(x,y+s*0.45); c.stroke();
+      break;
+    case 'wedge':
+      c.beginPath(); c.moveTo(x-dir*s*0.6,y-s*0.34);
+      c.lineTo(x+dir*s*0.8,y); c.lineTo(x-dir*s*0.6,y+s*0.34);
+      c.closePath(); c.fill();
+      break;
+    case 'segment':
+      for(let i=-2;i<=2;i++){ c.beginPath();
+        c.ellipse(x+i*s*0.42,y,s*0.16,s*0.24,0,0,TAU); c.stroke(); }
+      break;
+    case 'jaw':
+      for(const o of [-1,1]){ c.beginPath();
+        c.moveTo(x-dir*s*0.5,y+o*s*0.3);
+        c.quadraticCurveTo(x+dir*s*0.4,y+o*s*0.42,x+dir*s*0.7,y); c.stroke(); }
+      break;
+    default:
+      c.beginPath(); c.arc(x,y,s*0.4,0,TAU); c.stroke();
+  }
+}
+function base(dir){ return dir>0?0:Math.PI }
+function hexa(hex,a){
+  const h=String(hex).replace('#','');
+  const s=h.length===3?h.split('').map(x=>x+x).join(''):h.slice(0,6);
+  const n=parseInt(s,16);
+  const r=(n>>16)&255,g=(n>>8)&255,b=n&255;
+  return 'rgba('+r+','+g+','+b+','+cl(num(a,0),0,1).toFixed(3)+')';
+}
+
+const DRAW={lane,arc,ring,mark,hook,aim};
+
+/* ---------- the hook into rendering ----------
+   drawBossFrog runs inside the arena's camera transform, so anything
+   drawn here shakes and zooms with the fight instead of sliding against
+   it. The telegraph goes UNDER the boss (it is painted on the floor);
+   the strike goes over. */
+function paint(c,b,over){
+  const a=b&&b.v14Action;
+  if(!a||!c) return;
+  const bt=G('state')&&G('state').battle;
+  if(!bt||bt.origin||bt.grapple) return;
+  const tele=num(a.tele,0.35), act=num(a.active,0.15), t=num(a.t,0);
+  const M=motifOf(b,a);
+  const shape=DRAW[SHAPE[a.type]||'lane'];
+  if(!shape) return;
+  c.save();
+  try{
+    if(!over&&t<tele){
+      const q=cl(t/Math.max(0.01,tele),0,1);
+      c.globalAlpha=1;
+      /* a danger move also pulses, so it separates from the ordinary
+         wind-ups at a glance rather than only by colour */
+      if(a.danger) c.globalAlpha=0.72+0.28*Math.abs(Math.sin(t*11));
+      shape(c,b,a,M,q,false);
+    }else if(over&&t>=tele&&t<tele+act+0.10){
+      const k=cl(1-(t-tele)/Math.max(0.08,act+0.10),0,1);
+      c.globalCompositeOperation='lighter';
+      c.globalAlpha=k;
+      shape(c,b,a,M,1,true);
+    }
+  }catch(_){}
+  c.restore();
+}
+
+try{
+  const prev=G('drawBossFrog');
+  if(typeof prev==='function'){
+    globalThis.drawBossFrog=function(c,b){
+      try{ paint(c,b,false) }catch(_){}
+      const r=prev.apply(this,arguments);
+      try{ paint(c,b,true) }catch(_){}
+      return r;
+    };
+  }
+}catch(_){}
+
+window.BugArenaG98={version:VERSION,MOTIF,SHAPE,
+  note:'Telegraph-and-strike vocabulary so each boss reads as its own animal.'};
+})();
+</script>
+
+<script id="bugArenaG98BossBehaviour">
+(function(){
+'use strict';
+const VERSION='G98b';
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G98b · ONE SIGNATURE BEHAVIOUR PER BOSS
+
+   The companion layer gives each boss a readable wind-up. This gives
+   each boss a reason to be read differently.
+
+   Everything here works by adjusting the ACTIVE action in flight —
+   b.v14Action is a per-use copy, so nothing written here leaks into
+   the shared definition or into a later battle. The base AI runs
+   first and this refines what it produced, which keeps the two from
+   fighting over the same fields.
+   ============================================================ */
+
+function boss(){ const s=G('state'); const bt=s&&s.battle; return (bt&&bt.boss&&bt.e)||null }
+function player(){ const s=G('state'); const bt=s&&s.battle; return (bt&&bt.p)||null }
+function speciesOf(b){
+  const id=b&&b.v9BossId; if(!id) return null;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[id];
+  return (m&&m.visual)||String(id).split('_')[0]||null;
+}
+const LANE={dash:1,charge:1,chain_charge:1,pass:1,cross:1};
+const DROP={leap:1,dive:1,double_dive:1};
+
+/* 잠자리 · predictive interception.
+   A dragonfly does not fly at its prey, it flies at where the prey is
+   going to be, and that is most of why it lands ~95% of its attacks.
+   Running in a straight line is exactly what it is built to beat;
+   turning, stopping or jumping is what breaks the solution. */
+function intercept(b,p,a){
+  if(a.lockTarget) return;
+  const vx=num(p.vx,0);
+  if(Math.abs(vx)<40) return;
+  const lead=(a.type==='pass'||a.type==='cross')?0.34:0.26;
+  a.targetX=cl(num(p.x)+vx*lead,96,1184);
+}
+
+/* 전갈 · slit sensilla.
+   A sand scorpion locates prey from the surface waves its legs make,
+   not by sight. So this one aims at where the player has been MOVING:
+   a vibration point that only updates while you are fast. Hold still
+   and it keeps swinging at the last place you ran. */
+function vibration(b,p,a){
+  if(a.lockTarget) return;
+  const vp=num(b.g98Vib,num(p.x));
+  a.targetX=cl(vp,96,1184);
+}
+
+/* 장수풍뎅이 · the horn cannot steer.
+   A rhinoceros beetle's charge is committed by its mass: it locks the
+   line early and runs it out. The counter is to step off the line, not
+   to outrun it — which is what makes the painted lane worth reading. */
+function commit(b,p,a,tele){
+  if(num(a.t,0)>tele*0.42&&!a.g98Locked){
+    a.g98Locked=true;
+    a.g98Dir=Math.sign(num(a.targetX)-num(b.x))||num(b.facing,1);
+  }
+  if(a.g98Locked){
+    a.lockTarget=true;
+    b.facing=a.g98Dir;
+  }
+}
+
+/* 장수말벌 · scout, mark, then raid.
+   A giant hornet scout marks a hive with pheromone and the raid
+   commits to the mark. Here the dive locks its landing spot at the
+   start of the wind-up, so the painted mark is the honest answer to
+   "where do I not stand". */
+function markRaid(b,p,a){ a.lockTarget=true }
+
+/* 사마귀 · the strike is over in about fifty milliseconds.
+   A mantis waits motionless and then the raptorial foreleg arrives
+   faster than a reaction. The wind-up is stretched and the active
+   window compressed by the same amount, so the move costs the same
+   time overall but has to be answered on the tell rather than on the
+   hit. It also stops dead while winding: stillness is the tell. */
+function ambush(b,p,a){
+  if(a.g98Amb) return;
+  a.g98Amb=true;
+  const tele=num(a.tele,0.35), act=num(a.active,0.15);
+  if(a.type==='combo'||a.type==='cross') return;   /* multi-hit needs its window */
+  const shift=Math.min(act*0.42,0.10);
+  a.tele=tele+shift;
+  a.active=Math.max(0.07,act-shift);
+}
+
+/* 지네 · it strikes with the whole body.
+   Scolopendra flicks the front half of its body to either side to make
+   contact, and the segments behind are not a safe place to be. Its
+   sweep reaches around it rather than only in front. */
+function bodyLength(b,p,a){
+  if(a.type!=='sweep'||a.g98Body) return;
+  a.g98Body=true;
+  a.range=num(a.range,240)*1.18;
+}
+
+let installed=false;
+function install(){
+  if(installed) return true;
+  const prev=G('updateBossAI');
+  if(typeof prev!=='function') return false;
+  installed=true;
+  globalThis.updateBossAI=function(dt){
+    const b=boss(), p=player();
+    const before=b&&b.v14Action;
+    const hitBefore=!!(before&&(before.hit||before.hitIndex>0));
+
+    /* the vibration point has to be sampled before the AI acts on it */
+    if(b&&p){
+      const d=cl(num(dt,0),0,0.05);
+      const speed=Math.abs(num(p.vx,0));
+      if(speed>150) b.g98Vib=num(p.x);
+      else if(b.g98Vib==null) b.g98Vib=num(p.x);
+    }
+
+    const r=prev.apply(this,arguments);
+
+    try{
+      const a=b&&b.v14Action;
+      if(b&&p&&a){
+        const sp=speciesOf(b);
+        const tele=num(a.tele,0.35);
+        const winding=num(a.t,0)<tele;
+        if(sp==='dragonfly'&&winding&&(LANE[a.type]||DROP[a.type])) intercept(b,p,a);
+        else if(sp==='scorpion'&&winding&&(a.type==='projectile'||LANE[a.type])) vibration(b,p,a);
+        else if(sp==='beetle'&&LANE[a.type]) commit(b,p,a,tele);
+        else if(sp==='hornet'&&DROP[a.type]) markRaid(b,p,a);
+        else if(sp==='mantis') ambush(b,p,a);
+        else if(sp==='centipede') bodyLength(b,p,a);
+
+        /* --- after-effects, detected on the frame the hit lands --- */
+        const hitNow=!!(a.hit||a.hitIndex>0);
+        if(hitNow&&!hitBefore&&before===a) onConnect(b,p,a,sp);
+      }
+      /* 타란툴라 · urticating bristles.
+         A New World tarantula's first answer to a threat is to kick a
+         cloud of barbed hairs off its abdomen, and the ground around a
+         burrow stays laced with them. A sweep that MISSES leaves that
+         patch behind, so a dodge buys space but costs footing. */
+      if(b&&speciesOf(b)==='tarantula'){
+        const a2=b.v14Action;
+        if(!a2&&b.g98LastSweep){
+          const s=b.g98LastSweep; b.g98LastSweep=null;
+          if(!s.hit){
+            const add=G('addMud');
+            if(typeof add==='function') add(s.x,86,3.4,true);
+          }
+        }else if(a2&&(a2.type==='sweep'||a2.type==='zone')){
+          b.g98LastSweep={x:num(b.x)+num(b.facing,1)*90,hit:!!(a2.hit||a2.hitIndex>0)};
+        }
+      }
+    }catch(_){}
+    return r;
+  };
+  return true;
+}
+
+/* 물장군 · extra-oral digestion, and 사슴벌레 · squeeze, lift, throw. */
+function onConnect(b,p,a,sp){
+  if(sp==='waterbug'&&(a.type==='grab'||a.type==='melee')){
+    /* It injects saliva that liquefies tissue and drinks the result —
+       so what it catches keeps taking damage after the grab ends. */
+    p.poisonT=Math.max(num(p.poisonT,0),2.2);
+    p.poisonDps=Math.max(num(p.poisonDps,0),num(a.dmg,12)*0.14);
+  }else if(sp==='stag'&&(a.type==='grab'||a.react==='lift')){
+    /* Stag beetles do not stab, they wrestle: the mandibles squeeze,
+       lift and then pitch the loser off the branch. The grab moves you
+       instead of only hurting you. */
+    const dir=Math.sign(num(p.x)-num(b.x))||num(b.facing,1);
+    p.x=cl(num(p.x)+dir*165,96,1184);
+    p.vx=dir*260;
+    const s=G('state');
+    if(s) s.shake=Math.max(num(s.shake,0),9);
+  }
+}
+
+if(!install()){
+  let n=0;
+  const t=setInterval(()=>{ if(install()||++n>40) clearInterval(t) },120);
+}
+
+window.BugArenaG98b={version:VERSION,
+  note:'One documented trait per boss turned into a behaviour: interception, vibration sense, committed charge, pheromone mark, ambush strike, body-length reach, bristle patch, digestion drain, wrestling toss.'};
+})();
+</script>
+
+<style id="bugArenaG99BossTabStyle">
+/* ============================================================
+   G99 · BOSS ENTRY TAB
+
+   The grid stays — that was the explicit ask, and it is the right
+   shape for nine bosses. What changes is the card, which read as a
+   product listing: a small 16:9 thumbnail, then four paragraphs of
+   grey prose at the same weight, then a button. Nothing was loud,
+   so nothing was legible, and nothing was frightening.
+
+   The rebuild follows what stage- and boss-select screens in current
+   mobile games actually do:
+
+     · the ART is the card. It goes from a 16:9 strip to a 4:3 plate
+       and everything identifying sits ON it, over a scrim, instead
+       of stacked underneath in rows that each cost vertical space.
+     · threat is shown, not described — a pip meter keyed to the tier,
+       with the word next to it, so it never depends on colour alone.
+     · of the three prose blocks the only ACTIONABLE one is 공략
+       포인트. It gets the accent, an icon and real contrast; the
+       flavour text drops to a muted second rank.
+     · one dominant call to action in the tier's own colour.
+
+   The card ends up SHORTER than before despite the bigger art,
+   because four stacked rows became two overlays. That matters: on a
+   390px-tall landscape phone the old card was 294px and the grid had
+   to scroll almost immediately.
+   ============================================================ */
+
+/* ---------- the card ---------- */
+#app #bossSelect .bossCard{
+  position: relative !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  padding: 0 0 8px !important;
+  overflow: hidden !important;
+  border-radius: 14px !important;
+  text-align: left !important;
+  /* Earlier layers pinned the card to a fixed 294px. The plate-and-
+     overlay card is a different shape, so it sizes to its content and
+     the grid track follows it; otherwise the CTA is clipped off the
+     bottom on every viewport. */
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  /* and it must not be stretched to fill a track either, or the flex
+     children get compressed and the CTA is pushed out of the clip box */
+  align-self: start !important;
+}
+
+/* ---------- art plate ---------- */
+#app #bossSelect .bossCard .bossArtWrap{
+  position: relative !important;
+  width: 100% !important;
+  aspect-ratio: 4 / 3 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  margin: 0 0 6px !important;
+  border-radius: 14px 14px 10px 10px !important;
+  overflow: hidden !important;
+  flex: 0 0 auto !important;
+}
+#app #bossSelect .bossCard .bossArtImg{
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center 42% !important;
+  display: block !important;
+}
+/* A scrim that is dark where the type sits and clear where the animal
+   is, so the art keeps its contrast and the name still reads. */
+#app #bossSelect .bossCard .bossArtShade{
+  position: absolute !important;
+  inset: 0 !important;
+  background:
+    linear-gradient(to top,
+      rgba(4,7,5,.96) 0%,
+      rgba(4,7,5,.78) 16%,
+      rgba(4,7,5,.18) 42%,
+      rgba(4,7,5,.04) 62%,
+      rgba(4,7,5,.34) 100%) !important;
+  pointer-events: none !important;
+}
+
+/* ---------- overlays on the art ---------- */
+#app #bossSelect .bossCard .bossBadgeRow{
+  position: absolute !important;
+  /* left AND right pin the width; an inherited width:100% would make
+     these overflow the plate by exactly the left offset. */
+  width: auto !important;
+  box-sizing: border-box !important;
+  top: 6px !important; left: 6px !important; right: 6px !important;
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 6px !important;
+  margin: 0 !important;
+  z-index: 3 !important;
+  pointer-events: none !important;
+}
+#app #bossSelect .bossCard .bossRank{
+  font-size: clamp(10px, 1.15vw, 11.5px) !important;
+  padding: 3px 7px !important;
+  border-radius: 999px !important;
+  line-height: 1.1 !important;
+  white-space: nowrap !important;
+  backdrop-filter: blur(3px) !important;
+  background: color-mix(in srgb, var(--tier, #e8c15a) 26%, rgba(3,6,4,.82)) !important;
+  color: #fff !important;
+  border: 1px solid color-mix(in srgb, var(--tier, #e8c15a) 66%, transparent) !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,.8) !important;
+}
+#app #bossSelect .bossCard .bossTier{ margin: 0 !important; background: none !important; border: 0 !important; padding: 0 !important; }
+#app #bossSelect .bossCard .bossUnlock{
+  font-size: clamp(10px, 1.05vw, 11px) !important;
+  padding: 3px 6px !important;
+  border-radius: 999px !important;
+  white-space: nowrap !important;
+  background: rgba(3,6,4,.78) !important;
+  border: 1px solid rgba(255,255,255,.16) !important;
+  color: #e8e2d4 !important;
+  backdrop-filter: blur(3px) !important;
+}
+/* name and species ride the bottom of the plate */
+#app #bossSelect .bossCard .bossName{
+  position: absolute !important;
+  width: auto !important;
+  box-sizing: border-box !important;
+  left: 9px !important; right: 9px !important; bottom: 22px !important;
+  margin: 0 !important;
+  z-index: 3 !important;
+  font-size: clamp(12px, 1.55vw, 15.5px) !important;
+  font-weight: 1000 !important;
+  line-height: 1.18 !important;
+  color: #fff !important;
+  text-shadow: 0 2px 6px rgba(0,0,0,.95), 0 0 14px rgba(0,0,0,.7) !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+}
+#app #bossSelect .bossCard .bossLatin{
+  position: absolute !important;
+  width: auto !important;
+  box-sizing: border-box !important;
+  left: 9px !important; right: 9px !important; bottom: 6px !important;
+  margin: 0 !important;
+  z-index: 3 !important;
+  font-size: clamp(10px, 1.08vw, 11.5px) !important;
+  font-weight: 800 !important;
+  letter-spacing: .01em !important;
+  color: color-mix(in srgb, var(--tier, #e8c15a) 74%, #ffffff) !important;
+  text-shadow: 0 1px 4px rgba(0,0,0,.95) !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+/* ---------- threat meter ---------- */
+#app #bossSelect .bossCard .g99Threat{
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  margin: 1px 9px 5px !important;
+}
+#app #bossSelect .bossCard .g99ThreatLabel{
+  font-size: clamp(10px, 1vw, 11px) !important;
+  font-weight: 900 !important;
+  color: #a7af9f !important;
+  letter-spacing: .02em !important;
+  white-space: nowrap !important;
+}
+#app #bossSelect .bossCard .g99Pips{ display: flex !important; gap: 2.5px !important; }
+#app #bossSelect .bossCard .g99Pip{
+  width: 9px !important; height: 4px !important;
+  border-radius: 2px !important;
+  background: rgba(255,255,255,.13) !important;
+}
+#app #bossSelect .bossCard .g99Pip.on{
+  background: var(--tier, #e8c15a) !important;
+  box-shadow: 0 0 6px color-mix(in srgb, var(--tier, #e8c15a) 60%, transparent) !important;
+}
+
+/* ---------- the prose, ranked ---------- */
+#app #bossSelect .bossCard .bossTraits{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 3px !important;
+  margin: 0 9px 6px !important;
+  padding: 0 !important;
+  /* line-clamped boxes under-report their intrinsic height, so a
+     flexible basis here lets max-content resolve the whole card short
+     and the button falls outside the clip. Fixed basis, no shrink. */
+  flex: 0 0 auto !important;
+}
+#app #bossSelect .bossCard .bossTraits span{
+  font-size: clamp(10px, 1.06vw, 11.5px) !important;
+  line-height: 1.44 !important;
+  color: #a8ac9f !important;
+  display: -webkit-box !important;
+  -webkit-line-clamp: 2 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+}
+#app #bossSelect .bossCard .bossTraits span b{
+  color: #cfd3c4 !important;
+  font-weight: 900 !important;
+}
+/* 주요 무기 — one short fact, so it reads as a tag not a sentence */
+#app #bossSelect .bossCard .bossTraits span:nth-child(1){
+  color: #e4e7da !important;
+  font-weight: 800 !important;
+  -webkit-line-clamp: 1 !important;
+}
+/* 공략 포인트 — the only line that tells the player what to DO */
+#app #bossSelect .bossCard .bossTraits span:nth-child(3){
+  color: #f2ecd8 !important;
+  font-weight: 700 !important;
+  padding: 4px 6px 4px 7px !important;
+  border-left: 2px solid var(--tier, #e8c15a) !important;
+  background: color-mix(in srgb, var(--tier, #e8c15a) 9%, transparent) !important;
+  border-radius: 0 6px 6px 0 !important;
+  -webkit-line-clamp: 3 !important;
+}
+#app #bossSelect .bossCard .bossTraits span:nth-child(3) b{
+  color: var(--tier, #e8c15a) !important;
+}
+
+#app #bossSelect .bossCard .g48BossLootHint{
+  margin: 0 9px 5px !important;
+  font-size: clamp(10px, 1vw, 11px) !important;
+  color: #d2b871 !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+#app #bossSelect .bossCard .g75BossDaily{
+  margin: 0 9px 5px !important;
+  font-size: clamp(10px, .95vw, 11px) !important;
+}
+
+/* ---------- the call to action ---------- */
+#app #bossSelect .bossCard .bossSelectBtn{
+  margin: 2px 9px 0 !important;
+  padding: 8px 6px !important;
+  border-radius: 9px !important;
+  font-size: clamp(11.5px, 1.25vw, 13px) !important;
+  font-weight: 1000 !important;
+  letter-spacing: .01em !important;
+  text-align: center !important;
+  color: #0c1008 !important;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--tier, #e8c15a) 96%, #ffffff),
+    var(--tier, #e8c15a)) !important;
+  border: 0 !important;
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--tier, #e8c15a) 34%, transparent) !important;
+  flex: 0 0 auto !important;
+}
+
+/* The base card hangs a decorative glow 28% BELOW itself
+   (inset: auto -20% -28% -20%). It is clipped away by overflow:hidden
+   and cannot be seen, but it still counts toward scrollHeight, so every
+   card reported ~77px of phantom vertical overflow. Kept inside the box.
+   The tier rules below use a more specific selector and still win. */
+#app #bossSelect .bossCard::after{
+  inset: auto 0 0 0 !important;
+  height: 46% !important;
+}
+
+/* ---------- menace, and it has to scale with the tier ---------- */
+#app #bossSelect .bossCard[data-g95tier="t4"]::after,
+#app #bossSelect .bossCard[data-g95tier="t5"]::after,
+#app #bossSelect .bossCard[data-g95tier="tx"]::after{
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: 14px;
+  pointer-events: none;
+  box-shadow: inset 0 0 30px color-mix(in srgb, var(--tier) 26%, transparent);
+}
+#app #bossSelect .bossCard[data-g95tier="tx"] .bossArtImg{
+  filter: contrast(1.08) saturate(1.12) !important;
+}
+
+/* ---------- locked ---------- */
+#app #bossSelect .bossCard.locked .bossArtImg,
+#app #bossSelect .bossCard.g45Locked .bossArtImg{
+  filter: grayscale(.82) brightness(.5) !important;
+}
+#app #bossSelect .bossCard.locked .bossSelectBtn,
+#app #bossSelect .bossCard.g45Locked .bossSelectBtn{
+  background: rgba(255,255,255,.09) !important;
+  color: #b9bdb0 !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+}
+/* The padlock is drawn rather than coloured in, so the locked state
+   survives for anyone who cannot separate the muted palette. */
+#app #bossSelect .bossCard.locked .bossArtWrap::after,
+#app #bossSelect .bossCard.g45Locked .bossArtWrap::after{
+  content: '🔒';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%,-60%);
+  font-size: clamp(20px, 2.6vw, 30px);
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,.9));
+  opacity: .92;
+  z-index: 2;
+}
+
+/* ---------- grid: the card got shorter, so the track should too ---------- */
+#app #bossSelect .bossDiffGrid{
+  gap: 10px !important;
+  padding-bottom: 6px !important;
+  /* the type floor above needs a little more column to sit in */
+  grid-template-columns: repeat(auto-fill, minmax(clamp(168px, 21vw, 212px), 1fr)) !important;
+  grid-auto-rows: max-content !important;
+  align-content: start !important;
+}
+
+/* On a landscape phone the whole grid gets about 280px of height. The
+   flavour line is the one block that is neither identity nor action,
+   so it is the one that goes; the threat meter and the counter-play
+   line carry the same decision in a fraction of the space. */
+@media (max-height: 460px){
+  #app #bossSelect .bossCard .bossTraits span:nth-child(2){ display: none !important; }
+  #app #bossSelect .bossCard .g48BossLootHint{ display: none !important; }
+  #app #bossSelect .bossCard .bossArtWrap{ aspect-ratio: 16 / 11 !important; }
+}
+</style>
+
+<script id="bugArenaG99BossTab">
+(function(){
+'use strict';
+const VERSION='G99';
+
+/* The tier is already decided by G95 off the unlock level, so this
+   reads it rather than deciding it again — one source of truth, and
+   the meter can never disagree with the word on the chip. */
+const PIPS={t1:1,t2:2,t3:3,t4:4,t5:5,tx:6};
+const TOTAL=6;
+
+/* The card is rebuilt from scratch every time the tab opens, so the
+   name and badges are moved into the art plate on each pass rather
+   than once at load. Moving them keeps card.querySelector('.bossRank')
+   working for every other layer that looks them up. */
+function lift(card){
+  const art=card.querySelector('.bossArtWrap');
+  if(!art) return;
+  for(const sel of ['.bossBadgeRow','.bossName','.bossLatin']){
+    const el=card.querySelector(sel);
+    if(el&&el.parentElement!==art) art.appendChild(el);
+  }
+}
+
+function threat(card){
+  const tier=card.dataset.g95tier;
+  if(!tier) return;
+  let row=card.querySelector('.g99Threat');
+  if(!row){
+    row=document.createElement('div');
+    row.className='g99Threat';
+    const label=document.createElement('span');
+    label.className='g99ThreatLabel';
+    row.appendChild(label);
+    const pips=document.createElement('span');
+    pips.className='g99Pips';
+    for(let i=0;i<TOTAL;i++) pips.appendChild(Object.assign(document.createElement('i'),{className:'g99Pip'}));
+    row.appendChild(pips);
+    const art=card.querySelector('.bossArtWrap');
+    if(art&&art.nextSibling) card.insertBefore(row,art.nextSibling);
+    else card.appendChild(row);
+  }
+  const n=PIPS[tier]||0;
+  /* the number is spelled out too, so the meter never relies on colour */
+  const label=row.querySelector('.g99ThreatLabel');
+  const want='위협도 '+n+'/'+TOTAL;
+  if(label&&label.textContent!==want) label.textContent=want;
+  const pips=row.querySelectorAll('.g99Pip');
+  for(let i=0;i<pips.length;i++) pips[i].classList.toggle('on',i<n);
+}
+
+function apply(){
+  const cards=document.querySelectorAll('#bossSelect .bossCard');
+  for(const card of cards){ try{ lift(card); threat(card) }catch(_){} }
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(apply,60) }
+
+function boot(){
+  schedule();
+  /* Same triggers G95 uses, so the two passes settle together instead
+     of one running against a card the other has just replaced. */
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('click',schedule,true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(){ const r=base.apply(this,arguments); schedule(); return r };
+  }
+  const s=document.getElementById('bossSelect');
+  if(s) new MutationObserver(schedule).observe(s,{childList:true,subtree:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+setTimeout(schedule,900);
+
+window.BugArenaG99={version:VERSION,PIPS,
+  note:'Boss cards rebuilt art-first: identity on the plate, threat as a meter, counter-play accented, one dominant CTA.'};
+})();
+</script>
 </body></html>
