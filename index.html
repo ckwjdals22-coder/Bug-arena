@@ -40088,4 +40088,722 @@ window.BugArenaG99={version:VERSION,PIPS,
   note:'Boss cards rebuilt art-first: identity on the plate, threat as a meter, counter-play accented, one dominant CTA.'};
 })();
 </script>
+
+<script id="bugArenaG100BossShots">
+(function(){
+'use strict';
+const VERSION='G100';
+const TAU=Math.PI*2;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G100 · BOSS RANGED ATTACKS ACTUALLY TRAVEL
+
+   Every boss ranged action — projectile, wave, zone — was hitscan.
+   The frame the wind-up ended it drew one straight line from the boss
+   to the player, called rangedHit, and rangedHit compared the PLAYER's
+   position against a target point that had been set to the player's
+   position on that same frame. The distance was therefore always zero.
+   Unless you happened to be mid-dash it could not miss, and the only
+   thing on screen was that line.
+
+   Now the wind-up aims, and then something is fired that takes time to
+   arrive:
+
+     projectile  a fast bolt on a straight line
+     wave        a slower ground-hugging pressure front
+     zone        a lobbed sac that arcs and bursts where it lands
+
+   Because it travels, walking out of the way works. The aim point is
+   still locked at the moment of release, exactly as the original code
+   set it, so the telegraph the previous layer paints stays honest —
+   what changed is that the shot now has to cross the gap.
+
+   The instant hit is suppressed by marking the action as already-hit
+   one frame BEFORE it goes active. The base still runs its targeting
+   block (that happens first, and does not check the flag), so the aim
+   point it computes is read back and used here — no duplicated aiming
+   logic, and the two can never disagree.
+
+   A whiff has to keep costing the boss something. The base decides
+   `whiff` from that same already-hit flag, so it would never open the
+   weak window on a dodged shot again; when a shot expires without
+   connecting this re-opens it directly.
+   ============================================================ */
+
+const RANGED={projectile:1,wave:1,zone:1};
+const SPEED ={projectile:660, wave:430, zone:520};
+
+function motif(b){
+  const M=window.BugArenaG98&&window.BugArenaG98.MOTIF;
+  const by=window.BugOriginalV9&&window.BugOriginalV9.BY_ID;
+  const m=by&&by[b&&b.v9BossId];
+  const key=(m&&m.visual)||String((b&&b.v9BossId)||'').split('_')[0];
+  return (M&&M[key])||{ink:'#dff5ff',deep:'#4a90a8'};
+}
+function rgb(hex){
+  const h=String(hex).replace('#','');
+  const s=h.length===3?h.split('').map(x=>x+x).join(''):h.slice(0,6);
+  const n=parseInt(s,16);
+  return isFinite(n)?[(n>>16)&255,(n>>8)&255,n&255]:[223,245,255];
+}
+function list(bt){ if(!bt.g100)bt.g100=[]; return bt.g100 }
+
+function spawn(b,p,a){
+  const bt=G('state')&&G('state').battle; if(!bt) return;
+  const GR=num(G('GROUND'),620);
+  const kind=a.type;
+  const sx=num(b.x)+num(b.facing,1)*38, sy=num(b.y)-96;
+  const tx=cl(num(a.targetX,num(p.x)),70,1210);
+  const ty=kind==='wave'?GR-34:cl(num(a.targetY,num(p.y))-52,GR-320,GR-18);
+  const dx=tx-sx, dy=ty-sy;
+  const d=Math.max(24,Math.hypot(dx,dy));
+  const sp=SPEED[kind]||560;
+  const [r,g,bl]=rgb(motif(b).ink);
+  const shot={
+    kind, x:sx, y:sy, tx, ty,
+    vx:dx/d*sp, vy:dy/d*sp,
+    /* a lob has to look thrown, so it leaves with lift and falls in */
+    grav:kind==='zone'?900:0,
+    t:0, life:kind==='wave'?2.4:1.9,
+    r:kind==='zone'?34:kind==='wave'?38:22,
+    col:[r,g,bl], trail:[],
+    dmg:num(a.dmg,8), guard:num(a.guard,24), react:a.react||'body',
+    poison:num(a.poison,0), root:num(a.root,0), weak:num(a.weak,.65),
+    ult:!!a.ultimate, danger:!!a.danger, hit:false, dead:false,
+    owner:b, spin:Math.random()*TAU
+  };
+  if(kind==='zone'){ shot.vy-=250; }
+  list(bt).push(shot);
+  try{ const S=G('sound'); if(S&&S.tone) S.tone(kind==='zone'?150:320,.05,'triangle',.018,60) }catch(_){}
+}
+
+function connect(shot,b,p){
+  shot.hit=true; shot.dead=true;
+  if(num(p.dashT,0)>0){
+    try{ const e=G('bossEvade'); if(typeof e==='function'){ e(p); return } }catch(_){}
+    try{ const m=G('showMessage'); m&&m('원거리 회피',.30,'#cfe9ff') }catch(_){}
+    return;
+  }
+  const guarded=!!(p.guarding&&num(p.guardBroken,0)<=0)||
+    !!(p===((G('state')||{}).battle||{}).p&&(G('state')||{}).keys&&(G('state')).keys.guard&&num(p.guard,0)>0&&num(p.guardBroken,0)<=0);
+  if(guarded&&!p.guarding){ try{ const sg=G('setGuard'); sg&&sg(p,true) }catch(_){} }
+  try{
+    const ad=G('applyDamage');
+    ad&&ad(b,p,{dmg:shot.dmg,hitstop:.08,react:shot.react,guard:shot.guard,
+      boss:true,ultimate:shot.ult,poison:shot.poison},false);
+  }catch(_){}
+  if(shot.root&&!guarded){
+    p.rootT=Math.max(num(p.rootT,0),shot.root);
+    p.rootMax=Math.max(num(p.rootMax,0),shot.root);
+    try{ const m=G('showMessage'); m&&m('속박',.24,'#e6edf2') }catch(_){}
+  }else if(shot.root&&guarded){
+    p.rootT=0; p.rootMax=0;
+    try{ const m=G('showMessage'); m&&m('WEB GUARD · 속박 무효',.32,'#c7eeff') }catch(_){}
+  }
+  burst(shot);
+}
+function burst(shot){
+  const P=G('particle'); if(typeof P!=='function') return;
+  const [r,g,b]=shot.col, col='rgb('+r+','+g+','+b+')';
+  for(let i=0;i<11;i++){
+    const a=i/11*TAU+Math.random()*.3, s=90+Math.random()*190;
+    try{ P(shot.x,shot.y,Math.cos(a)*s,Math.sin(a)*s-40,.20+Math.random()*.18,2+Math.random()*4,col,'impact') }catch(_){}
+  }
+}
+
+/* A dodged shot must still cost the boss its opening. */
+function whiff(shot){
+  const b=shot.owner; if(!b) return;
+  b.v6WeakT=Math.max(num(b.v6WeakT,0),shot.weak||.65);
+  b.v6PartWindowT=Math.max(num(b.v6PartWindowT,0),.45);
+  try{ const m=G('showMessage'); m&&m('원거리 빗나감 · 약점 노출',.34,'#ffe6a8') }catch(_){}
+}
+
+function step(dt){
+  const s=G('state'); const bt=s&&s.battle; if(!bt) return;
+  const arr=bt.g100; if(!arr||!arr.length) return;
+  if(bt.origin||bt.grapple) return;
+  const p=bt.p, b=bt.e;
+  const GR=num(G('GROUND'),620);
+  const d=cl(num(dt,0),0,.05);
+  for(let i=arr.length-1;i>=0;i--){
+    const q=arr[i];
+    q.t+=d;
+    q.trail.push(q.x,q.y);
+    while(q.trail.length>26) q.trail.splice(0,2);
+    if(q.grav) q.vy+=q.grav*d;
+    q.x+=q.vx*d; q.y+=q.vy*d;
+    q.spin+=d*(q.kind==='zone'?5:11);
+
+    if(!q.hit&&p&&!p.dead){
+      const hx=Math.abs(p.x-q.x), hy=Math.abs((p.y-58)-q.y);
+      if(hx<q.r+30&&hy<q.r+64){ connect(q,b,p); }
+    }
+    /* a lob or a front that reaches its mark bursts there */
+    if(!q.dead){
+      const past=(q.kind==='zone'&&q.y>=GR-10)||
+                 (q.kind==='wave'&&Math.abs(q.x-q.tx)<16)||
+                 (q.kind!=='projectile'&&q.t>q.life*.9);
+      if(past){
+        q.dead=true;
+        if(!q.hit&&p&&Math.abs(p.x-q.x)<q.r+58&&p.y>GR-150) connect(q,b,p);
+        else { burst(q); whiff(q) }
+      }
+    }
+    if(!q.dead&&(q.t>q.life||q.x<40||q.x>1240||q.y>GR+40||q.y<-160)){
+      q.dead=true; if(!q.hit) whiff(q);
+    }
+    if(q.dead&&q.t>q.life+.1) arr.splice(i,1);
+    else if(q.dead&&!q.fade){ q.fade=q.t }
+  }
+}
+
+/* ---------- drawing ---------- */
+function draw(c,q){
+  const [r,g,b]=q.col;
+  const K=a=>'rgba('+r+','+g+','+b+','+cl(a,0,1).toFixed(3)+')';
+  const fade=q.fade?cl(1-(q.t-q.fade)/.18,0,1):1;
+  if(fade<=0) return;
+  c.save();
+  c.globalCompositeOperation='lighter';
+  c.globalAlpha=fade;
+
+  /* trail first, so the head sits on top of it */
+  const tr=q.trail;
+  if(tr.length>=4){
+    for(let i=0;i<tr.length-2;i+=2){
+      const k=i/(tr.length-2);
+      c.strokeStyle=K(.08+.44*k);
+      c.lineWidth=(q.r*.48)*(0.25+0.75*k);
+      c.lineCap='round';
+      c.beginPath(); c.moveTo(tr[i],tr[i+1]); c.lineTo(tr[i+2],tr[i+3]); c.stroke();
+    }
+  }
+
+  /* halo */
+  const gl=c.createRadialGradient(q.x,q.y,0,q.x,q.y,q.r*3.1);
+  gl.addColorStop(0,K(.70)); gl.addColorStop(.34,K(.30)); gl.addColorStop(1,K(0));
+  c.fillStyle=gl;
+  c.beginPath(); c.arc(q.x,q.y,q.r*3.1,0,TAU); c.fill();
+  /* a thin ring so the head has an edge and does not dissolve into its
+     own glow against a bright arena floor */
+  c.strokeStyle=K(.5); c.lineWidth=1.6;
+  c.beginPath(); c.arc(q.x,q.y,q.r*1.32,0,TAU); c.stroke();
+
+  const ang=Math.atan2(q.vy,q.vx);
+  c.translate(q.x,q.y);
+  if(q.kind==='projectile'){
+    /* a drawn-out bolt, pointed the way it is going */
+    c.rotate(ang);
+    c.fillStyle=K(.95);
+    c.beginPath();
+    c.moveTo(q.r*1.5,0); c.lineTo(-q.r*.5,-q.r*.46);
+    c.lineTo(-q.r*1.1,0); c.lineTo(-q.r*.5,q.r*.46);
+    c.closePath(); c.fill();
+    c.fillStyle='rgba(255,255,255,.92)';
+    c.beginPath(); c.ellipse(q.r*.35,0,q.r*.52,q.r*.24,0,0,TAU); c.fill();
+  }else if(q.kind==='wave'){
+    /* a front, wider than it is tall, leaning into its direction */
+    c.rotate(ang*.25);
+    c.strokeStyle=K(.92); c.lineWidth=4.5;
+    for(let i=0;i<3;i++){
+      const rr=q.r*(1+i*.42), a=.62-i*.16;
+      c.globalAlpha=fade*a;
+      c.beginPath(); c.ellipse(-i*7*Math.sign(q.vx||1),0,rr*.62,rr,0,-1.05,1.05); c.stroke();
+    }
+    c.globalAlpha=fade;
+    c.fillStyle=K(.5);
+    c.beginPath(); c.ellipse(0,0,q.r*.5,q.r*.86,0,0,TAU); c.fill();
+  }else{
+    /* a heavy sac, wobbling as it falls */
+    c.rotate(q.spin*.35);
+    const wob=1+.12*Math.sin(q.spin*2);
+    c.fillStyle=K(.86);
+    c.beginPath(); c.ellipse(0,0,q.r*wob,q.r/wob,0,0,TAU); c.fill();
+    c.strokeStyle='rgba(255,255,255,.55)'; c.lineWidth=2;
+    c.beginPath(); c.ellipse(0,0,q.r*wob*.66,q.r/wob*.66,0,0,TAU); c.stroke();
+  }
+  c.restore();
+}
+
+function paint(c){
+  const s=G('state'); const bt=s&&s.battle;
+  const arr=bt&&bt.g100;
+  if(!arr||!arr.length||!c) return;
+  if(bt.origin) return;
+  for(const q of arr){ try{ draw(c,q) }catch(_){} }
+}
+
+/* ---------- install ---------- */
+let armed=false;
+function install(){
+  if(armed) return true;
+  const ai=G('updateBossAI'), dr=G('drawBossFrog');
+  if(typeof ai!=='function'||typeof dr!=='function') return false;
+  armed=true;
+
+  globalThis.updateBossAI=function(dt){
+    const s=G('state'); const bt=s&&s.battle; const b=bt&&bt.e; const p=bt&&bt.p;
+    const a=b&&b.v14Action;
+    /* one frame ahead of the transition: claim the hit so the base skips
+       its hitscan, but leave its targeting block alone */
+    if(a&&RANGED[a.type]&&!a.hit&&!a.g100Arm){
+      const tele=num(a.tele,.35);
+      if(num(a.t,0)+cl(num(dt,0),0,.05)>=tele){ a.hit=true; a.g100Arm=true }
+    }
+    const r=ai.apply(this,arguments);
+    try{
+      const a2=b&&b.v14Action;
+      if(a2&&a2.g100Arm&&!a2.g100Done&&p){ a2.g100Done=true; spawn(b,p,a2) }
+      step(dt);
+    }catch(_){}
+    return r;
+  };
+
+  globalThis.drawBossFrog=function(c,b){
+    const r=dr.apply(this,arguments);
+    try{ paint(c) }catch(_){}
+    return r;
+  };
+  return true;
+}
+if(!install()){
+  let n=0; const t=setInterval(()=>{ if(install()||++n>40) clearInterval(t) },120);
+}
+
+window.BugArenaG100={version:VERSION,SPEED,
+  note:'Boss ranged attacks fire a real projectile that crosses the gap and can be walked out of.'};
+})();
+</script>
+
+<script id="bugArenaG101ChallengeFx">
+(function(){
+'use strict';
+const VERSION='G101';
+const TAU=Math.PI*2;
+const G=n=>{try{return (0,eval)(n)}catch(_){return undefined}};
+const num=(v,d=0)=>{const n=Number(v);return isFinite(n)?n:d};
+const cl=(v,a,b)=>v<a?a:v>b?b:v;
+
+/* ============================================================
+   G101 · CHALLENGE MODE — MAKE THE ARENA THE THREAT
+
+   The hazards were drawn as flat kite-shaped shards in one colour,
+   scattered at regular intervals across the whole screen, each with a
+   hard edge and no depth. They read as placeholder geometry rather
+   than as something about to kill you, and because the SAFE band was
+   marked only by a few small outlined hexagons down at floor level,
+   the actual question the mode asks — "where do I stand" — was the
+   least visible thing on screen.
+
+   The existing geometry is kept: it is accurate, it is what the hit
+   test uses, and replacing it would risk desyncing the telegraph from
+   the damage. This layer sits on top of it and supplies what it was
+   missing.
+
+     · the UNSAFE floor is washed in rising danger light that builds
+       across the wind-up, so the safe band is defined by contrast
+       instead of by a small glyph
+     · the SAFE band gets a standing column of cool light with a hard
+       floor ring — the one place to be is now the brightest thing
+     · embers lift out of the unsafe ground while the wind-up runs, so
+       the danger is alive before it fires
+     · on release: a shock front across the unsafe span, a dust wall
+       off the floor, and a scorch that lingers and fades
+     · the screen edge pulses as the wind-up closes
+
+   Everything is driven from state.battle.challenge.g24 — the same
+   pattern, stepAge, tele and safeX/safeW the base renderer reads — so
+   the two can never disagree about where the danger is.
+   ============================================================ */
+
+const DANGER=[255,104,52];
+const SAFE  =[126,238,178];
+
+function chal(){
+  const s=G('state'); const bt=s&&s.battle;
+  const c=bt&&bt.challenge;
+  const g=c&&c.g24;
+  if(!g||!g.pattern||bt.origin) return null;
+  const ptn=g.pattern;
+  const step=ptn.steps&&ptn.steps[ptn.stepIndex||0];
+  if(!step) return null;
+  return {bt,g,ptn,step};
+}
+
+function K(c3,a){ return 'rgba('+c3[0]+','+c3[1]+','+c3[2]+','+cl(a,0,1).toFixed(3)+')' }
+
+/* embers live between frames so they can drift */
+let embers=[];
+function emit(x,y,up){
+  if(embers.length>150) return;
+  embers.push({x,y,vx:(Math.random()-.5)*46,vy:-(38+Math.random()*74)*up,
+    t:0,life:.8+Math.random()*.8,r:1+Math.random()*2.4});
+}
+function stepEmbers(dt){
+  const d=cl(dt,0,.05);
+  for(let i=embers.length-1;i>=0;i--){
+    const e=embers[i];
+    e.t+=d; e.x+=e.vx*d; e.y+=e.vy*d; e.vy+=26*d;
+    if(e.t>=e.life) embers.splice(i,1);
+  }
+}
+function drawEmbers(c){
+  c.save(); c.globalCompositeOperation='lighter';
+  for(const e of embers){
+    const k=1-e.t/e.life;
+    c.fillStyle=K(DANGER,.66*k);
+    c.beginPath(); c.arc(e.x,e.y,e.r*(0.4+0.6*k),0,TAU); c.fill();
+  }
+  c.restore();
+}
+
+/* scorch marks outlive the step that made them */
+let scorch=[];
+function drawScorch(c,dt){
+  const d=cl(dt,0,.05);
+  for(let i=scorch.length-1;i>=0;i--){
+    const s=scorch[i];
+    s.t+=d;
+    const k=1-s.t/s.life;
+    if(k<=0){ scorch.splice(i,1); continue }
+    c.save();
+    c.globalAlpha=k*.5;
+    const gr=c.createLinearGradient(0,s.y-26,0,s.y+10);
+    gr.addColorStop(0,'rgba(40,12,4,0)');
+    gr.addColorStop(1,'rgba(28,8,3,.92)');
+    c.fillStyle=gr;
+    c.fillRect(s.x0,s.y-26,s.x1-s.x0,36);
+    c.restore();
+  }
+}
+
+let lastFired=null, lastT=0;
+
+function paint(c){
+  const info=chal(); if(!info||!c) return;
+  const {bt,g,ptn,step}=info;
+  const GR=num(G('GROUND'),620);
+  const now=performance.now()/1000;
+  const dt=lastT?cl(now-lastT,0,.05):0; lastT=now;
+
+  const tele=Math.max(.01,num(step.tele,.9));
+  const raw=cl(num(ptn.stepAge,0)/tele,0,1);
+  const warn=raw*raw*(3-2*raw);
+  const fired=!!ptn.fired;
+  const after=Math.max(.2,num(step.after,.3));
+  const hit=fired?cl((num(ptn.stepAge,0)-tele)/after,0,1):0;
+
+  const isLane=step.kind==='safeLane';
+  const sx=num(step.safeX,640);
+  const sw=Math.max(60,num(step.safeW,240));
+  const L=sx-sw/2, R=sx+sw/2;
+
+  stepEmbers(dt);
+  c.save();
+  try{
+    drawScorch(c,dt);
+
+    if(isLane){
+      /* --- unsafe floor, lit from below --- */
+      const heat=fired?(1-hit)*.9+.35:warn;
+      const bands=[[0,L],[R,1280]];
+      for(const [x0,x1] of bands){
+        if(x1-x0<6) continue;
+        const top=GR-150*heat;
+        const gr=c.createLinearGradient(0,top,0,GR+12);
+        gr.addColorStop(0,K(DANGER,0));
+        gr.addColorStop(.62,K(DANGER,.04+.09*heat));
+        gr.addColorStop(1,K(DANGER,.10+.26*heat));
+        c.fillStyle=gr;
+        /* A flat-topped rectangle reads as paint over the arena. The top
+           edge is broken up so it reads as heat coming off the floor and
+           the art stays visible through it. */
+        c.beginPath();
+        c.moveTo(x0,GR+12); c.lineTo(x0,top);
+        for(let xx=x0;xx<=x1;xx+=26){
+          const w=Math.sin(xx*.021+now*1.7)*0.5+Math.sin(xx*.047-now*2.3)*0.5;
+          c.lineTo(xx,top+w*26*heat+10*heat);
+        }
+        c.lineTo(x1,top); c.lineTo(x1,GR+12);
+        c.closePath(); c.fill();
+        /* a hard lip where safe meets unsafe — the line you must not cross */
+        const edge=x0===0?L:R;
+        const lg=c.createLinearGradient(0,GR-96*heat-14,0,GR+8);
+        lg.addColorStop(0,K(DANGER,0));
+        lg.addColorStop(1,K(DANGER,.46+.5*heat));
+        c.strokeStyle=lg;
+        c.lineWidth=2+3*heat;
+        c.beginPath(); c.moveTo(edge,GR-96*heat-14); c.lineTo(edge,GR+8); c.stroke();
+      }
+      if(!fired&&warn>.12&&Math.random()<warn*.75){
+        const side=Math.random()<.5;
+        const ex=side?Math.random()*Math.max(1,L):R+Math.random()*Math.max(1,1280-R);
+        emit(ex,GR-2-Math.random()*10,warn);
+      }
+
+      /* --- the safe band, unmistakably the place to be --- */
+      const pulse=.72+.28*Math.sin(now*(fired?2:5.2));
+      c.globalCompositeOperation='lighter';
+      const col=c.createLinearGradient(0,GR-240,0,GR+6);
+      col.addColorStop(0,K(SAFE,0));
+      col.addColorStop(.58,K(SAFE,.07+.09*pulse));
+      col.addColorStop(1,K(SAFE,.20+.20*pulse));
+      c.fillStyle=col;
+      c.fillRect(L,GR-240,sw,246);
+      /* light shafts, so the safe band has a shape and not just a tint */
+      for(let i=0;i<4;i++){
+        const fx=L+sw*((i+.5)/4)+Math.sin(now*1.3+i)*7;
+        const sg=c.createLinearGradient(0,GR-216,0,GR);
+        sg.addColorStop(0,K(SAFE,0));
+        sg.addColorStop(1,K(SAFE,.13*pulse));
+        c.fillStyle=sg;
+        c.fillRect(fx-7,GR-216,14,216);
+      }
+      c.globalCompositeOperation='source-over';
+      c.strokeStyle=K(SAFE,.55+.35*pulse);
+      c.lineWidth=2.6;
+      c.beginPath(); c.ellipse(sx,GR-2,sw*.5,13,0,0,TAU); c.stroke();
+      c.strokeStyle=K(SAFE,.22+.2*pulse);
+      c.lineWidth=1.6;
+      c.beginPath(); c.ellipse(sx,GR-2,sw*.5-9,9,0,0,TAU); c.stroke();
+
+      /* --- release --- */
+      if(fired&&hit<1){
+        const k=1-hit;
+        c.globalCompositeOperation='lighter';
+        for(const [x0,x1] of bands){
+          if(x1-x0<6) continue;
+          c.fillStyle=K(DANGER,.18*k);
+          c.fillRect(x0,GR-138*k,x1-x0,148*k);
+          /* dust wall lifting off the floor */
+          const n=Math.max(3,Math.round((x1-x0)/78));
+          for(let i=0;i<n;i++){
+            /* jittered off a fixed hash rather than random, so a plume
+               does not jump to a new place on every frame */
+            const h=Math.sin((x0+i*97)*12.9898)*43758.5453;
+            const j=h-Math.floor(h);
+            const px=x0+(i+.18+j*.64)*((x1-x0)/n);
+            const rise=(1-k)*(96+j*68);
+            const sc=.72+j*.66;
+            c.fillStyle=K([255,190,140],.13*k);
+            c.beginPath();
+            c.ellipse(px,GR-10-rise,(30+44*(1-k))*sc,(14+27*(1-k))*sc,0,0,TAU);
+            c.fill();
+          }
+        }
+        c.globalCompositeOperation='source-over';
+        if(lastFired!==ptn.stepIndex+'|'+ptn.age){
+          lastFired=ptn.stepIndex+'|'+ptn.age;
+          for(const [x0,x1] of bands){
+            if(x1-x0<6) continue;
+            scorch.push({x0,x1,y:GR,t:0,life:1.6});
+            for(let i=0;i<10;i++) emit(x0+Math.random()*(x1-x0),GR-4,1.4);
+          }
+        }
+      }
+    }else{
+      /* other patterns still get the ambient, keyed the same way */
+      const heat=fired?(1-hit):warn;
+      const gr=c.createLinearGradient(0,GR-150*heat,0,GR+12);
+      gr.addColorStop(0,K(DANGER,0));
+      gr.addColorStop(1,K(DANGER,.16+.26*heat));
+      c.fillStyle=gr;
+      c.fillRect(0,GR-150*heat,1280,160*heat+12);
+      if(!fired&&warn>.2&&Math.random()<warn*.6) emit(Math.random()*1280,GR-4,warn);
+    }
+
+    drawEmbers(c);
+
+    /* --- the edge of the screen tightens as the wind-up closes --- */
+    const vig=fired?(1-hit)*.34:warn*.26;
+    if(vig>.02){
+      const vg=c.createRadialGradient(640,360,220,640,360,760);
+      vg.addColorStop(0,'rgba(0,0,0,0)');
+      vg.addColorStop(1,K(DANGER,vig*.55));
+      c.fillStyle=vg;
+      c.fillRect(0,0,1280,720);
+    }
+  }catch(_){}
+  c.restore();
+}
+
+let armed=false;
+function install(){
+  if(armed) return true;
+  const prev=G('drawBattle');
+  if(typeof prev!=='function') return false;
+  armed=true;
+  globalThis.drawBattle=function(c){
+    const r=prev.apply(this,arguments);
+    try{ paint(c) }catch(_){}
+    return r;
+  };
+  return true;
+}
+if(!install()){
+  let n=0; const t=setInterval(()=>{ if(install()||++n>40) clearInterval(t) },120);
+}
+
+window.BugArenaG101={version:VERSION,
+  note:'Challenge hazards given danger light, a lit safe band, embers, a release shock and lingering scorch.'};
+})();
+</script>
+
+<style id="bugArenaG102Type">
+/* Pretendard is the de-facto Korean UI face — it is built as a system-ui
+   replacement, its Hangul and its Latin/numerals share a metric baseline,
+   and its spacing is designed in, which is why the rules below REMOVE
+   tracking rather than add it. Loaded from a CDN, so it needs a network
+   on first run; without one the stack below falls through to the best
+   Korean UI face already on the device and every other rule here still
+   applies. */
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css');
+
+/* ============================================================
+   G102 · TYPE
+
+   The file set `system-ui` everywhere and then fought it: font-weight
+   1000 on almost every element, letter-spacing from .02em to .20em
+   applied to Korean as well as Latin, and line-height between 1.0 and
+   1.3 on wrapping Hangul. Each of those is individually wrong for
+   Korean UI text:
+
+     · weight 1000 on everything removes hierarchy. If the label, the
+       value and the heading all shout, none of them is read first.
+     · Hangul syllable blocks are already square and evenly spaced.
+       Tracking pulls them apart into loose beads and measurably hurts
+       reading speed; it belongs on short Latin all-caps labels only.
+     · Hangul needs MORE leading than Latin, not less — the glyphs fill
+       their em box top to bottom, so 1.1 line-height collides.
+
+   So: one family, a four-step weight scale, tracking removed from
+   Korean and kept only where it is doing a job, leading raised for
+   anything that wraps, and tabular figures on the numbers that change
+   every frame so the HUD stops twitching.
+   ============================================================ */
+
+:root{
+  --g102-sans: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+    'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Segoe UI', Roboto,
+    system-ui, sans-serif;
+}
+
+/* One family everywhere. The shorthand `font:` declarations scattered
+   through the file name system-ui explicitly, so this has to reach them
+   by property rather than by inheritance. */
+#app, #app *,
+body, button, input, select, textarea{
+  font-family: var(--g102-sans) !important;
+}
+
+/* Korean text is not tracked. The exceptions below put it back where it
+   reads as deliberate: short Latin all-caps eyebrows and rank chips. */
+#app *{ letter-spacing: normal; }
+#app .brandSmall, #app .profileEyebrow, #app .bossEyebrow,
+#app .g23Rank, #app .v9CollectKick, #app .v9PreviewType,
+#app .mainFoot, #app .hubKick, #app .g49Kick{
+  letter-spacing: .14em !important;
+}
+#app .brand{ letter-spacing: -.015em !important; }
+
+/* Anything that wraps gets Korean leading and Korean line breaking.
+   `keep-all` stops Hangul breaking mid-word; the anywhere fallback keeps
+   a long unbroken token from overflowing its box. */
+#app p, #app .menuChoiceSub, #app .bossTraits span, #app .bossLatin,
+#app .guidePanel p, #app .v9PreviewInfo p, #app .g23Desc,
+#app .stepDesc, #app .codexLine, #app .hubLead, #app .g75MissionDesc{
+  line-height: 1.55 !important;
+  word-break: keep-all !important;
+  overflow-wrap: anywhere !important;
+}
+#app .menuChoiceTitle, #app .bossName, #app .hubTitle,
+#app .v9CollectTitle, #app .g23Title{
+  line-height: 1.22 !important;
+  word-break: keep-all !important;
+}
+
+/* A four-step weight scale instead of 1000 on everything.
+   Headings stay heavy, labels are clearly lighter, body is readable
+   rather than bold, and the difference between them is what creates
+   the reading order. */
+#app .menuChoiceSub, #app .bossTraits span, #app p,
+#app .guidePanel p, #app .stepDesc, #app .hubLead, #app .g23Desc{
+  font-weight: 500 !important;
+}
+#app .menuChoiceSub b, #app .bossTraits span b, #app p b{
+  font-weight: 700 !important;
+}
+#app .menuChoiceTitle, #app .bossName, #app .hubTitle, #app .g23Title,
+#app .v9CollectTitle, #app .profileTitle{
+  font-weight: 800 !important;
+}
+#app .brand{ font-weight: 900 !important; }
+
+/* Numbers that change every frame must not change WIDTH every frame.
+   Without tabular figures the timer and the percentages jitter sideways
+   as digits swap, which reads as the UI being unstable. */
+#app .profileLevel, #app .profileXpMeta, #app #pHpVal, #app #eHpVal,
+#app #pOriginVal, #app #eOriginVal, #app .hudTime, #app .g23HudCell b,
+#app .g23ResultScore, #app .g23Rank, #app .meterRow span,
+#app .g99ThreatLabel, #app .bossUnlock, #app .v9CardText span{
+  font-variant-numeric: tabular-nums !important;
+  font-feature-settings: 'tnum' 1 !important;
+}
+
+/* Light type on dark grounds looks heavier than it is and smears.
+   Greyscale antialiasing on WebKit keeps the stems the width they were
+   drawn, which is most of the perceived sharpness gain. */
+#app{
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+</style>
+
+<script id="bugArenaG102MenuOrder">
+(function(){
+'use strict';
+const VERSION='G102';
+
+/* The main menu is rebuilt by several layers, so the order is corrected
+   on the same triggers the other passes use rather than once at load.
+   Both buttons are looked up by id and only moved when they are actually
+   out of order, so a rebuild that already places them correctly costs
+   nothing and there is nothing for two passes to trade back and forth. */
+function fix(){
+  const menu=document.querySelector('#start .mainMenu');
+  if(!menu) return;
+  const boss=menu.querySelector('#bossBtn');
+  const mission=menu.querySelector('#g75MissionBtn');
+  if(!boss||!mission||boss.parentElement!==menu||mission.parentElement!==menu) return;
+  const kids=[...menu.children];
+  if(kids.indexOf(boss)<kids.indexOf(mission)) return;   /* already right */
+  menu.insertBefore(boss,mission);
+}
+
+let t=0;
+function schedule(){ clearTimeout(t); t=setTimeout(fix,40) }
+
+function boot(){
+  schedule();
+  document.addEventListener('pointerdown',schedule,true);
+  document.addEventListener('click',schedule,true);
+  if(typeof setScene==='function'){
+    const base=setScene;
+    globalThis.setScene=function(){ const r=base.apply(this,arguments); schedule(); return r };
+  }
+  const m=document.querySelector('#start .mainMenu');
+  if(m) new MutationObserver(schedule).observe(m,{childList:true});
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot);
+else boot();
+setTimeout(schedule,900);
+
+window.BugArenaG102={version:VERSION,note:'Pretendard type scale; 보스전 placed before 임무 on the main menu.'};
+})();
+</script>
 </body></html>
