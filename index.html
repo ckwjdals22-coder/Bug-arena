@@ -41124,184 +41124,284 @@ function phase(b,n){
    Its own, not the stock frog: crouched mass, inflating throat sac,
    glowing fissures, and a tongue that actually reaches for the target
    during a tongue action. */
+/* ---------------- the arena renderer ----------------
+   Built to the same recipe the other nine use: a ground shadow, an
+   ambient glow, then the animal assembled from many small filled-and-
+   stroked parts with a two-tone hide that shifts by phase, rather than
+   three big ellipses. The earlier pass drew it as a silhouette, which
+   is right for the card and wrong here — next to a segmented scorpion
+   it read as a blob. Real frog anatomy in profile: the folded hind leg,
+   the dorsolateral ridge, the warted back, the vocal sac under the jaw,
+   the eye riding on top of the skull. */
+function glowAt(c,x,y,r,rgb,al){
+  const g=c.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,'rgba('+rgb+','+al+')');
+  g.addColorStop(.55,'rgba('+rgb+','+(al*0.34).toFixed(3)+')');
+  g.addColorStop(1,'rgba('+rgb+',0)');
+  c.fillStyle=g; c.beginPath(); c.arc(x,y,r,0,TAU); c.fill();
+}
 function paint(c,b){
   if(!c||!b) return;
   const GR=num(G('GROUND'),620);
-  const fac=num(b.facing,-1)||-1;
-  const a=b.v14Action;
   const t=performance.now()/1000;
   const ph=b.bossPhase||1;
+  const a=b.v14Action;
+  const act=(a&&a.id)||'';
+  const dir=num(b.facing,-1)||-1;
   const x=num(b.x), y=num(b.y,GR);
-  const U=132;                      /* the apex outsizes every other boss */
-  const HOT='#f2d4ff', VIO='#b975e8';
+  const s=226;                                  /* the apex outsizes the rest */
+  const bob=Math.sin(t*1.7)*s*.008;
 
-  /* posture responds to what it is doing */
-  let crouch=1, lean=0, swell=1;
-  if(a){
-    if(a.type==='leap'||a.type==='charge'){ crouch=a.stage==='telegraph'?.82:1.10; lean=fac*.06 }
-    if(a.type==='quake'){ swell=a.stage==='telegraph'?1+.26*cl(a.t/num(a.tele,.6),0,1):1.30 }
-    if(a.type==='projectile'||a.type==='combo') crouch=.94;
+  /* hide: two tones plus a belly, all shifting as it degrades */
+  const skin  = ph>=3?'#2e0e26':ph>=2?'#261230':'#1e1028';
+  const skin2 = ph>=3?'#431436':ph>=2?'#361947':'#2c183e';
+  const belly = ph>=3?'#542c49':'#463457';
+  const line  = '#b89ad7';
+  const accent= ph>=3?'#ff7ad6':ph>=2?'#d79cff':'#c98cf0';
+
+  /* posture */
+  let crouch=1, stretch=1, sacInf=0;
+  if(act==='abyss_leap'||act==='gravity_slam'||act==='chaos_devour'){
+    crouch=(a&&a.stage==='telegraph')?.84:1.10; stretch=1.06;
   }
-  const bw=U*1.30*swell, bh=U*.78*crouch*swell;
+  if(act==='inflation_burst') sacInf=(a&&a.stage==='telegraph')?cl(a.t/num(a.tele,.6),0,1):1;
+  if(act==='ballistic_tongue'||act==='triple_tongue') crouch=.95;
 
-  /* ground contact first, in world space */
-  c.save();
-  c.globalAlpha=.52; c.fillStyle='#000';
-  c.beginPath(); c.ellipse(x,GR+5,bw*.92,15,0,0,TAU); c.fill();
+  c.save(); c.globalAlpha=1;
+  /* contact shadow, in world space before the flip */
+  c.fillStyle='rgba(0,0,0,.44)';
+  c.beginPath(); c.ellipse(x,GR+11,s*.70,s*.115,0,0,TAU); c.fill();
+  glowAt(c,x,y-s*.26,s*.95,'170,110,240',.13);
+
+  /* the skeleton below is laid out canonically facing LEFT, so a facing
+     of -1 is already correct and it is +1 that has to be mirrored */
+  c.translate(x,y+bob); c.scale(-dir,1);
+  c.lineWidth=Math.max(1.3,s*.010); c.strokeStyle=line;
+  c.lineJoin='round';
+
+  /* A skeleton laid out so the parts do not sit on top of each other:
+     the body occupies the right half, the head is thrust forward into
+     the LEFT half at a lower height, and the limbs hang off the seam
+     between them. Getting this wrong is what made the first attempt a
+     jumble of overlapping blobs. */
+  const BX= s*.14, BY=-s*.34*crouch, BRX=s*.37*stretch, BRY=s*.27*crouch;   /* body   */
+  const HX=-s*.44, HY=-s*.24*crouch, HRX=s*.34, HRY=s*.17*crouch;           /* head   */
+  const EX=-s*.54, EY=HY-s*.15;                                             /* eye    */
+  const ER= s*.078;
+
+  /* volume: every part gets a light-from-above gradient instead of a
+     flat fill, which is the difference between anatomy and cut paper */
+  function vol(cx,cy,r,a,b2){
+    const g=c.createRadialGradient(cx-r*.34,cy-r*.52,r*.06,cx,cy,r*1.15);
+    g.addColorStop(0,b2); g.addColorStop(.58,a); g.addColorStop(1,'#120823');
+    return g;
+  }
+
+  /* ---- far-side limbs, dimmed so they read as behind ---- */
+  c.save(); c.globalAlpha=.48; c.fillStyle=skin;
+  c.beginPath(); c.ellipse(BX+s*.20,BY+s*.16,s*.17,s*.13,-.26,0,TAU); c.fill(); c.stroke();
+  c.beginPath(); c.ellipse(HX+s*.16,HY+s*.17,s*.07,s*.10,.22,0,TAU); c.fill(); c.stroke();
   c.restore();
 
+  /* ---- body ---- */
+  c.fillStyle=vol(BX,BY,BRX,skin2,skin2);
+  c.beginPath(); c.ellipse(BX,BY,BRX,BRY,-.05,0,TAU); c.fill(); c.stroke();
+  /* darker dorsum cap, so the back reads as turned away from the light */
   c.save();
-  c.translate(x,y); c.rotate(lean); c.scale(fac,1);
-
-  /* The arena is dark and every other boss is a photograph lit from
-     above. A saturated fill reads as plastic against that, so the body
-     is kept near-black and the violet is spent only on the rim and on
-     the things that are supposed to glow — the same language as the
-     card art. */
-  function body(){
-    c.beginPath(); c.ellipse(0,-bh*.52,bw*.60,bh*.72,0,0,TAU);
-  }
-  function haunch(){
-    c.beginPath(); c.ellipse(bw*.46,-bh*.40,bw*.32,bh*.52,-.18,0,TAU);
-  }
-  function head(){
-    c.beginPath(); c.ellipse(-bw*.30,-bh*1.00,bw*.52,bh*.40,-.06,0,TAU);
-  }
-
-  const dark=c.createLinearGradient(0,-bh*1.5,0,0);
-  dark.addColorStop(0,'#2a1642');
-  dark.addColorStop(.45,'#130824');
-  dark.addColorStop(1,'#05020c');
-  const rim=c.createLinearGradient(0,-bh*1.55,0,-bh*.20);
-  rim.addColorStop(0,HOT);
-  rim.addColorStop(.40,VIO);
-  rim.addColorStop(1,'rgba(120,58,190,0)');
-
-  /* Stroking all three masses after filling them draws the seams WHERE
-     THEY OVERLAP, and those internal lines are what make a dark body
-     read as a bright wireframe blob. The card solves this with an alpha
-     mask, which is too expensive to rebuild every frame; here the same
-     result comes from painter's order — stroke each mass, then re-fill
-     the masses in FRONT of it, which buries the seam and leaves only the
-     true outer contour lit. */
-  function lit(shape,fill){
-    c.save();
-    c.strokeStyle=rim; c.lineWidth=2.4;
-    c.shadowColor=VIO; c.shadowBlur=7;
-    shape(); c.stroke();
-    c.restore();
-    if(fill){ shape(); c.fillStyle=fill; c.fill() }
-  }
-  haunch(); c.fillStyle='#0d0618'; c.fill();
-  lit(haunch,'#0d0618');
-  body();   c.fillStyle=dark; c.fill();     /* buries the haunch seam */
-  lit(body,dark);
-  head();   c.fillStyle=dark; c.fill();     /* buries the body seam */
-  lit(head,dark);
-
-  /* throat sac: dark skin that lights from within as it inflates */
-  const sac=(swell-1)*1.7+.05*Math.sin(t*3.1);
-  c.save();
-  c.beginPath();
-  c.ellipse(-bw*.16,-bh*.24,bw*.30*(1+sac),bh*.28*(1+sac*1.3),0,0,TAU);
-  const sg=c.createRadialGradient(-bw*.16,-bh*.24,1,-bw*.16,-bh*.24,bw*.32*(1+sac));
-  sg.addColorStop(0,'rgba(201,140,240,'+(0.16+sac*0.62).toFixed(3)+')');
-  sg.addColorStop(1,'rgba(90,40,150,0)');
-  c.fillStyle=sg; c.fill();
-  c.restore();
-
-  /* gape — dark cavity, lit from inside, the brightest thing on it */
-  c.save();
-  c.beginPath(); c.ellipse(-bw*.44,-bh*.84,bw*.42,bh*.17,.10,0,TAU);
-  const mg=c.createRadialGradient(-bw*.44,-bh*.84,1,-bw*.44,-bh*.84,bw*.42);
-  mg.addColorStop(0,'rgba(245,215,255,.80)');
-  mg.addColorStop(.42,'rgba(150,64,220,.42)');
-  mg.addColorStop(1,'rgba(12,4,22,.98)');
-  c.fillStyle=mg; c.fill();
-  c.clip();
-  c.fillStyle='#f4ecff';
-  for(let i=0;i<10;i++){
-    const u=(i+.5)/10, tx=-bw*.82+u*bw*.78, w=U*.026;
-    c.beginPath(); c.moveTo(tx-w,-bh*.98); c.lineTo(tx+w,-bh*.98); c.lineTo(tx,-bh*.84); c.closePath(); c.fill();
-    c.beginPath(); c.moveTo(tx-w*.8,-bh*.74); c.lineTo(tx+w*.8,-bh*.74); c.lineTo(tx,-bh*.86); c.closePath(); c.fill();
-  }
-  c.restore();
-  c.save();
-  c.strokeStyle='rgba(242,212,255,.72)'; c.lineWidth=1.3; c.shadowColor=HOT; c.shadowBlur=7;
-  c.beginPath(); c.ellipse(-bw*.44,-bh*.84,bw*.42,bh*.17,.10,0,TAU); c.stroke();
-  c.restore();
-
-  /* eyes, high on the skull, hooded by the brow */
-  for(const s of [-1,1]){
-    const ex=-bw*.40+s*bw*.15, ey=-bh*1.28, r=U*.13;
-    const eg=c.createRadialGradient(ex,ey,0,ex,ey,r*3.0);
-    eg.addColorStop(0,'rgba(242,212,255,.80)');
-    eg.addColorStop(.26,'rgba(185,117,232,.34)');
-    eg.addColorStop(1,'rgba(120,50,190,0)');
-    c.fillStyle=eg; c.beginPath(); c.arc(ex,ey,r*3.0,0,TAU); c.fill();
-    c.fillStyle='#0d0314';
-    c.beginPath(); c.arc(ex,ey,r,0,TAU); c.fill();
-    const ig=c.createRadialGradient(ex,ey,1,ex,ey,r*.86);
-    ig.addColorStop(0,'#fff2ff');
-    ig.addColorStop(.30,ph>=3?'#ff7ad6':VIO);
-    ig.addColorStop(1,'#280740');
-    c.fillStyle=ig;
-    c.beginPath(); c.arc(ex,ey,r*.86,0,TAU); c.fill();
-    c.fillStyle='#120418';
-    c.beginPath(); c.ellipse(ex,ey,r*.82,r*.15,0,0,TAU); c.fill();
-    c.fillStyle='rgba(255,255,255,.75)';
-    c.beginPath(); c.arc(ex-r*.30,ey-r*.30,r*.16,0,TAU); c.fill();
-  }
-
-  /* front limb */
-  c.strokeStyle='#120826'; c.lineWidth=U*.17; c.lineCap='round'; c.lineJoin='round';
-  c.beginPath();
-  c.moveTo(-bw*.26,-bh*.40); c.lineTo(-bw*.46,-bh*.20); c.lineTo(-bw*.52,-bh*.03);
-  c.stroke();
-  c.strokeStyle='rgba(185,117,232,.34)'; c.lineWidth=1.4;
-  c.beginPath();
-  c.moveTo(-bw*.26,-bh*.40); c.lineTo(-bw*.46,-bh*.20); c.lineTo(-bw*.52,-bh*.03);
-  c.stroke();
-
-  /* fissures, clipped to the body so they read as cracks in the hide */
-  const heat=ph>=3?.62:ph>=2?.36:.16;
-  c.save();
-  body(); c.clip();
-  c.globalCompositeOperation='lighter';
-  c.strokeStyle='rgba(201,140,240,'+heat.toFixed(2)+')';
-  c.lineCap='round';
-  for(let i=0;i<4;i++){
-    const a0=i/4*TAU+t*.10;
-    c.lineWidth=1.0+(i%2)*.5;
+  c.beginPath(); c.ellipse(BX,BY,BRX,BRY,-.05,0,TAU); c.clip();
+  c.fillStyle=skin;
+  c.beginPath(); c.ellipse(BX-s*.02,BY-BRY*.62,BRX*.96,BRY*.62,-.05,0,TAU); c.fill();
+  /* belly, catching bounce light off the floor */
+  c.fillStyle=belly; c.globalAlpha=.55;
+  c.beginPath(); c.ellipse(BX-s*.02,BY+BRY*.68,BRX*.86,BRY*.46,-.05,0,TAU); c.fill();
+  c.globalAlpha=1;
+  /* dorsolateral ridges — the paired folds down a real frog's back */
+  c.strokeStyle=accent; c.globalAlpha=.40; c.lineWidth=Math.max(1.8,s*.013);
+  for(const o of [0,1]){
     c.beginPath();
-    c.moveTo(Math.cos(a0)*bw*.16,-bh*.52+Math.sin(a0)*bh*.20);
-    c.lineTo(Math.cos(a0)*bw*.46,-bh*.52+Math.sin(a0)*bh*.56);
+    c.moveTo(BX-BRX*.92,BY-BRY*(.10+o*.34));
+    c.bezierCurveTo(BX-BRX*.30,BY-BRY*(.82+o*.24),BX+BRX*.34,BY-BRY*(.86+o*.22),BX+BRX*.90,BY-BRY*(.16+o*.30));
     c.stroke();
   }
+  c.globalAlpha=1;
+  /* warts, with a lit top edge */
+  for(let i=0;i<26;i++){
+    const h1=Math.sin(i*12.9898)*43758.5453, j1=h1-Math.floor(h1);
+    const h2=Math.sin(i*78.233)*43758.5453,  j2=h2-Math.floor(h2);
+    const u=(i%13)/12;
+    const wx=BX-BRX*.82+u*BRX*1.64+(j1-.5)*s*.030;
+    const wy=BY-BRY*(.12+j2*.74)-Math.sin(u*Math.PI)*BRY*.30;
+    const r=s*(.007+j1*.008);
+    c.fillStyle='rgba(10,5,18,.60)';
+    c.beginPath(); c.arc(wx,wy,r,0,TAU); c.fill();
+    c.fillStyle='rgba(214,164,245,.26)';
+    c.beginPath(); c.arc(wx-r*.30,wy-r*.34,r*.52,0,TAU); c.fill();
+  }
   c.restore();
+  c.strokeStyle=line; c.lineWidth=Math.max(1.3,s*.010);
+
+  /* ---- near hind leg: the Z fold ---- */
+  c.fillStyle=vol(BX+s*.24,BY+s*.06,s*.24,skin2,belly);
+  c.beginPath(); c.ellipse(BX+s*.24,BY+s*.07,s*.23,s*.185,-.28,0,TAU); c.fill(); c.stroke();
+  /* shank: one solid tapering mass from the high knee down to the ankle.
+     Drawn as a rotated ellipse rather than a band between two curves —
+     two curves bowing the same way close into a crescent, which is why
+     the leg had a hole through it. */
+  c.fillStyle=vol(BX+s*.38,BY+s*.16,s*.15,skin,skin2);
+  c.beginPath(); c.ellipse(BX+s*.36,BY+s*.17,s*.085,s*.185,.30,0,TAU); c.fill(); c.stroke();
+  /* ankle joint, so knee and foot do not read as one limb */
+  c.beginPath(); c.ellipse(BX+s*.29,-s*.055,s*.055,s*.048,0,0,TAU); c.fill(); c.stroke();
+  /* the long flat foot a frog pushes off with */
+  c.fillStyle=skin;
+  c.beginPath(); c.ellipse(BX+s*.36,-s*.022,s*.155,s*.034,0,0,TAU); c.fill(); c.stroke();
+  for(let i=0;i<4;i++){
+    c.save(); c.translate(BX+s*.47,-s*.022); c.rotate(-.16+i*.11);
+    c.beginPath(); c.ellipse(s*.070,0,s*.090,s*.015,0,0,TAU); c.fill(); c.stroke();
+    c.restore();
+  }
+
+  /* ---- vocal sac, slung under the jaw ---- */
+  const sacR=s*(.13+sacInf*.15), sacH=s*(.095+sacInf*.14)+s*.005*Math.sin(t*3.2);
+  c.fillStyle=vol(HX+s*.06,HY+s*.16,sacR,belly,belly);
+  c.beginPath(); c.ellipse(HX+s*.06,HY+s*.16,sacR,sacH,0,0,TAU); c.fill(); c.stroke();
+  if(sacInf>.02){
+    c.save(); c.globalCompositeOperation='lighter';
+    glowAt(c,HX+s*.06,HY+s*.16,sacR*1.6,'201,140,240',.22+sacInf*.48);
+    c.restore();
+  }
+  c.save(); c.strokeStyle='rgba(184,154,215,.38)'; c.lineWidth=Math.max(1,s*.006);
+  for(let i=1;i<=3;i++){
+    c.beginPath(); c.ellipse(HX+s*.06,HY+s*.16,sacR*(.30+i*.22),sacH*(.30+i*.22),0,-2.6,-0.5); c.stroke();
+  }
   c.restore();
 
-  /* the tongue reaches for the mark during a tongue action */
-  if(a&&(a.id==='ballistic_tongue'||a.id==='triple_tongue'||a.id==='tongue_haul')){
-    const q=cl(a.t/Math.max(.01,num(a.tele,.4)),0,1);
+  /* ---- head: a wedge thrust forward, LOWER than the body ---- */
+  c.fillStyle=vol(HX,HY,HRX,skin2,skin2);
+  c.beginPath();
+  c.moveTo(HX-HRX,HY+HRY*.10);                      /* snout tip */
+  c.bezierCurveTo(HX-HRX*.98,HY-HRY*.86, HX-HRX*.44,HY-HRY*1.24, HX+HRX*.16,HY-HRY*1.10);
+  c.bezierCurveTo(HX+HRX*.74,HY-HRY*.96, HX+HRX*1.02,HY-HRY*.20, HX+HRX*.92,HY+HRY*.62);
+  c.bezierCurveTo(HX+HRX*.40,HY+HRY*1.26, HX-HRX*.52,HY+HRY*1.18, HX-HRX,HY+HRY*.10);
+  c.closePath(); c.fill(); c.stroke();
+  /* brow shelf over the eye */
+  c.save();
+  c.beginPath();
+  c.moveTo(HX-HRX,HY+HRY*.10);
+  c.bezierCurveTo(HX-HRX*.98,HY-HRY*.86, HX-HRX*.44,HY-HRY*1.24, HX+HRX*.16,HY-HRY*1.10);
+  c.bezierCurveTo(HX+HRX*.74,HY-HRY*.96, HX+HRX*1.02,HY-HRY*.20, HX+HRX*.92,HY+HRY*.62);
+  c.bezierCurveTo(HX+HRX*.40,HY+HRY*1.26, HX-HRX*.52,HY+HRY*1.18, HX-HRX,HY+HRY*.10);
+  c.closePath(); c.clip();
+  c.fillStyle=skin;
+  c.beginPath(); c.ellipse(HX-HRX*.10,HY-HRY*1.00,HRX*.90,HRY*.70,-.08,0,TAU); c.fill();
+  c.restore();
+  /* tympanum — the eardrum disc behind the eye, a real landmark */
+  c.fillStyle='rgba(18,9,30,.78)';
+  c.beginPath(); c.ellipse(HX+HRX*.46,HY-HRY*.22,s*.030,s*.027,0,0,TAU); c.fill(); c.stroke();
+  c.save(); c.strokeStyle='rgba(201,140,240,.36)'; c.lineWidth=Math.max(1,s*.006);
+  c.beginPath(); c.ellipse(HX+HRX*.46,HY-HRY*.22,s*.015,s*.013,0,0,TAU); c.stroke(); c.restore();
+  /* nostril */
+  c.fillStyle='#160a22';
+  c.beginPath(); c.arc(HX-HRX*.82,HY-HRY*.40,s*.011,0,TAU); c.fill();
+
+  /* ---- gape: the longest line on the animal ---- */
+  const mx=HX-HRX*.10, my=HY+HRY*.42, mw=HRX*.88, mh=HRY*.40;
+  c.save();
+  c.beginPath(); c.ellipse(mx,my,mw,mh,.06,0,TAU);
+  const mg=c.createRadialGradient(mx-mw*.2,my,1,mx,my,mw);
+  mg.addColorStop(0,'rgba(255,238,255,.90)');
+  mg.addColorStop(.36,'rgba(172,66,228,.52)');
+  mg.addColorStop(1,'rgba(9,3,18,.98)');
+  c.fillStyle=mg; c.fill();
+  c.clip();
+  c.fillStyle='#f7edff';
+  for(let i=0;i<14;i++){
+    const u=(i+.5)/14, tx=mx-mw+u*mw*2, w=s*.010, hgt=mh*(.54+((i*29)%4)*.14);
+    c.beginPath(); c.moveTo(tx-w,my-mh*.88); c.lineTo(tx+w,my-mh*.88); c.lineTo(tx,my-mh*.88+hgt); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(tx-w*.8,my+mh*.88); c.lineTo(tx+w*.8,my+mh*.88); c.lineTo(tx,my+mh*.88-hgt*.78); c.closePath(); c.fill();
+  }
+  c.restore();
+  c.save(); c.strokeStyle='rgba(244,216,255,.80)'; c.lineWidth=Math.max(1.5,s*.008);
+  c.beginPath(); c.ellipse(mx,my,mw,mh,.06,0,TAU); c.stroke(); c.restore();
+
+  /* ---- eye turret on top of the skull ---- */
+  c.fillStyle=vol(EX,EY+ER*.30,ER*1.3,skin,skin2);
+  c.beginPath(); c.ellipse(EX,EY+ER*.34,ER*1.28,ER*1.02,0,0,TAU); c.fill(); c.stroke();
+  c.save();
+  c.beginPath(); c.ellipse(EX,EY,ER,ER*.92,0,0,TAU); c.clip();
+  const ig=c.createRadialGradient(EX-ER*.24,EY-ER*.24,1,EX,EY,ER*1.12);
+  ig.addColorStop(0,'#fff6ff'); ig.addColorStop(.34,accent); ig.addColorStop(1,'#2e0740');
+  c.fillStyle=ig; c.fillRect(EX-ER*1.3,EY-ER*1.3,ER*2.6,ER*2.6);
+  c.fillStyle='#0d0314';
+  c.beginPath(); c.ellipse(EX,EY,ER*.98,ER*.19,0,0,TAU); c.fill();
+  c.fillStyle=skin;                                  /* hooded lid */
+  c.beginPath(); c.ellipse(EX,EY-ER*(1.00-(ph>=3?.12:0)),ER*1.32,ER*.60,0,0,TAU); c.fill();
+  c.restore();
+  c.beginPath(); c.ellipse(EX,EY,ER,ER*.92,0,0,TAU); c.stroke();
+  c.fillStyle='rgba(255,255,255,.90)';
+  c.beginPath(); c.arc(EX-ER*.34,EY-ER*.26,ER*.16,0,TAU); c.fill();
+  c.save(); c.globalCompositeOperation='lighter';
+  glowAt(c,EX,EY,ER*2.8,ph>=3?'255,122,214':'201,140,240',.28);
+  c.restore();
+
+  /* ---- near front limb, braced under the chest ---- */
+  c.fillStyle=vol(HX+s*.22,HY+s*.24,s*.10,skin2,belly);
+  c.beginPath();                                    /* upper arm */
+  c.ellipse(HX+s*.20,HY+s*.17,s*.075,s*.105,.16,0,TAU);
+  c.fill(); c.stroke();
+  c.beginPath();                                    /* forearm, tapering */
+  c.moveTo(HX+s*.25,HY+s*.20);
+  c.quadraticCurveTo(HX+s*.26,HY+s*.30,HX+s*.21,-s*.035);
+  c.lineTo(HX+s*.11,-s*.035);
+  c.quadraticCurveTo(HX+s*.14,HY+s*.28,HX+s*.14,HY+s*.19);
+  c.closePath(); c.fill(); c.stroke();
+  c.fillStyle=skin;                                 /* splayed fingers */
+  for(let i=0;i<4;i++){
+    c.save(); c.translate(HX+s*.16,-s*.028); c.rotate(-.38+i*.21);
+    c.beginPath(); c.ellipse(-s*.058,0,s*.072,s*.013,0,0,TAU); c.fill(); c.stroke();
+    c.restore();
+  }
+
+  /* fissures glowing through the hide as it degrades */
+  if(ph>=2){
+    c.save(); c.globalCompositeOperation='lighter';
+    c.strokeStyle='rgba('+(ph>=3?'255,122,214':'201,140,240')+','+(ph>=3?.48:.28)+')';
+    c.lineCap='round';
+    for(let i=0;i<5;i++){
+      const u=i/4;
+      c.lineWidth=Math.max(1,s*(.005+(i%2)*.004));
+      c.beginPath();
+      c.moveTo(BX-BRX*.70+u*BRX*1.4,BY+BRY*.42);
+      c.lineTo(BX-BRX*.62+u*BRX*1.4,BY-BRY*.16);
+      c.lineTo(BX-BRX*.74+u*BRX*1.4,BY-BRY*.68);
+      c.stroke();
+    }
+    c.restore();
+  }
+  c.restore();
+
+  /* ---- the tongue reaches for the mark ---- */
+  if(act==='ballistic_tongue'||act==='triple_tongue'||act==='tongue_haul'){
+    const q=cl(num(a.t,0)/Math.max(.01,num(a.tele,.4)),0,1);
     const live=a.stage==='active';
     const tx=num(a.targetX,x), ty=num(a.targetY,GR)-52;
-    const mx=x+fac*U*.50, my=y-U*.72;
-    c.save();
-    c.lineCap='round';
+    const ax=x+dir*s*.42, ay=y-s*.30+bob;
+    c.save(); c.lineCap='round';
     if(live){
-      c.strokeStyle='rgba(255,140,205,.95)'; c.lineWidth=12;
-      c.shadowColor='#ff8ccd'; c.shadowBlur=20;
-      c.beginPath(); c.moveTo(mx,my);
-      c.quadraticCurveTo((mx+tx)/2,Math.min(my,ty)-60,tx,ty); c.stroke();
+      c.strokeStyle='#8e2f5e'; c.lineWidth=Math.max(9,s*.055);
+      c.beginPath(); c.moveTo(ax,ay);
+      c.quadraticCurveTo((ax+tx)/2,Math.min(ay,ty)-s*.26,tx,ty); c.stroke();
+      c.strokeStyle='rgba(255,150,210,.95)'; c.lineWidth=Math.max(5,s*.032);
+      c.shadowColor='#ff8ccd'; c.shadowBlur=18;
+      c.beginPath(); c.moveTo(ax,ay);
+      c.quadraticCurveTo((ax+tx)/2,Math.min(ay,ty)-s*.26,tx,ty); c.stroke();
       c.shadowBlur=0;
-      c.fillStyle='rgba(255,220,240,.92)';
-      c.beginPath(); c.arc(tx,ty,14,0,TAU); c.fill();
+      c.fillStyle='rgba(255,226,244,.95)';
+      c.beginPath(); c.ellipse(tx,ty,s*.055,s*.042,0,0,TAU); c.fill();
     }else{
-      c.globalAlpha=.28+.46*q;
+      c.globalAlpha=.26+.48*q;
       c.strokeStyle='#ff9ed4'; c.lineWidth=2+3*q;
       c.setLineDash([9,8]);
-      c.beginPath(); c.moveTo(mx,my); c.lineTo(tx,ty); c.stroke();
+      c.beginPath(); c.moveTo(ax,ay); c.lineTo(tx,ty); c.stroke();
       c.setLineDash([]);
     }
     c.restore();
