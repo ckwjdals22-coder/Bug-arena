@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyInterp, holdSample, lerpAngle, pushSample, resetSamples } from '../../client/src/net/interp'
-import type { EntityView } from '../../client/src/core/store'
+import { applyInterp, holdSample, lerpAngle, pushSample, resetSamples } from '../../../client/src/net/interp'
+import type { EntityView } from '../../../client/src/core/store'
 
 function view(x = 0, z = 0): EntityView {
   return { x, y: 0, z, yaw: 0, st: 0, emote: null, emoteAt: 0, phase: 0, bornAt: 0, samples: [] }

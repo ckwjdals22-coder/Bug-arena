@@ -3,5 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": [".", "../shared", "../tools", "../tests/unit"]
+  "include": [".", "../shared", "../tools", "../tests/unit"],
+  "exclude": ["../tests/unit/client"]
 }
