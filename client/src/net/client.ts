@@ -65,6 +65,7 @@ export function createNet(store: Store, bus: Bus): Net {
   let pingTimer: ReturnType<typeof setInterval> | undefined
   let everPlayed = false
   let lastSnapTime = 0
+  let idleKicked = false
 
   function setPhase(phase: Store['phase'], why = ''): void {
     if (store.phase === phase && store.phaseWhy === why) return
@@ -271,7 +272,10 @@ export function createNet(store: Store, bus: Bus): Net {
         }
         intentional = true
         clearTimers()
+        // 오래 자리를 비워 끊긴 경우(백그라운드 탭은 타이머가 느려져 응답을 못 보낸다): 돌아오면 자동으로 다시 들어간다
+        idleKicked = msg.why === 'idle'
         setPhase('kicked', msg.why)
+        if (idleKicked && document.visibilityState === 'visible') rejoinAfterIdle()
         break
       case 'join':
         if (me && msg.p.id === me.id) break
@@ -455,8 +459,21 @@ export function createNet(store: Store, bus: Bus): Net {
     for (const [id, v] of store.npcs) if (!seenN.has(id)) holdSample(v, snap.time)
   }
 
+  function rejoinAfterIdle(): void {
+    if (!idleKicked) return
+    idleKicked = false
+    intentional = false
+    attempts = 0
+    setPhase('reconnecting', 'idle')
+    open()
+  }
+
   // 탭이 다시 보이면: 끊겨 있었다면 바로 재접속, 아니면 시계부터 다시 맞춘다
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && idleKicked) {
+      rejoinAfterIdle()
+      return
+    }
     if (document.visibilityState !== 'visible' || intentional) return
     if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
       attempts = 0
@@ -484,6 +501,7 @@ export function createNet(store: Store, bus: Bus): Net {
     },
     connect(roomId) {
       wantRoom = roomId || 'auto'
+      idleKicked = false
       intentional = false
       attempts = 0
       everPlayed = false
