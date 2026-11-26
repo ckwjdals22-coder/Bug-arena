@@ -36,6 +36,8 @@ export const JOIN_CHANCE_MAX = 0.92
 
 /** 합류 확률 계산 */
 export function joinChance(arch: Archetype, line: PitchLine, ctx: PitchContext): number {
+  // 합류 불가 유형은 어떤 보정으로도 넘어오지 않는다(하한 4% 도 적용하지 않음)
+  if (arch.recruitable === false) return 0
   let c = arch.base + (arch.like[line.cat] ?? 0) + line.power
   c += ctx.rank * 0.02
   c += Math.min(ctx.streak, 5) * 0.01

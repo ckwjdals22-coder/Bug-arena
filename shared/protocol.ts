@@ -34,6 +34,8 @@ export interface CHello {
   name: string
   look: Look
   save?: SignedSave | null
+  /** 초대 링크(?by=닉네임)로 들어온 경우 초대한 사람의 닉네임 */
+  ref?: string
 }
 export interface CEmote {
   t: 'emote'
@@ -63,6 +65,8 @@ export interface CProfile {
   t: 'profile'
   name?: string
   look?: Look
+  /** 이름표에 붙일 칭호 = 달성한 업적 id. 빈 문자열이면 칭호 없음 */
+  tag?: string
 }
 export interface CCultCreate {
   t: 'cultCreate'
@@ -227,6 +231,7 @@ export interface SPlayerUpdate {
   rank?: number
   fol?: number
   cult?: CultRef | null
+  tag?: string
 }
 export interface SEmote {
   t: 'emote'

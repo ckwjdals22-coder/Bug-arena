@@ -43,6 +43,8 @@ export interface PlayerPublic {
   st: number
   /** 현재 반복 재생 중인 이모트 id (없으면 null) */
   emote: string | null
+  /** 선택한 칭호 = 업적 id (없으면 '' 또는 생략) */
+  tag?: string
 }
 
 /** NPC 모델 종류 */
@@ -125,6 +127,10 @@ export interface Progress {
   cultFol: number
   cultInf: number
   daily: DailyState | null
+  /** 선택한 칭호 = 업적 id (없으면 생략) */
+  tag?: string
+  /** 거절 도감: 유형 id → 들어 본 거절 대사 비트마스크(선택) */
+  heard?: Record<string, number>
   /** 마지막 갱신 시각 (서버 epoch ms) */
   ts: number
 }

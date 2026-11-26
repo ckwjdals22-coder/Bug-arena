@@ -82,6 +82,11 @@ export interface Archetype {
   }
   /** NpcModel (0 사람, 1 고양이 ...) */
   model?: number
+  /**
+   * false 면 절대 신도가 되지 않는다(합류 확률 0). 현실에서 피해를 입기 쉬운 사람을 닮은 유형(어린이, 길 잃은 관광객 등)은
+   * 속는 역할이 아니라 교주를 제압하는 역할만 맡긴다. 기본값 true.
+   */
+  recruitable?: boolean
   /** 특수 유형: rival = "저도 사실 교주입니다" / royal = 전생 멘트에 "제가 왕이었나요?" 확률 / animal = 사람 말이 안 통함 */
   special?: 'rival' | 'royal' | 'animal'
   /** 말을 걸었을 때 첫마디 */

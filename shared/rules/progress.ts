@@ -54,6 +54,13 @@ export function normalizeProgress(raw: unknown, pid: string, now: number): Progr
   p.cultFol = num(r.cultFol, 1e9)
   p.cultInf = num(r.cultInf, 1e9)
   if (r.daily && typeof r.daily === 'object') p.daily = r.daily as Progress['daily']
+  if (typeof r.tag === 'string' && r.tag.length <= 32 && p.ach.includes(r.tag)) p.tag = r.tag
+  if (r.heard && typeof r.heard === 'object') {
+    p.heard = {}
+    for (const [k, v] of Object.entries(r.heard as Record<string, unknown>)) {
+      if (k.length <= 24) p.heard[k] = num(v, 0x7fffffff)
+    }
+  }
   return p
 }
 
