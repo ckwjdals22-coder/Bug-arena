@@ -1,0 +1,210 @@
+/* 헌금함: 공개 카드 + 도감 */
+.offering-reveal {
+  position: fixed;
+  left: 50%;
+  top: calc(var(--hud-bottom, 100px) + 46px);
+  transform: translateX(-50%);
+  z-index: 22;
+  width: min(380px, calc(100vw - 24px));
+  max-height: 62vh;
+  overflow: hidden;
+  padding: 12px 14px 10px;
+  border: var(--border);
+  border-radius: 18px;
+  background: var(--paper);
+  box-shadow: 0 5px 0 var(--ink);
+  pointer-events: auto !important;
+  cursor: pointer;
+  animation: offering-in 0.22s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.offering-reveal.legend {
+  background: linear-gradient(160deg, #fff3c4, #ffd9f0 60%, #d9e8ff);
+}
+@keyframes offering-in {
+  from {
+    transform: translateX(-50%) translateY(-12px) scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(-50%);
+    opacity: 1;
+  }
+}
+.offering-head {
+  font-size: 15px;
+  font-weight: 900;
+  text-align: center;
+  margin-bottom: 8px;
+}
+.offering-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.offering-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+  background: var(--white);
+  animation: offering-pop 0.22s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+@keyframes offering-pop {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.offering-item.r2,
+.offering-cell.r2 {
+  border-color: var(--blue);
+}
+.offering-item.r3,
+.offering-cell.r3 {
+  border-color: var(--purple);
+  background: #f4efff;
+}
+.offering-item.r4,
+.offering-cell.r4 {
+  border-color: var(--yellow-deep);
+  background: #fff6cf;
+}
+.offering-icon {
+  flex: 0 0 auto;
+  font-size: 28px;
+  line-height: 1;
+}
+.offering-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.offering-name {
+  font-weight: 900;
+}
+.offering-new {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--white);
+  font-size: 10.5px;
+  font-weight: 900;
+  vertical-align: 2px;
+}
+.offering-desc {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.offering-rarity {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 900;
+  color: var(--ink-soft);
+}
+.offering-coins {
+  margin-top: 8px;
+  font-weight: 900;
+  text-align: center;
+}
+.offering-note {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+/* 도감 */
+.offering-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.offering-h {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 900;
+}
+.offering-h.r2 {
+  color: var(--blue);
+}
+.offering-h.r3 {
+  color: var(--purple-deep);
+}
+.offering-h.r4 {
+  color: var(--yellow-deep);
+}
+.offering-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+.offering-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 96px;
+  padding: 8px 6px;
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+  background: var(--white);
+  text-align: center;
+}
+.offering-cell-icon {
+  font-size: 26px;
+  line-height: 1.1;
+}
+.offering-cell-name {
+  font-size: 12.5px;
+  font-weight: 900;
+}
+.offering-cell-desc {
+  font-size: 11px;
+  color: var(--ink-soft);
+  line-height: 1.25;
+}
+.offering-cell-count {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--ink-soft);
+}
+.offering-cell.unknown {
+  background: var(--paper-2);
+  opacity: 0.6;
+  border-style: dashed;
+  min-height: 70px;
+}
+.offering-people {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.offering-person-name {
+  font-weight: 900;
+}
+.offering-person.unknown {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.offering-legal {
+  margin: 14px 0 0;
+}
+@media (max-width: 480px) {
+  .offering-grid {
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  }
+}
