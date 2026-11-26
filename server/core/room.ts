@@ -61,7 +61,7 @@ import {
   parseJsonMsg,
 } from '../../shared/protocol'
 import { type Rnd, mulberry32, pick } from '../../shared/rng'
-import { checkNickname } from '../../shared/rules/moderation'
+import { checkNickname, cleanText } from '../../shared/rules/moderation'
 import { type PitchResult, pickLines, resolvePitch } from '../../shared/rules/pitch'
 import { newProgress, normalizeProgress, sanitizeLook } from '../../shared/rules/progress'
 import type { FeedKind, Look, PitchOutcome, PlayerPublic, Progress, RoomInfo, SignedSave } from '../../shared/types'
@@ -153,6 +153,7 @@ const TOTAL_MAX = 1e9
 const KEY_MAX = 24
 const PUB_NAME = 1
 const PUB_LOOK = 2
+const PUB_TAG = 4
 
 const KICK_JSON: Record<SKick['why'], string> = {
   dup: '{"t":"kick","why":"dup"}',
@@ -163,7 +164,7 @@ const KICK_JSON: Record<SKick['why'], string> = {
   shutdown: '{"t":"kick","why":"shutdown"}',
 }
 
-type PubField = 'name' | 'look' | 'rank' | 'fol' | 'cult'
+type PubField = 'name' | 'look' | 'rank' | 'fol' | 'cult' | 'tag'
 type InMsg = { t: string } & Record<string, unknown>
 
 /**
@@ -535,6 +536,7 @@ export class Room implements RoomApi {
       else if (f === 'rank') msg.rank = p.prog.rank
       else if (f === 'fol') msg.fol = p.prog.fol
       else if (f === 'cult') msg.cult = p.prog.cult
+      else if (f === 'tag') msg.tag = p.prog.tag ?? ''
     }
     if (hasField) this.broadcast(msg)
   }
@@ -573,6 +575,7 @@ export class Room implements RoomApi {
       yaw: p.yaw,
       st: p.st,
       emote: p.emote,
+      tag: p.prog.tag ?? '',
     }
   }
 
@@ -832,9 +835,13 @@ export class Room implements RoomApi {
       stunUntil: 0,
       sprintUntil: 0,
       blocked: new Set(),
+      mutedUntil: 0,
       saveDirty: false,
       ext: {},
     }
+    // 초대 링크(?by=닉네임)로 들어온 경우: 교단 시스템이 참고한다
+    const ref = cleanText(msg.ref, NAME_MAX)
+    if (ref) p.ext['ref'] = ref
     s.player = p
     this.pendingCount = Math.max(0, this.pendingCount - 1)
     s.budget = (RUN_SPEED * SPEED_TOLERANCE * MOVE_BURST_MS) / 1000
@@ -1082,6 +1089,8 @@ export class Room implements RoomApi {
     if (!isInt(q)) return false
     const def = q >= 0 ? QUICK_CHATS[q] : undefined
     if (!def || p.prog.rank < def.rank) return true
+    // 신고 누적으로 입막음된 동안에는 말풍선을 방송하지 않는다
+    if (p.mutedUntil > now) return true
     if (this.cdLeft(p, 'say', now) > COOLDOWN_GRACE_MS) return true
     p.cd.set('say', now + SAY_COOLDOWN_MS)
     // 본인에게도 보낸다: 클라이언트가 자기 말풍선을 서버 확인 뒤에 띄우는 구현이어도 동작하게
@@ -1110,6 +1119,17 @@ export class Room implements RoomApi {
         s.pubMask |= PUB_LOOK
       }
     }
+    if (msg.tag !== undefined) {
+      // 칭호는 '내가 달성한 업적' 중에서만 고를 수 있다. 빈 문자열이면 칭호를 뗀다
+      const tag = typeof msg.tag === 'string' && msg.tag.length <= KEY_MAX ? msg.tag : ''
+      const next = tag && p.prog.ach.includes(tag) ? tag : undefined
+      if (next !== p.prog.tag) {
+        if (next) p.prog.tag = next
+        else delete p.prog.tag
+        this.markSave(p)
+        s.pubMask |= PUB_TAG
+      }
+    }
     // 방송은 다음 틱에 모아서 한다. 꾸미기 화면에서 연달아 눌러도 마지막 상태가 반드시 전달되고,
     // 방 전체로 나가는 메시지는 초당 10개를 넘지 않는다.
     s.pubAck = true
@@ -1126,6 +1146,7 @@ export class Room implements RoomApi {
         const fields: PubField[] = []
         if (mask & PUB_NAME) fields.push('name')
         if (mask & PUB_LOOK) fields.push('look')
+        if (mask & PUB_TAG) fields.push('tag')
         this.publish(p, fields)
       } else {
         // 바뀐 게 없어도 요청한 본인에게는 서버가 확정한 값을 돌려준다(필터에 걸려 그대로인 경우 등)

@@ -18,7 +18,7 @@ import { createNet } from './net/client'
 import { createCharacterRenderer } from './render/characters'
 import { createEngine, guessQuality } from './render/engine'
 import { createFx } from './render/fx'
-import { createWorldRenderer } from './render/world'
+import { WORLD_SKY, createWorldRenderer, setWorldFocus, setWorldHqOpen } from './render/world'
 import { mountUi } from './ui/index'
 import { createUi } from './ui/kit'
 import { createOverlay } from './ui/overlay'
@@ -31,6 +31,7 @@ const bus = new Bus()
 
 const setting = store.profile.settings.quality
 const engine = createEngine(canvas, setting === 'auto' ? guessQuality() : setting)
+engine.applySky(WORLD_SKY)
 const sfx = createSfx()
 const ui = createUi(uiRoot, bus)
 const net = createNet(store, bus)
@@ -151,9 +152,17 @@ const unlockAudio = (): void => {
 window.addEventListener('pointerdown', unlockAudio, { once: true })
 window.addEventListener('keydown', unlockAudio, { once: true })
 
+// 비밀 교단 건물 문: 내 직급이 되면 열린다(충돌 판정은 player.ts 가 같은 기준으로 처리)
+function syncHqDoor(): void {
+  setWorldHqOpen((store.me?.prog.rank ?? 0) >= WORLD.hq.minRank)
+}
+bus.on('progress', syncHqDoor)
+bus.on('rankUp', syncHqDoor)
+
 bus.on('entered', () => {
   const me = store.me
   if (!me) return
+  syncHqDoor()
   // 막 나온 출구에서 광장 쪽을 바라보게 하고, 카메라를 등 뒤에 둔다
   me.yaw = Math.atan2(WORLD.plaza.x - me.x, WORLD.plaza.z - me.z)
   rig.snapBehind(me.x, me.y, me.z, me.yaw)
@@ -339,6 +348,7 @@ function frame(now: number): void {
     net.update()
     rig.rotate(cam.yaw, cam.pitch, cam.zoom)
     rig.follow(dt, store.me.x, store.me.y, store.me.z)
+    setWorldFocus(store.me.x, store.me.z)
     chars.update(dt, time, buildVisuals(now))
   } else {
     rig.orbit(dt, time)

@@ -2299,6 +2299,7 @@ describe('RoomApi', () => {
       yaw: p.yaw,
       st: Anim.Idle,
       emote: null,
+      tag: '',
     })
     expect(t.room.playerByPid('api-device-00001')).toBe(p)
     expect(t.room.playerByPid('unknown-device-00')).toBeUndefined()

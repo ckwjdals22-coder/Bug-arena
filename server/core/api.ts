@@ -95,6 +95,8 @@ export interface PlayerState {
   sprintUntil: number
   /** 내가 초대를 차단한 상대 pid */
   blocked: Set<string>
+  /** 신고 누적 등으로 말풍선/초대/배틀 신청이 막히는 만료 시각(0 = 없음) */
+  mutedUntil: number
   /** 저장본 재서명/전송이 필요한가 */
   saveDirty: boolean
   /** 기능 시스템이 자유롭게 쓰는 칸(키는 시스템 이름으로 시작) */
@@ -221,7 +223,7 @@ export interface RoomApi {
   setStat(p: PlayerState, stat: string, value: number): void
   feed(kind: FeedKind, playerId: number, text: string): void
   /** 공개 정보가 바뀌었음을 방 전체에 방송(pu) */
-  publish(p: PlayerState, fields: readonly ('name' | 'look' | 'rank' | 'fol' | 'cult')[]): void
+  publish(p: PlayerState, fields: readonly ('name' | 'look' | 'rank' | 'fol' | 'cult' | 'tag')[]): void
   /** 저장본 재서명/전송 예약 */
   markSave(p: PlayerState): void
   /** NPC 말풍선 방송 */

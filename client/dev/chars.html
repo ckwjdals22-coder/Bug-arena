@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>캐릭터 미리보기 — 도를 아십니까?</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #cfe3f2;
+        font-family: system-ui, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+      }
+      #view {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        display: block;
+        touch-action: none;
+      }
+      #labels {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .lbl {
+        position: absolute;
+        left: 0;
+        top: 0;
+        padding: 1px 6px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.86);
+        color: #2a2433;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        will-change: transform;
+      }
+      #bar {
+        position: fixed;
+        left: 8px;
+        top: 8px;
+        right: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        align-items: center;
+      }
+      #bar button {
+        font: inherit;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 5px 9px;
+        border: 2px solid #2a2433;
+        border-radius: 9px;
+        background: #ffd23f;
+        color: #2a2433;
+        cursor: pointer;
+      }
+      #bar button.fx {
+        background: #fff;
+      }
+      #bar .sep {
+        width: 10px;
+      }
+      #stats {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        padding: 6px 10px;
+        border-radius: 10px;
+        background: rgba(42, 36, 51, 0.82);
+        color: #fff;
+        font: 12px/1.4 ui-monospace, Menlo, monospace;
+        white-space: pre;
+      }
+      #portraits {
+        position: fixed;
+        left: 8px;
+        bottom: 8px;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        max-width: 80%;
+      }
+      #portraits canvas {
+        border-radius: 14px;
+        border: 2px solid #2a2433;
+        /* 투명 배경이 제대로 나오는지 보이도록 체크무늬 */
+        background:
+          repeating-conic-gradient(#f3e9d2 0% 25%, #fff8e7 0% 50%) 0 0 / 20px 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="labels"></div>
+    <div id="bar"></div>
+    <div id="portraits"></div>
+    <div id="stats"></div>
+    <script type="module" src="./chars.ts"></script>
+  </body>
+</html>

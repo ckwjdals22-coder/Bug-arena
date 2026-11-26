@@ -312,7 +312,7 @@ export function mountTalk(ctx: AppContext): void {
     const npc = store.npcs.get(msg.n)
     if (npc && view.fx) {
       try {
-        ctx.fx.burst(view.fx, npc.x, npc.y + 1.2, npc.z)
+        ctx.fx.burst(view.fx, npc.x, npc.y, npc.z)
       } catch {
         /* 이펙트 실패는 무시 */
       }

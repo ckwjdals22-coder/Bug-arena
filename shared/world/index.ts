@@ -31,16 +31,20 @@ export function inBox(x: number, z: number, b: Box, pad = 0): boolean {
  * hqOpen 이 false 면 비밀 교단 건물의 gate 도 벽으로 취급한다.
  */
 export function resolveCollision(pos: Vec2, r: number, hqOpen = true, world: WorldDef = WORLD): Vec2 {
-  // 두 번 반복하면 모서리에서의 떨림이 줄어든다
-  for (let iter = 0; iter < 2; iter++) {
-    for (const b of world.boxes) pushOutOfBox(pos, r, b)
-    if (!hqOpen) pushOutOfBox(pos, r, world.hq.gate)
+  const bd = world.bounds
+  // 대부분의 호출은 아무것도 건드리지 않고 첫 바퀴에서 끝난다.
+  // 벽과 원이 만나는 오목한 구석에서는 한 번 밀어낸 결과가 다른 충돌체에 다시 걸리므로,
+  // 더 밀 것이 없을 때까지(최대 MAX_ITER 번) 되풀이해야 떨림이 남지 않는다.
+  for (let iter = 0; iter < MAX_ITER; iter++) {
+    let moved = false
+    for (const b of world.boxes) if (pushOutOfBox(pos, r, b)) moved = true
+    if (!hqOpen && pushOutOfBox(pos, r, world.hq.gate)) moved = true
     for (const c of world.circles) {
       const dx = pos.x - c.x
       const dz = pos.z - c.z
       const min = c.r + r
       const d2 = dx * dx + dz * dz
-      if (d2 < min * min) {
+      if (d2 < min * min - EPS) {
         const d = Math.sqrt(d2)
         if (d < 1e-6) {
           pos.x = c.x + min
@@ -48,29 +52,35 @@ export function resolveCollision(pos: Vec2, r: number, hqOpen = true, world: Wor
           pos.x = c.x + (dx / d) * min
           pos.z = c.z + (dz / d) * min
         }
+        moved = true
       }
     }
+    if (pos.x < bd.x0 + r) pos.x = bd.x0 + r
+    if (pos.x > bd.x1 - r) pos.x = bd.x1 - r
+    if (pos.z < bd.z0 + r) pos.z = bd.z0 + r
+    if (pos.z > bd.z1 - r) pos.z = bd.z1 - r
+    if (!moved) break
   }
-  const bd = world.bounds
-  if (pos.x < bd.x0 + r) pos.x = bd.x0 + r
-  if (pos.x > bd.x1 - r) pos.x = bd.x1 - r
-  if (pos.z < bd.z0 + r) pos.z = bd.z0 + r
-  if (pos.z > bd.z1 - r) pos.z = bd.z1 - r
   return pos
 }
 
-function pushOutOfBox(pos: Vec2, r: number, b: Box): void {
+const MAX_ITER = 6
+/** 경계에 딱 붙은 값을 '겹침'으로 다시 판정하지 않기 위한 여유(m²) */
+const EPS = 1e-9
+
+/** 박스와 겹치면 밀어내고 true */
+function pushOutOfBox(pos: Vec2, r: number, b: Box): boolean {
   const cx = pos.x < b.x0 ? b.x0 : pos.x > b.x1 ? b.x1 : pos.x
   const cz = pos.z < b.z0 ? b.z0 : pos.z > b.z1 ? b.z1 : pos.z
   const dx = pos.x - cx
   const dz = pos.z - cz
   const d2 = dx * dx + dz * dz
-  if (d2 >= r * r) return
+  if (d2 >= r * r - EPS) return false
   if (d2 > 1e-9) {
     const d = Math.sqrt(d2)
     pos.x = cx + (dx / d) * r
     pos.z = cz + (dz / d) * r
-    return
+    return true
   }
   // 중심이 박스 안에 있다: 가장 가까운 면으로 밀어낸다
   const left = pos.x - b.x0
@@ -82,6 +92,7 @@ function pushOutOfBox(pos: Vec2, r: number, b: Box): void {
   else if (m === right) pos.x = b.x1 + r
   else if (m === top) pos.z = b.z0 - r
   else pos.z = b.z1 + r
+  return true
 }
 
 /** 그 지점에 반지름 r 의 원이 설 수 있는가 */
@@ -164,4 +175,31 @@ export function navNodesOfKind(kinds: readonly NavKind[], world: WorldDef = WORL
     if (kinds.includes(n.kind)) out.push(i)
   })
   return out
+}
+
+// ───────── 추가 도우미(월드 담당이 뒤에 덧붙임) ─────────
+
+/**
+ * a → b 직선을 반지름 r 의 원이 막힘 없이 지날 수 있는가(step 간격으로 표본 검사).
+ * 이동망 간선 검증과 '탭 이동' 사전 판정에 쓴다.
+ */
+export function segmentFree(ax: number, az: number, bx: number, bz: number, r: number, step = 0.25, world: WorldDef = WORLD): boolean {
+  const len = Math.hypot(bx - ax, bz - az)
+  const n = Math.max(1, Math.ceil(len / step))
+  for (let i = 0; i <= n; i++) {
+    const t = i / n
+    if (!isFree(ax + (bx - ax) * t, az + (bz - az) * t, r, world)) return false
+  }
+  return true
+}
+
+/** 단상 꼭대기(평평한 윗면) 위에 있는가 */
+export function onPodiumTop(x: number, z: number, world: WorldDef = WORLD): boolean {
+  const p = world.podium
+  return Math.hypot(x - p.x, z - p.z) <= p.r
+}
+
+/** 비밀 교단 건물 안쪽에 있는가 */
+export function insideHq(x: number, z: number, world: WorldDef = WORLD, pad = 0): boolean {
+  return inBox(x, z, world.hq.inside, pad)
 }
