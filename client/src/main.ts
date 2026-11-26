@@ -280,25 +280,39 @@ function buildVisuals(now: number): readonly CharVisual[] {
   return visualView
 }
 
-// ───────── 자동 품질 조절: 프레임이 계속 무거우면 한 단계 낮춘다 ─────────
-let slowWindows = 0
+// ───────── 자동 품질 조절: 무거우면 먼저 해상도를 낮추고, 그래도 안 되면 품질 단계를 내린다 ─────────
 let accMs = 0
 let accFrames = 0
+let goodWindows = 0
 function watchPerformance(frameMs: number): void {
   if (store.profile.settings.quality !== 'auto') return
   accMs += frameMs
   accFrames++
-  if (accMs < 2500) return
+  if (accMs < 2000) return
   const avg = accMs / accFrames
   accMs = 0
   accFrames = 0
-  if (avg > 42) slowWindows++
-  else slowWindows = 0
-  if (slowWindows >= 2) {
-    slowWindows = 0
-    const order: QualityTier[] = ['high', 'mid', 'low']
-    const i = order.indexOf(engine.quality)
-    if (i >= 0 && i < order.length - 1) engine.setQuality(order[i + 1]!)
+  if (avg > 34) {
+    goodWindows = 0
+    if (engine.resolutionScale > 0.56) {
+      engine.resolutionScale = engine.resolutionScale - 0.15
+    } else {
+      const order: QualityTier[] = ['high', 'mid', 'low']
+      const i = order.indexOf(engine.quality)
+      if (i >= 0 && i < order.length - 1) {
+        engine.setQuality(order[i + 1]!)
+        engine.resolutionScale = 0.85
+      }
+    }
+  } else if (avg < 19) {
+    // 여유가 꽤 이어질 때만 조금씩 되돌린다(오르내림 반복 방지)
+    goodWindows++
+    if (goodWindows >= 4 && engine.resolutionScale < 1) {
+      goodWindows = 0
+      engine.resolutionScale = engine.resolutionScale + 0.1
+    }
+  } else {
+    goodWindows = 0
   }
 }
 

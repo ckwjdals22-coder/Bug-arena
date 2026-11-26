@@ -18,7 +18,7 @@ export interface SkySpec {
 export const DEFAULT_SKY: SkySpec = {
   top: 0x8fd0f2,
   bottom: 0xffe2c4,
-  fog: 0xf3d9d0,
+  fog: 0xffe2c4,
   fogNear: 55,
   fogFar: 150,
   sun: { color: 0xfff1d6, intensity: 2.1, dir: [0.5, 1, 0.35] },
@@ -29,6 +29,8 @@ const PIXEL_RATIO_CAP: Record<QualityTier, number> = { low: 1, mid: 1.5, high: 2
 
 export interface Engine extends EngineApi {
   applySky(spec: SkySpec): void
+  /** 동적 해상도 배율(0.55~1). 프레임이 무거우면 품질 단계를 내리기 전에 먼저 해상도를 낮춘다 */
+  resolutionScale: number
   /** WebGL 컨텍스트가 유실된 상태인가 */
   readonly contextLost: boolean
 }
@@ -53,6 +55,7 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
   let quality = initialQuality
   const listeners: ((q: QualityTier) => void)[] = []
   let lost = false
+  let resScale = 1
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -79,6 +82,9 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
     skyTex = makeSkyTexture(spec.top, spec.bottom)
     scene.background = skyTex
     scene.fog = new THREE.Fog(spec.fog, spec.fogNear, spec.fogFar)
+    // 안개에 완전히 가려지는 거리 너머는 그릴 필요가 없다
+    camera.far = spec.fogFar + 12
+    camera.updateProjectionMatrix()
     hemi.color.setHex(spec.hemi.sky)
     hemi.groundColor.setHex(spec.hemi.ground)
     hemi.intensity = spec.hemi.intensity
@@ -91,9 +97,10 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
   let cssW = 1
   let cssH = 1
   function resize(): void {
-    cssW = Math.max(1, window.innerWidth)
-    cssH = Math.max(1, window.innerHeight)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_CAP[quality]))
+    // iOS 주소창 접힘/분할 화면에서는 window.inner* 와 캔버스 실제 크기가 어긋날 수 있어 캔버스 크기를 기준으로 한다
+    cssW = Math.max(1, canvas.clientWidth || window.innerWidth)
+    cssH = Math.max(1, canvas.clientHeight || window.innerHeight)
+    renderer.setPixelRatio(Math.max(0.5, Math.min(window.devicePixelRatio || 1, PIXEL_RATIO_CAP[quality]) * resScale))
     renderer.setSize(cssW, cssH, false)
     camera.aspect = cssW / cssH
     // 세로 화면에서는 좌우가 너무 좁아지지 않게 세로 화각을 넓힌다
@@ -101,6 +108,7 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
     camera.updateProjectionMatrix()
   }
   resize()
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => resize()).observe(canvas)
 
   canvas.addEventListener('webglcontextlost', (e) => {
     e.preventDefault()
@@ -129,6 +137,15 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
     },
     get contextLost() {
       return lost
+    },
+    get resolutionScale() {
+      return resScale
+    },
+    set resolutionScale(v: number) {
+      const next = Math.min(1, Math.max(0.55, v))
+      if (Math.abs(next - resScale) < 0.01) return
+      resScale = next
+      resize()
     },
     setQuality(q) {
       if (q === quality) return
@@ -174,6 +191,10 @@ export function guessQuality(): QualityTier {
   const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
   const cores = navigator.hardwareConcurrency || 4
   const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 4
+  const ua = navigator.userAgent || ''
+  // 아이폰/아이패드는 코어 수를 항상 4로 알려 주므로 코어 수로 저사양을 판단하면 전 기종이 뿌옇게 나온다
+  const apple = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1)
+  if (apple) return 'mid'
   if (coarse) return cores <= 4 || mem <= 3 ? 'low' : 'mid'
   return cores <= 2 ? 'mid' : 'high'
 }

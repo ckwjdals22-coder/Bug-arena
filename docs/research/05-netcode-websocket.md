@@ -12,7 +12,7 @@
 
 1. **`ws`는 8.23.0(2026-11-12)이 최신이고, 저장소가 이미 이 버전으로 고정돼 있다. 내리면 안 된다.** 8.23.0은 원격 메모리 고갈 DoS(상대가 읽기를 멈춘 채 ping을 퍼부으면 자동 pong이 쌓임) 보안 수정이고 `maxPendingAutoPongs`(기본 60) 옵션이 추가됐다. [확인]
 2. **100방 × 20명(2,000 접속)은 `ws` 프로세스 하나로 된다.** 코어 1개의 약 32%, RSS 약 95MB. 150방은 45%, 200방은 57%(틱 지연이 흔들리기 시작), 300방은 84%로 포화 직전이다. [측정] 실제 게임 로직이 얹히므로 **프로세스당 100방을 계획 상한**으로 잡는다. [추론]
-3. **병목은 CPU가 아니라 대역폭이다.** 바이너리 더티 스냅샷은 접속자당 약 2.5KB/s(WebSocket 수준), TLS·TCP·IP를 더하면 약 3.2KB/s, 2,000명이면 약 52Mbps다. 같은 내용을 JSON 배열로 보내면 3.3배, 전체 상태 JSON이면 14배다. CPU는 JSON이어도 5~7%p밖에 안 늘었다. [측정+추론] 현재의 바이너리(플레이어 8B, NPC 7B) 설계가 맞다.
+3. **병목은 CPU가 아니라 대역폭이다.** 바이너리 더티 스냅샷은 접속자당 약 2.5KB/s(WebSocket 수준), TLS·TCP·IP를 더하면 약 3.2KB/s, 2,000명이면 약 52Mbps다. 같은 내용을 JSON 배열로 보내면 3.3배, 전체 상태 JSON이면 14배다. CPU는 JSON이어도 4.5~6.4%p밖에 안 늘었다. [측정+추론] 현재의 바이너리(플레이어 8B, NPC 7B) 설계가 맞다.
 4. **uWebSockets.js는 지금 필요 없다.** 같은 부하에서 CPU가 32% → 23~25%로 줄 뿐이고(커널 시스템 콜이 절반이라 줄일 수 없는 부분이 크다), 네이티브 바이너리 91MB와 Node ABI 종속(v20.67.0에서 Node 20 지원 제거)을 떠안는다. [측정+확인] 한계에 닿으면 프로세스를 나누는 쪽이 낫다.
 5. **모든 방을 한 틱에 몰아 돌리면 안 된다.** 100방을 한 번에 돌리면 틱 한 번이 p50 14ms, p99 27ms 동안 이벤트 루프를 막는다. 틱 간격을 10칸으로 나눠 방을 분산하면 p99 3ms가 되고 봇이 잰 왕복 시간 p95가 13ms → 1.9ms로 내려간다. [측정]
 6. **보간용 시계는 "도착 기준"이어야 한다.** 지금 클라이언트는 `진짜 서버 시각 − 190ms`를 렌더 시각으로 쓰는데, 이러면 실제 버퍼가 `190 − 편도 지연`이 된다. 편도 지연이 90ms를 넘는 사용자(왕복 180ms 이상)는 매 틱 끊긴다. 스냅샷 도착 시각으로 오프셋을 잡으면 지연과 무관하게 버퍼가 일정하다. [추론, geckos 라이브러리 소스로 같은 방식임을 확인]
@@ -35,7 +35,7 @@
 | 8.22.2 | 2026-11-08 | URL userinfo 퍼센트 디코딩, 생성자가 `URL` 객체를 변형하지 않음 |
 | 8.22.1 | 2026-10-31 | Node의 `http.websocketMask()`/`websocketUnmask()`가 있으면 `bufferutil` 대신 사용 |
 | 8.22.0 | 2026-09-26 | `protocols` 옵션 추가 |
-| 8.21.3 | (8월 6일) | permessage-deflate 협상 버그 수정 |
+| 8.21.3 | 2026-08-07 | permessage-deflate 협상 버그 수정 |
 
 릴리스 노트에 CVE 번호는 적혀 있지 않았다. 저장소 `package.json`은 이미 `"ws": "8.23.0"`으로 고정돼 있다.
 
@@ -126,7 +126,8 @@ http.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
   if ((connsPerIp.get(ip) ?? 0) >= MAX_CONNS_PER_IP) return refuse(socket, 429, 'Too Many Requests')
 
   const room = lobby.pick(url.searchParams.get('room'))
-  // 방이 전부 가득이면: 설계대로 일단 받은 뒤 full 메시지 + CLOSE_FULL 로 알려 준다(여기서는 생략)
+  // 방이 전부 가득이면: 설계대로라면 일단 받은 뒤 full 메시지 + CLOSE_FULL 로 알려 준다. 여기서는 단순화해 503 으로 거절한다.
+  if (!room) return refuse(socket, 503, 'Service Unavailable')
 
   wss.handleUpgrade(req, socket, head, (ws) => {
     socket.removeListener('error', onSocketError)
@@ -1327,7 +1328,62 @@ setTimeout(() => {
 | 속도 제한으로 버린 메시지, 거절한 이동 | 각 분기 | 정직한 봇에서 0이어야 함 |
 | 하트비트 종료 수, 접속 수, 방 수 | — | — |
 
-`monitorEventLoopDelay` 주의: Node 문서는 "지연은 나노초로 보고"하고 타이머 방식 표본에는 "매 표본에 `resolution`이 포함된다"고 적는다. [확인] 실제로 한가한 프로세스에서 최솟값이 약 9~10ms로 나왔다. [측정] **백분위 값에서 `resolution`(10ms)을 빼야** 실제 지연이다.
+`monitorEventLoopDelay` 주의: Node 문서는 "지연은 나노초로 보고"하고 타이머 방식 표본에는 "매 표본에 `resolution`이 포함된다"고 적는다. [확인] 실제로 `resolution: 10`일 때 모든 실행에서 최솟값이 약 9ms로 나왔다. [측정] **백분위 값에서 `resolution`(10ms)을 빼야** 실제 지연에 가깝다.
+
+지표 수집 코드(검증함, 1.3절 어댑터에 이어 붙는다):
+
+```ts
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks'
+
+const eld = monitorEventLoopDelay({ resolution: 10 })
+eld.enable()
+let elu0 = performance.eventLoopUtilization()
+let cpu0 = process.cpuUsage()
+let at0 = performance.now()
+let bytes0 = 0
+
+/** /healthz 본문. 조회할 때마다 구간을 넘긴다(다음 조회는 이번 조회 이후만) */
+function health(): Record<string, number> {
+  const now = performance.now()
+  const wall = (now - at0) / 1000
+  const elu = performance.eventLoopUtilization(elu0)
+  const cpu = process.cpuUsage(cpu0)
+  const mem = process.memoryUsage()
+  const out = {
+    conns: conns.size,
+    tickMsP50: pct(tickDur, 50),
+    tickMsP95: pct(tickDur, 95),
+    tickMsP99: pct(tickDur, 99),
+    tickLateMsP99: pct(tickLate, 99),
+    // 타이머 방식 표본에는 resolution(10ms)이 포함돼 있으므로 뺀다
+    loopDelayMsP99: Math.max(0, eld.percentile(99) / 1e6 - 10),
+    loopDelayMsMax: Math.max(0, eld.max / 1e6 - 10),
+    elu: elu.utilization,
+    cpuPct: ((cpu.user + cpu.system) / 1e6 / wall) * 100,
+    rssMB: mem.rss / 1048576,
+    heapUsedMB: mem.heapUsed / 1048576,
+    outBytesPerClientPerSec: conns.size > 0 ? (metrics.bytesOut - bytes0) / wall / conns.size : 0,
+    snapSkipped: metrics.snapSkipped,
+    slowKicks: metrics.slowKicks,
+    rateDrops: metrics.rateDrops,
+    heartbeatKills: metrics.heartbeatKills,
+  }
+  eld.reset()
+  elu0 = performance.eventLoopUtilization()
+  cpu0 = process.cpuUsage()
+  at0 = now
+  bytes0 = metrics.bytesOut
+  tickDur.length = 0
+  tickLate.length = 0
+  return out
+}
+
+function pct(arr: readonly number[], p: number): number {
+  if (arr.length === 0) return 0
+  const s = Float64Array.from(arr).sort()
+  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))]!
+}
+```
 
 클라이언트(봇): 접속 성공률, `welcome`까지 걸린 시간, 왕복 시간 p50 / p95 / p99, **스냅샷 도착 간격 p95 / p99**(사용자가 느끼는 끊김에 가장 가깝다), 디코드 실패 수.
 
