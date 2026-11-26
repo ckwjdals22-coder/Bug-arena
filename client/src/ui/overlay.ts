@@ -18,6 +18,7 @@ import { NpcModel } from '../../../shared/types'
 import type { Bus } from '../core/bus'
 import type { BubbleKind, EngineApi, OverlayApi } from '../core/contracts'
 import type { EntityView, MeView, Store } from '../core/store'
+import { ACHIEVEMENT_BY_ID } from '../../../shared/content/achievements'
 import { inkOn, rankName } from './hud'
 import { h, hex } from './kit'
 
@@ -164,7 +165,10 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     const name = isMe ? store.profile.name : (pub?.name ?? '')
     const rank = isMe ? me.prog.rank : (pub?.rank ?? 0)
     const cult = isMe ? me.prog.cult : (pub?.cult ?? null)
-    const sig = `p${isMe ? 1 : 0}|${name}|${rank}|${cult ? `${cult.id}|${cult.name}|${cult.color}|${cult.emblem}|${cult.title}` : ''}`
+    // 칭호 = 본인이 고른 업적 이름("철벽 앞의 수행자 · 길거리 전도사"). 없는 id 는 무시한다
+    const tagId = isMe ? (me.prog.tag ?? '') : (pub?.tag ?? '')
+    const title = tagId ? (ACHIEVEMENT_BY_ID.get(tagId)?.name ?? '') : ''
+    const sig = `p${isMe ? 1 : 0}|${name}|${rank}|${title}|${cult ? `${cult.id}|${cult.name}|${cult.color}|${cult.emblem}|${cult.title}` : ''}`
     if (sig === tag.sig) return
     tag.sig = sig
     tag.lines = cult ? 2 : 1
@@ -177,7 +181,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       tag.cult.textContent = `${CULT_EMBLEMS[cult.emblem] ?? '🚩'} ${cult.name} · ${cult.title}`
     }
     tag.cult.classList.toggle('hidden', !cult)
-    tag.main.replaceChildren(...(isMe ? [h('span.overlay-me', '나')] : []), h('span.overlay-name', name), h('span.overlay-rank', rankName(rank)))
+    tag.main.replaceChildren(...(isMe ? [h('span.overlay-me', '나')] : []), h('span.overlay-name', name), h('span.overlay-rank', title ? `${title} · ${rankName(rank)}` : rankName(rank)))
   }
 
   function fillNpcTag(tag: Tag, me: MeView): void {

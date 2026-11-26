@@ -296,6 +296,10 @@ export function createNet(store: Store, bus: Bus): Net {
           if (msg.cult !== undefined) me.prog.cult = msg.cult
           if (msg.rank !== undefined) me.prog.rank = msg.rank
           if (msg.fol !== undefined) me.prog.fol = msg.fol
+          if (msg.tag !== undefined) {
+            if (msg.tag) me.prog.tag = msg.tag
+            else delete me.prog.tag
+          }
           saveProfile(store.profile)
           bus.emit('profile')
         } else {
@@ -306,6 +310,7 @@ export function createNet(store: Store, bus: Bus): Net {
           if (msg.rank !== undefined) v.pub.rank = msg.rank
           if (msg.fol !== undefined) v.pub.fol = msg.fol
           if (msg.cult !== undefined) v.pub.cult = msg.cult
+          if (msg.tag !== undefined) v.pub.tag = msg.tag
         }
         bus.emit('playerUpdate', msg.id)
         break
