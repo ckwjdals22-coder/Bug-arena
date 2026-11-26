@@ -69,6 +69,8 @@
 
 아래 코드는 임시 폴더에서 `tsc --strict`(TypeScript 7.0.2)와 통합 테스트를 통과했다. 통합 테스트에서 확인한 것: 접속과 스냅샷 수신, 느린 클라이언트 건너뛰기 후 강제 종료, pong을 안 하는 상대 종료와 정상 유휴 연결 유지, 4,096바이트 초과 시 1009 종료, 초당 제한 초과분 버리기.
 
+검증한 파일에서는 한 함수 안에 있던 것을 읽기 쉽게 절별로 나눠 실었다. `handleHttp`, `allowedOrigins`, `trustProxy`, `lobby`, `metrics`, `RoomLike`(`connect`/`message`/`disconnect`/`tick`을 가진 방)는 어댑터의 다른 부분에 있다고 본다. `takeToken`은 5.2절, `send`는 1.6절, 하트비트는 1.5절, 틱 루프는 7.2절, 지표는 8.3절에 있다.
+
 ```ts
 // server/node — ws 서버 설정 + 업그레이드 심사 + 연결 수명 관리
 import { createServer, type IncomingMessage } from 'node:http'
@@ -1084,6 +1086,56 @@ ws 8.23.0, 바이너리 더티 스냅샷, 틱을 10칸으로 분산:
 | 10칸에 분산 | 1.4 / 3.1ms | 2.0ms | 1.9 / 3.2~3.8ms | 약 2.2ms |
 
 CPU 총량은 같다(31% 대 32%). 달라지는 것은 한 번에 루프를 막는 시간이다. 한 틱에 몰면 그동안 들어온 ping, 이동 패킷, 새 접속이 전부 기다린다.
+
+분산 틱 루프(검증함). 방마다 타이머를 두지 않고 타이머 하나가 칸을 돌며, 각 방은 여전히 100ms마다 한 번 틱한다:
+
+```ts
+const TICK_MS = 100
+const SLOTS = 10 // 틱 간격을 10칸으로 나눈다 → 10ms 마다 방의 1/10 을 돌린다
+const slotMs = TICK_MS / SLOTS
+const tickDur: number[] = []
+const tickLate: number[] = []
+let slot = 0
+let nextAt = performance.now() + slotMs
+let tickTimer: NodeJS.Timeout | undefined
+
+function tickLoop(): void {
+  const t0 = performance.now()
+  record(tickLate, Math.max(0, t0 - nextAt)) // 예정보다 얼마나 늦게 시작했나
+  const rooms = lobby.all()
+  for (let i = slot; i < rooms.length; i += SLOTS) {
+    try {
+      rooms[i]!.tick() // 빈 방은 1초에 한 번만 돌리는 최적화는 여기서 건너뛰면 된다
+    } catch (err) {
+      console.error('room tick failed', err)
+    }
+  }
+  const t1 = performance.now()
+  record(tickDur, t1 - t0)
+  slot = (slot + 1) % SLOTS
+  nextAt += slotMs
+  if (nextAt < t1) nextAt = t1 // 밀렸으면 몰아서 따라잡지 않는다(죽음의 나선 방지)
+  tickTimer = setTimeout(tickLoop, Math.max(0, nextAt - performance.now()))
+}
+tickTimer = setTimeout(tickLoop, slotMs)
+
+function record(arr: number[], v: number): void {
+  if (arr.length >= 2048) arr.shift()
+  arr.push(v)
+}
+
+// 종료: 새 접속을 막고, 전원에게 4004 를 보낸 뒤, 잠깐 기다렸다가 남은 소켓을 끊는다
+async function shutdown(): Promise<void> {
+  clearInterval(heartbeat)
+  clearTimeout(tickTimer)
+  http.close()
+  for (const c of conns.values()) c.ws.close(4004, 'shutdown')
+  await new Promise((r) => setTimeout(r, 1500)) // close 프레임이 나갈 시간
+  for (const c of conns.values()) c.ws.terminate()
+}
+```
+
+방마다 `dt`를 따로 잰다면(`host.now()` 차이) 칸 배치와 무관하게 시뮬레이션이 맞는다.
 
 ### 7.3 작은 VM 한 대에 100방 × 20명이 되는가 [추론, 7.2 수치 기반]
 
