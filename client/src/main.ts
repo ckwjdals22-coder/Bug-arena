@@ -3,7 +3,7 @@
  * 입력 → 내 이동 → 원격 보간 → 카메라 → 캐릭터/월드/이펙트 → 렌더 → 오버레이 순으로 돌린다.
  */
 import './styles/base.css'
-import { SPRINT_COOLDOWN_MS, SPRINT_MS, npcKey } from '../../shared/constants'
+import { Anim, SPRINT_COOLDOWN_MS, SPRINT_MS, npcKey } from '../../shared/constants'
 import { CULT_COLORS, EMOTE_BY_ID } from '../../shared/content/core'
 import type { Look } from '../../shared/types'
 import { WORLD } from '../../shared/world'
@@ -229,6 +229,7 @@ function fillVisual(v: CharVisual, e: EntityView, now: number): void {
   v.highlight = false
 }
 const visualView: CharVisual[] = []
+const slotCount = new Map<number, number>()
 function buildVisuals(now: number): readonly CharVisual[] {
   visualCount = 0
   const me = store.me
@@ -249,6 +250,7 @@ function buildVisuals(now: number): readonly CharVisual[] {
     v.isNpc = false
   }
   const nearNpc = store.talk ? store.talk.npc : store.near.npc
+  slotCount.clear()
   for (const n of store.npcs.values()) {
     const v = nextVisual()
     fillVisual(v, n, now)
@@ -256,7 +258,21 @@ function buildVisuals(now: number): readonly CharVisual[] {
     v.look = n.pub.look
     v.model = n.pub.model
     v.isNpc = true
-    if (n.pub.owner) v.ring = ownerColor(n.pub.owner)
+    if (n.pub.owner) {
+      v.ring = ownerColor(n.pub.owner)
+      // 군무: 서 있는 신도는 교주의 동작을 줄 순서대로 조금씩 늦게 따라 한다(클라이언트 연출, 통신 없음)
+      const owner = me && me.id === n.pub.owner ? me : store.players.get(n.pub.owner)
+      const slot = slotCount.get(n.pub.owner) ?? 0
+      slotCount.set(n.pub.owner, slot + 1)
+      if (owner && n.st === Anim.Idle) {
+        const oe = activeEmote(owner, now)
+        const t = (now - owner.emoteAt) / 1000 - 0.16 * (slot + 1)
+        if (oe && oe !== 'flee' && t >= 0) {
+          v.emote = oe
+          v.emoteT = t
+        }
+      }
+    }
     v.highlight = n.pub.id === nearNpc
   }
   visualView.length = visualCount

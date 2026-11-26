@@ -25,7 +25,7 @@ export const RANKS: readonly RankDef[] = [
     name: '열정적인 포교왕',
     inf: 140,
     cheer: '반경 5m 안의 시민들이 눈을 피하기 시작했습니다!',
-    unlock: '회전 기도·계시의 손가락, 은박지 모자·피라미드 모자, 흰 도복',
+    unlock: '회전 수련·계시의 손가락, 은박지 모자·피라미드 모자, 흰 도복',
   },
   {
     id: 3,
@@ -72,7 +72,7 @@ export const EMOTES: readonly EmoteDef[] = [
   { id: 'flee', name: '도망가기', icon: '💨', rank: 0, loop: false, ms: 2600, key: '8' },
   { id: 'cheer', name: '만세', icon: '🎉', rank: 1, loop: false, ms: 2000 },
   { id: 'kneel', name: '큰절', icon: '🧎', rank: 1, loop: false, ms: 2600 },
-  { id: 'spin', name: '회전 기도', icon: '🌀', rank: 2, loop: true, ms: 0 },
+  { id: 'spin', name: '회전 수련', icon: '🌀', rank: 2, loop: true, ms: 0 },
   { id: 'point', name: '계시의 손가락', icon: '☝️', rank: 2, loop: false, ms: 2200 },
   { id: 'levitate', name: '공중부양', icon: '🧘', rank: 4, loop: true, ms: 0 },
   { id: 'cosmic', name: '우주 교신', icon: '🛸', rank: 5, loop: true, ms: 0 },
@@ -108,7 +108,7 @@ export const OUTFITS: readonly OutfitDef[] = [
   { id: 2, name: '수상한 전도사', rank: 0, shape: 'suit', tint: false },
   { id: 3, name: '초보 교주 도복', rank: 0, shape: 'robe', tint: true },
   { id: 4, name: '등산복 포교단', rank: 1, shape: 'vest', tint: true },
-  { id: 5, name: '개량한복 도인', rank: 1, shape: 'hanbok', tint: true },
+  { id: 5, name: '개량한복 산책러', rank: 1, shape: 'hanbok', tint: true },
   { id: 6, name: '흰 도복 도사', rank: 2, shape: 'robe', tint: false },
   { id: 7, name: '황금 교주 로브', rank: 3, shape: 'robe', tint: false },
   { id: 8, name: '반짝이 망토 대교주', rank: 4, shape: 'cape', tint: true },
@@ -145,7 +145,7 @@ export const FACES: readonly CosmeticDef[] = [
 export const ACCESSORIES: readonly CosmeticDef[] = [
   { id: 0, name: '없음', rank: 0 },
   { id: 1, name: '"도를 아십니까" 어깨띠', rank: 0 },
-  { id: 2, name: '염주 목걸이', rank: 0 },
+  { id: 2, name: '수상한 구슬 목걸이', rank: 0 },
   { id: 3, name: '배낭', rank: 0 },
   { id: 4, name: '확성기', rank: 1 },
   { id: 5, name: '금목걸이', rank: 3 },
@@ -167,7 +167,7 @@ export const CULT_COLORS: readonly number[] = [
 
 /** 엠블럼은 이모지로 표현한다(에셋 없이 DOM/캔버스/3D 텍스처 어디서나 그릴 수 있다) */
 export const CULT_EMBLEMS: readonly string[] = [
-  '🍜', '🛵', '🎰', '😴', '🌙', '👁️', '🛸', '🐟', '🍗', '☕', '🧦', '🥱', '🪙', '🔔', '🌀', '🥟', '🐈', '🕊️', '🍚', '⚡', '🧻', '🪑', '📎', '🥒',
+  '🍜', '🛵', '🎰', '😴', '🧄', '👁️', '🛸', '🩴', '🍗', '☕', '🧦', '🥱', '🪙', '🔔', '🌀', '🥟', '🐈', '🧽', '🍚', '⚡', '🧻', '🪑', '📎', '🥒',
 ]
 
 export const CULT_NAME_SUGGESTIONS: readonly string[] = [
@@ -179,7 +179,7 @@ export const CULT_NAME_SUGGESTIONS: readonly string[] = [
   '만성피로 구원단',
 ]
 
-export const CULT_TITLE_SUGGESTIONS: readonly string[] = ['교주', '대사제', '면장', '총무', '큰형님', '수석 졸음이']
+export const CULT_TITLE_SUGGESTIONS: readonly string[] = ['교주', '명예 과장', '면장', '총무', '큰형님', '수석 졸음이']
 
 /** 교단원(멤버)에게 붙는 표시 문구 */
 export const CULT_MEMBER_TITLE = '신도'

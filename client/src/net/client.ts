@@ -47,7 +47,12 @@ function makeView(x: number, z: number, yaw: number, st: number, emote: string |
   }
 }
 
-export function createNet(store: Store, bus: Bus): NetApi {
+export interface Net extends NetApi {
+  /** 테스트/디버그용: 망이 끊긴 것처럼 소켓을 닫는다(자동 재접속이 동작해야 한다) */
+  debugDrop(): void
+}
+
+export function createNet(store: Store, bus: Bus): Net {
   let ws: WebSocket | null = null
   /** 현재 붙으려는/붙어 있는 방 */
   let wantRoom = 'auto'
@@ -463,7 +468,14 @@ export function createNet(store: Store, bus: Bus): NetApi {
     open()
   })
 
-  const api: NetApi = {
+  const api: Net = {
+    debugDrop() {
+      try {
+        ws?.close(4999, 'debug drop')
+      } catch {
+        /* ignore */
+      }
+    },
     connect(roomId) {
       wantRoom = roomId || 'auto'
       intentional = false
