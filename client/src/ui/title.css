@@ -1,0 +1,304 @@
+/*
+ * 부트 카드: 전봇대에 붙은 수상한 전단지 한 장.
+ * 화면 전체를 막지 않는다(래퍼는 입력을 통과시킨다) — 뒤의 3D 거리가 그대로 보이고 돌려볼 수 있다.
+ */
+.title-screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(14px + var(--safe-t)) calc(14px + var(--safe-r)) calc(14px + var(--safe-b)) calc(14px + var(--safe-l));
+  background: radial-gradient(ellipse at center, rgba(255, 248, 231, 0.1) 0%, rgba(36, 27, 53, 0.34) 100%);
+  transition: opacity 0.42s ease;
+}
+.title-screen.out {
+  opacity: 0;
+}
+.title-screen.out .title-card {
+  transform: rotate(-1.2deg) translateY(-18px) scale(0.96);
+}
+
+.title-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(400px, 100%);
+  max-height: 100%;
+  padding: 26px 20px 14px;
+  box-shadow: 0 7px 0 var(--ink);
+  text-align: center;
+  transform: rotate(-1.2deg);
+  transition: transform 0.42s ease;
+  animation: title-in 0.32s cubic-bezier(0.2, 1.3, 0.4, 1);
+}
+/* 전단지를 붙여 둔 테이프 */
+.title-tape {
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  width: 92px;
+  height: 24px;
+  border: 2px solid rgba(36, 27, 53, 0.55);
+  background: rgba(255, 210, 63, 0.82);
+  transform: translateX(-50%) rotate(2.5deg);
+}
+.title-badge {
+  padding: 2px 11px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--white);
+  font-size: 12px;
+  font-weight: 800;
+}
+.title-logo {
+  margin: 2px 0 0;
+  font-size: clamp(31px, 9.4vw, 44px);
+  font-weight: 900;
+  line-height: 1.12;
+  letter-spacing: -1.5px;
+  white-space: nowrap;
+}
+.title-logo span {
+  /* 형광펜으로 그은 듯한 밑줄 */
+  background: linear-gradient(transparent 60%, var(--yellow) 60%, var(--yellow) 94%, transparent 94%);
+}
+.title-logo em {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--purple);
+  font-style: normal;
+  transform: rotate(9deg);
+  animation: title-wiggle 2.2s ease-in-out infinite;
+}
+.title-sub {
+  padding: 3px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--purple);
+  box-shadow: var(--shadow-sm);
+  color: var(--white);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  transform: rotate(1.6deg);
+}
+
+/* ── 진행 힌트: 지하철에서 4번 출구까지 걸어가는 사람 ── */
+.title-load,
+.title-rest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+}
+.title-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(280px, 100%);
+}
+.title-station {
+  font-size: 22px;
+  line-height: 1;
+}
+.title-exit {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 2.5px solid var(--ink);
+  border-radius: 8px;
+  background: var(--yellow);
+  font-size: 16px;
+  font-weight: 900;
+}
+.title-rail {
+  position: relative;
+  flex: 1 1 auto;
+  height: 28px;
+  /* 점선 길이 흘러간다 */
+  background: repeating-linear-gradient(90deg, var(--ink) 0 9px, transparent 9px 18px) 0 100% / 200% 3px no-repeat;
+  animation: title-rail 0.7s linear infinite;
+}
+.title-walker {
+  position: absolute;
+  bottom: 3px;
+  left: 0;
+  font-size: 22px;
+  line-height: 1;
+  animation: title-walk 2.6s ease-in-out infinite;
+}
+.title-status {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 800;
+  word-break: keep-all;
+}
+.title-who {
+  color: var(--purple-deep);
+  font-weight: 900;
+}
+.title-dots i {
+  font-style: normal;
+  animation: title-dot 1.2s ease-in-out infinite;
+}
+.title-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.title-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* 접속이 오래 걸릴 때: 지연 뒤에 CSS 만으로 펼쳐진다 */
+.title-slow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 10px;
+  max-height: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 800;
+  opacity: 0;
+  visibility: hidden;
+  animation: title-slow-in 0.3s ease-out var(--title-slow-delay, 10s) both;
+}
+.title-slow .btn {
+  min-height: 42px;
+  margin: 2px 0 5px;
+}
+
+.title-tip {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 46px;
+  margin: 4px 0 0;
+  padding: 8px 12px;
+  border: 2px dashed var(--ink-soft);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  font-size: 13.5px;
+  font-weight: 700;
+  text-align: left;
+  word-break: keep-all;
+}
+.title-tip-text {
+  transition: opacity 0.18s ease;
+}
+.title-tip-text.swap {
+  opacity: 0;
+}
+.title-disclaimer {
+  margin: 2px 0 0;
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  word-break: keep-all;
+}
+
+/* 가로 폰: 높이가 모자라므로 여백을 줄이고 카드를 넓힌다 */
+@media (max-height: 480px) {
+  .title-card {
+    gap: 6px;
+    width: min(540px, 100%);
+    padding: 18px 18px 10px;
+    overflow-y: auto;
+  }
+  .title-logo {
+    font-size: 30px;
+  }
+  .title-load,
+  .title-rest {
+    gap: 5px;
+    margin-top: 2px;
+  }
+  .title-tip {
+    min-height: 0;
+    margin-top: 2px;
+    padding: 6px 12px;
+  }
+}
+
+@keyframes title-in {
+  from {
+    opacity: 0;
+    transform: rotate(-5deg) translateY(22px) scale(0.92);
+  }
+}
+@keyframes title-wiggle {
+  0%,
+  100% {
+    transform: rotate(9deg);
+  }
+  50% {
+    transform: rotate(-6deg) translateY(-2px);
+  }
+}
+@keyframes title-rail {
+  to {
+    background-position: -18px 100%;
+  }
+}
+@keyframes title-walk {
+  0% {
+    left: 0;
+    transform: scaleX(-1) translateY(0);
+  }
+  25% {
+    transform: scaleX(-1) translateY(-3px);
+  }
+  50% {
+    transform: scaleX(-1) translateY(0);
+  }
+  75% {
+    transform: scaleX(-1) translateY(-3px);
+  }
+  100% {
+    left: calc(100% - 22px);
+    transform: scaleX(-1) translateY(0);
+  }
+}
+@keyframes title-dot {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+@keyframes title-slow-in {
+  from {
+    max-height: 0;
+    opacity: 0;
+    visibility: hidden;
+  }
+  to {
+    max-height: 110px;
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+/* base.css 는 모션 줄이기 설정에서 애니메이션 길이를 0에 가깝게 만든다 → 무한 반복은 아예 꺼야 깜빡이지 않는다 */
+@media (prefers-reduced-motion: reduce) {
+  .title-logo em,
+  .title-rail,
+  .title-walker,
+  .title-dots i {
+    animation: none !important;
+  }
+}

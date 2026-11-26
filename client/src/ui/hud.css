@@ -1,0 +1,608 @@
+/*
+ * HUD. 래퍼(.hud)는 위치를 잡지 않는다: 자식들이 각자 fixed + z-index 를 가져야
+ * 메뉴/더보기 시트가 다른 모듈의 요소(소식 피드 등) 위로 올라올 수 있다.
+ */
+.hud {
+  pointer-events: none;
+}
+
+/* base.css 의 토스트 기본 위치(위에서 64px)는 HUD 둘째 줄과 겹친다 → HUD 바로 아래로 내린다.
+   세로 화면에서는 왼쪽 아래로 소식 피드(최대 3줄)가 깔리므로 그 밑으로 한 번 더 내린다. */
+#ui > .toasts {
+  top: calc(var(--hud-bottom, calc(56px + var(--safe-t))) + 10px);
+}
+@media (max-width: 699px) and (orientation: portrait) {
+  #ui > .toasts {
+    top: calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 92px);
+  }
+}
+
+/* ── 상단 ── */
+.hud-top {
+  position: fixed;
+  top: calc(8px + var(--safe-t));
+  left: calc(8px + var(--safe-l));
+  right: calc(8px + var(--safe-r));
+  z-index: var(--z-hud);
+  display: grid;
+  grid-template-areas:
+    'profile right'
+    'stats stats';
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 8px;
+}
+.hud-right {
+  grid-area: right;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hud-stats {
+  grid-area: stats;
+  justify-self: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.hud-profile {
+  grid-area: profile;
+  justify-self: start;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 3px 14px 3px 5px;
+  gap: 8px;
+  background: var(--paper);
+}
+.hud-profile:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.hud-emblem {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--yellow);
+  font-size: 16px;
+  line-height: 1;
+}
+.hud-profile-text {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.hud-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+}
+.hud-rank {
+  flex: 0 0 auto;
+  color: var(--purple-deep);
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.hud-stat {
+  min-height: 30px;
+  padding: 2px 11px;
+  gap: 5px;
+  font-size: 13.5px;
+}
+.hud-stat-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.hud-stat-label {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.hud-num {
+  font-size: 14.5px;
+  font-weight: 900;
+}
+.hud-inf-next {
+  margin-left: -3px;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+.hud-inf-next:empty,
+.hud-fol-with:empty {
+  display: none;
+}
+.hud-inf-bar {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 54px;
+  height: 11px;
+}
+.hud-inf.max .hud-inf-bar > i {
+  background: var(--gold);
+}
+.hud-fol-with {
+  color: var(--purple-deep);
+  font-size: 12px;
+}
+
+/* 방 칩 */
+.hud-room-wrap {
+  position: relative;
+}
+.hud-room {
+  min-height: 42px;
+  padding: 3px 13px 3px 11px;
+  gap: 7px;
+  font-size: 13px;
+}
+.hud-room:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+.hud-room-text,
+.hud-room-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hud-room-short {
+  display: none;
+}
+.hud-room-sep {
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.hud-net-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--green);
+}
+.hud-net-dot.ok {
+  background: var(--yellow);
+}
+.hud-net-dot.bad {
+  background: var(--red);
+}
+.hud-net-dot.pulse {
+  animation: hud-pulse 0.9s ease-in-out infinite;
+}
+.hud-net {
+  min-height: 30px;
+  padding: 2px 11px;
+  background: var(--red);
+  color: var(--white);
+  font-size: 12.5px;
+}
+.hud-net .hud-net-dot {
+  background: var(--white);
+}
+.hud-legend {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--white);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+@media (hover: hover) {
+  .hud-room-wrap:hover .hud-legend {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hud-menu-btn {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  font-size: 19px;
+}
+.hud-menu-btn.active {
+  background: var(--yellow);
+}
+.hud-menu-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 13px;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 2px solid var(--ink);
+}
+
+/* ── 메뉴 팝오버 ── */
+.hud-menu {
+  position: fixed;
+  top: calc(56px + var(--safe-t));
+  right: calc(8px + var(--safe-r));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  min-width: 190px;
+  max-width: min(290px, calc(100vw - 16px));
+  max-height: calc(100vh - 72px - var(--safe-t) - var(--safe-b));
+  padding: 8px;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  animation: hud-pop 0.14s ease-out;
+}
+.hud-menu-item {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 12px 6px 8px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  font-size: 15px;
+  font-weight: 800;
+  text-align: left;
+  white-space: nowrap;
+}
+.hud-menu-item:active {
+  background: var(--yellow);
+}
+@media (hover: hover) {
+  .hud-menu-item:hover {
+    background: var(--yellow);
+  }
+}
+.hud-menu-icon {
+  flex: 0 0 auto;
+  width: 26px;
+  font-size: 19px;
+  line-height: 1;
+  text-align: center;
+}
+.hud-menu-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-menu-empty {
+  margin: 6px 4px;
+}
+
+/* ── 상황 버튼 ── */
+.hud-dock {
+  position: fixed;
+  right: calc(14px + var(--safe-r));
+  bottom: calc(14px + var(--safe-b));
+  z-index: var(--z-hud);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  /* PC: 가운데 이모트 바(폭 약 564px)를 침범하지 않게 — 넘치는 버튼은 위로 쌓인다 */
+  max-width: max(160px, calc(50vw - 312px));
+}
+/* 터치: 왼쪽 아래(가로 45% × 세로 40%)는 조이스틱 자리라 비워 둔다 → 오른쪽 55% 안에서만 */
+.hud-touch .hud-dock {
+  max-width: min(calc(55vw - 14px - var(--safe-r)), 340px);
+}
+.hud-talking .hud-dock {
+  display: none;
+}
+.hud-dock-slot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.hud-dock-slot:empty {
+  display: none;
+}
+.hud-actions {
+  display: flex;
+  /* 큰 버튼이 오른쪽 아래 구석, 나머지는 왼쪽으로 → 넘치면 위로 */
+  flex-flow: row-reverse wrap-reverse;
+  align-items: flex-end;
+  gap: 8px;
+}
+.hud-action {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  font-size: 22px;
+}
+.hud-action.primary {
+  width: 86px;
+  height: 86px;
+  font-size: 32px;
+  animation: hud-primary-in 0.24s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.hud-touch .hud-actions {
+  gap: 6px;
+}
+/* 세로 폰(폭 390)의 오른쪽 55% 에 "큰 버튼 + 작은 버튼 2개"가 한 줄로 들어가는 크기 */
+.hud-touch .hud-action {
+  width: 54px;
+  height: 54px;
+  font-size: 20px;
+}
+.hud-touch .hud-action.primary {
+  width: 76px;
+  height: 76px;
+  font-size: 29px;
+}
+/* 작은 버튼에서는 쿨타임 숫자가 아이콘을 다 가리지 않게 줄인다 */
+.hud-action:not(.primary).cooling::after {
+  top: -6px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.hud-action-label {
+  display: -webkit-box;
+  max-width: 82%;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.08;
+  text-align: center;
+  word-break: keep-all;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.hud-action.primary .hud-action-label {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 900;
+}
+.hud-action.long .hud-action-label {
+  font-size: 9.5px;
+  letter-spacing: -0.3px;
+}
+.hud-action.primary.long .hud-action-label {
+  font-size: 11px;
+}
+.hud-action:disabled {
+  filter: grayscale(0.8);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.hud-key {
+  display: none;
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  min-width: 23px;
+  height: 23px;
+  padding: 0 5px;
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  background: var(--white);
+  font-family: var(--font);
+  font-size: 11.5px;
+  font-weight: 900;
+  line-height: 19px;
+  text-align: center;
+}
+.hud-action.primary .hud-key {
+  display: block;
+}
+.hud-touch .hud-action .hud-key {
+  display: none;
+}
+
+.hud-more {
+  position: fixed;
+  right: calc(14px + var(--safe-r));
+  bottom: calc(112px + var(--safe-b));
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(250px, calc(100vw - 28px));
+  max-height: min(60vh, 360px);
+  padding: 12px 12px 14px;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  touch-action: pan-y;
+  animation: hud-pop 0.14s ease-out;
+}
+.hud-more-item {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  min-height: 46px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* 패널 닫기 버튼(kit 공용, 40px)을 터치 최소 크기 42px 로 맞춘다 */
+#ui .panel-close {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+}
+
+/* ── 방 목록 패널 ── */
+.hud-rooms {
+  gap: 10px;
+}
+.hud-rooms-legend,
+.hud-rooms-status {
+  margin: 0;
+}
+.hud-room-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hud-room-row .btn {
+  flex: 0 0 auto;
+  min-height: 42px;
+}
+.hud-room-row.here {
+  background: #fff3c4;
+}
+.hud-room-row.full:not(.here) {
+  background: var(--paper-2);
+}
+.hud-room-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hud-room-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+}
+.hud-room-nums {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.hud-room-bar {
+  flex: 1 1 40px;
+  max-width: 110px;
+  height: 10px;
+}
+.hud-invite {
+  margin-top: 6px;
+  gap: 8px;
+}
+.hud-invite p {
+  margin: 0;
+}
+.hud-invite-field {
+  font-size: 16px;
+}
+
+/* ── 좁은 화면(세로 폰) / 낮은 화면(가로 폰): 칩을 두 줄짜리로 줄여 닉네임 자리를 번다 ── */
+@media (max-width: 560px), (max-height: 480px) {
+  .hud-profile-text {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.16;
+  }
+  .hud-name {
+    max-width: 100%;
+    font-size: 14px;
+  }
+  .hud-rank {
+    font-size: 11px;
+  }
+  .hud-room {
+    padding: 3px 11px 3px 9px;
+  }
+  .hud-room-text {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.2;
+  }
+  .hud-room-text > .hud-room-sep,
+  .hud-room-counts .hud-room-sep,
+  .hud-room-full {
+    display: none;
+  }
+  .hud-room-short {
+    display: inline;
+  }
+  .hud-room-counts {
+    gap: 6px;
+    font-size: 11.5px;
+  }
+  /* 재접속 안내는 system 배너가 맡는다. 좁은 화면에서는 방 칩의 빨간 점만 남긴다 */
+  .hud-net {
+    display: none;
+  }
+}
+@media (max-width: 380px) {
+  .hud-stat-label {
+    display: none;
+  }
+  /* 아주 좁은 폰: 닉네임이 조금이라도 더 보이게 */
+  .hud-profile {
+    padding: 3px 10px 3px 4px;
+    gap: 6px;
+  }
+  .hud-emblem {
+    width: 26px;
+    height: 26px;
+    font-size: 14px;
+  }
+  .hud-room {
+    padding: 3px 9px 3px 8px;
+    gap: 5px;
+  }
+}
+/* 가로 폰: 세로 공간이 귀하므로 한 줄로 편다 */
+@media (max-height: 480px) and (orientation: landscape) {
+  .hud-top {
+    grid-template-areas: 'profile stats right';
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .hud-more {
+    max-height: calc(100vh - 130px);
+  }
+}
+
+@keyframes hud-pulse {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+@keyframes hud-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+@keyframes hud-primary-in {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+}
+
+/* base.css 는 모션 줄이기 설정에서 애니메이션 길이를 0에 가깝게 만든다 → 무한 반복은 아예 꺼야 깜빡이지 않는다 */
+@media (prefers-reduced-motion: reduce) {
+  .hud-net-dot.pulse {
+    animation: none !important;
+  }
+}

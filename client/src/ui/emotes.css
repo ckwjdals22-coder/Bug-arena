@@ -1,0 +1,320 @@
+/* 이모트 바(PC) / 이모트 버튼(터치) / 이모트·말풍선 시트 */
+
+/* ── PC: 아래 가운데 바 ── */
+.emotes-bar {
+  position: fixed;
+  bottom: calc(12px + var(--safe-b));
+  left: 50%;
+  z-index: var(--z-hud);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - 16px);
+  padding: 7px 9px;
+  border: var(--border);
+  border-radius: 19px;
+  background: rgba(255, 248, 231, 0.94);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+}
+.hud-touch .emotes-bar,
+.hud-talking .emotes-bar {
+  display: none;
+}
+.emotes-btn {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: var(--border);
+  border-radius: 13px;
+  background: var(--white);
+  line-height: 1;
+  transition: transform 0.06s ease, background 0.1s ease;
+}
+.emotes-icon {
+  font-size: 22px;
+}
+.emotes-btn:active,
+.emotes-btn.active {
+  background: var(--yellow);
+  transform: translateY(2px);
+}
+@media (hover: hover) {
+  .emotes-btn:hover {
+    background: #fff3c4;
+  }
+  /* 이름 꼬리표: 아이콘만으로는 뭔지 모를 수 있다 */
+  .emotes-btn[data-name]:not(.cooling):hover::after {
+    content: attr(data-name);
+    position: absolute;
+    bottom: calc(100% + 11px);
+    left: 50%;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: var(--white);
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateX(-50%);
+  }
+}
+/* 재생 중인 반복 동작: 한 번 더 누르면 멈춘다 */
+.emotes-btn.on,
+.emotes-tile.on {
+  background: var(--yellow);
+  outline: 3px solid var(--purple);
+  outline-offset: 1px;
+}
+.emotes-btn kbd {
+  position: absolute;
+  top: -8px;
+  left: -6px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 3px;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--white);
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 900;
+  line-height: 15px;
+  text-align: center;
+}
+.emotes-wide {
+  width: 56px;
+}
+.emotes-wide .emotes-icon {
+  font-size: 18px;
+}
+.emotes-wide small {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 800;
+}
+.emotes-div {
+  flex: 0 0 auto;
+  width: 2.5px;
+  height: 30px;
+  border-radius: 2px;
+  background: var(--ink);
+  opacity: 0.22;
+}
+.emotes-btn.cooling {
+  filter: grayscale(0.8);
+  pointer-events: none;
+}
+.emotes-btn.cooling::after {
+  content: attr(data-cd);
+  position: absolute;
+  top: -8px;
+  right: -7px;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--white);
+  font-size: 11.5px;
+  font-weight: 900;
+  line-height: 21px;
+  text-align: center;
+}
+/* 창을 아주 좁게 줄인 PC: 넘치면 옆으로 밀어 본다 */
+@media (max-width: 640px) {
+  .emotes-bar {
+    overflow-x: auto;
+    touch-action: pan-x;
+  }
+}
+
+/* ── 터치: HUD 오른쪽 아래 묶음에 끼는 둥근 버튼 ── */
+.emotes-touch {
+  display: none;
+  gap: 8px;
+}
+.hud-touch .emotes-touch {
+  display: flex;
+}
+.emotes-touch-alone {
+  position: fixed;
+  right: calc(14px + var(--safe-r));
+  bottom: calc(112px + var(--safe-b));
+  z-index: var(--z-hud);
+}
+.hud-talking .emotes-touch-alone {
+  display: none;
+}
+.emotes-tbtn {
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.94);
+  font-size: 21px;
+}
+.emotes-tbtn small {
+  font-size: 10px;
+}
+.emotes-tbtn.active {
+  background: var(--yellow);
+}
+/* 아주 좁은 폰(폭 320): 세 버튼이 오른쪽 55% 안에 들어가게 줄인다(조이스틱 자리 침범 금지) */
+@media (max-width: 350px) {
+  .emotes-tbtn {
+    width: 48px;
+    height: 48px;
+    font-size: 18px;
+  }
+  .emotes-tbtn small {
+    font-size: 9.5px;
+  }
+}
+
+/* ── 시트 ── */
+.emotes-sheet,
+.emotes-chat {
+  position: fixed;
+  bottom: calc(82px + var(--safe-b));
+  left: 50%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(430px, calc(100vw - 16px));
+  max-height: min(64vh, 480px);
+  padding: 10px 12px 14px;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  transform: translateX(-50%);
+  animation: emotes-pop 0.15s ease-out;
+}
+.emotes-chat {
+  width: min(310px, calc(100vw - 16px));
+}
+/* 터치: 엄지 쪽(오른쪽 아래)에 붙는다 */
+.hud-touch .emotes-sheet,
+.hud-touch .emotes-chat {
+  right: calc(8px + var(--safe-r));
+  bottom: calc(8px + var(--safe-b));
+  left: auto;
+  max-width: calc(100vw - 16px - var(--safe-l) - var(--safe-r));
+  max-height: calc(100vh - 76px - var(--safe-t) - var(--safe-b));
+  transform: none;
+  animation-name: emotes-pop-touch;
+}
+@media (orientation: landscape) {
+  .hud-touch .emotes-sheet {
+    width: min(540px, calc(100vw - 16px));
+  }
+}
+.emotes-sheet-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.emotes-sheet-title {
+  padding-left: 4px;
+  font-size: 16px;
+  font-weight: 900;
+}
+.emotes-close {
+  width: 42px;
+  height: 42px;
+  box-shadow: none;
+  font-size: 16px;
+}
+.emotes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+  gap: 8px;
+  min-height: 0;
+  padding: 3px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.emotes-tile {
+  min-height: 72px;
+  padding: 6px 4px;
+  word-break: keep-all;
+}
+.emotes-tile:active {
+  background: var(--yellow);
+}
+/* 잠긴 동작: 그림만 흐리게 하고 '어느 직급에 열리는지'는 또렷하게 */
+.emotes-tile.locked {
+  border-style: dashed;
+  background: var(--paper-2);
+  color: var(--ink-soft);
+  filter: none;
+  opacity: 1;
+}
+.emotes-tile.locked .big {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.emotes-tile-name {
+  line-height: 1.15;
+}
+.emotes-lock {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.emotes-chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 2px 2px 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.emotes-chat-item {
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  min-height: 46px;
+  padding: 6px 14px;
+  box-shadow: var(--shadow-sm);
+  white-space: normal;
+  text-align: left;
+}
+.emotes-chat-item.locked {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.emotes-chat-icon {
+  flex: 0 0 auto;
+  font-size: 19px;
+}
+.emotes-chat-text {
+  flex: 1 1 auto;
+}
+
+@keyframes emotes-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px) scale(0.97);
+  }
+}
+@keyframes emotes-pop-touch {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+}

@@ -1,0 +1,338 @@
+/* 프로필 패널: 왼쪽 초상+닉네임(넓은 화면에서는 붙박이), 오른쪽 꾸미기/통계/직급 */
+.profile {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+}
+.profile-side {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.profile-h {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+/* ── 초상 ── */
+.profile-portrait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: radial-gradient(circle at 50% 38%, #fffdf4 0%, #ffe9a6 62%, #f6c95a 100%);
+  box-shadow: var(--shadow-sm);
+}
+.profile-portrait-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.profile-portrait-fallback {
+  font-size: 64px;
+}
+
+/* ── 닉네임 ── */
+.profile-name {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.profile-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.profile-name-input {
+  min-width: 0;
+  padding: 8px 12px;
+}
+.profile-save {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.profile-dice {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+.profile-name-msg {
+  min-height: 2.6em;
+  margin: 0;
+  color: var(--ink-soft);
+  font-weight: 700;
+  word-break: keep-all;
+}
+.profile-name-msg.bad {
+  color: #d63a3a;
+}
+.profile-name-msg.good {
+  color: #1c9558;
+}
+
+/* ── 꾸미기 ── */
+.profile-tabs {
+  gap: 4px;
+  padding: 2px 2px 4px;
+  overflow: visible;
+}
+.profile-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 2px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 8px;
+  /* 고른 항목의 테두리(outline)가 잘리지 않게 */
+  padding: 5px;
+}
+.profile-grid.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 6px;
+}
+.profile-swatch {
+  width: 46px;
+  height: 46px;
+  box-shadow: var(--shadow-sm);
+}
+.profile-tile {
+  min-height: 78px;
+  padding: 6px 4px;
+  word-break: keep-all;
+}
+.profile-tile:active {
+  background: var(--yellow);
+}
+.profile-tile.on {
+  background: #fff3c4;
+}
+/* 잠긴 항목: base 의 흐림(opacity .55)은 '언제 열리는지' 글자까지 안 보이게 한다 → 그림만 흐리게 */
+.profile-tile.locked {
+  border-style: dashed;
+  background: var(--paper-2);
+  color: var(--ink-soft);
+  filter: none;
+  opacity: 1;
+}
+.profile-tile.locked .big {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+.profile-tile-name {
+  line-height: 1.18;
+}
+.profile-lock {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.profile-note {
+  margin: 2px 4px 0;
+}
+.profile-note:empty {
+  display: none;
+}
+.profile-look-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 0 2px 5px;
+}
+.profile-apply {
+  flex: 1 1 auto;
+  max-width: 260px;
+}
+
+/* ── 통계 ── */
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.profile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px 7px;
+  border: var(--border);
+  border-radius: 12px;
+  background: var(--white);
+  line-height: 1.2;
+}
+.profile-stat-icon {
+  font-size: 17px;
+}
+.profile-stat b {
+  font-size: 19px;
+  font-weight: 900;
+}
+.profile-stat small {
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+/* ── 직급 ── */
+.profile-rank-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 10px;
+  margin-bottom: 6px;
+}
+.profile-rank-now {
+  font-size: 19px;
+  font-weight: 900;
+}
+.profile-rank-nums {
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+.profile-rank-bar {
+  height: 16px;
+}
+.profile-rank-hint {
+  margin: 6px 0 10px;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.profile-ranks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.profile-rank-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--white);
+}
+.profile-rank-row.now {
+  background: #fff3c4;
+  box-shadow: var(--shadow-sm);
+}
+.profile-rank-row.locked {
+  border-style: dashed;
+  background: transparent;
+}
+.profile-rank-row.locked b {
+  color: var(--ink-soft);
+}
+.profile-rank-mark {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1.35;
+}
+.profile-rank-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.profile-rank-need {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+.profile-rank-unlock {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: keep-all;
+}
+
+/* ── 좁은 화면(세로 폰): 한 줄로 쌓고, 초상은 닉네임 옆에 작게 ── */
+@media (max-width: 599px) {
+  .profile {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .profile-side {
+    position: static;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .profile-portrait {
+    flex: 0 0 auto;
+    width: 116px;
+  }
+  .profile-name {
+    flex: 1 1 auto;
+  }
+  .profile-name-msg {
+    min-height: 0;
+  }
+  .profile-grid {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  }
+  .profile-apply {
+    max-width: none;
+  }
+}
+/* 아주 좁은 폰: 탭 7개를 한 줄에 넣으면 폭이 42px 아래로 내려간다 → 두 줄(4 + 3) */
+@media (max-width: 360px) {
+  .profile-tabs {
+    flex-wrap: wrap;
+  }
+  .profile-tab {
+    flex: 1 1 22%;
+  }
+}
+/* 가로 폰: 왼쪽 붙박이 칸이 화면보다 길어지지 않게 초상을 줄인다 */
+@media (min-width: 600px) and (max-height: 480px) {
+  .profile {
+    grid-template-columns: 172px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .profile-side {
+    gap: 6px;
+  }
+  .profile-portrait {
+    width: 104px;
+    align-self: center;
+  }
+  .profile-name-msg {
+    min-height: 0;
+  }
+  .profile-name .label {
+    display: none;
+  }
+}

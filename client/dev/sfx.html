@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>효과음 실험실 — 도를 아십니까? (개발용)</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔔</text></svg>" />
+    <style>
+      /* 게임의 "수상한 전단지 스티커" 토큰을 그대로 따른다(base.css 는 스크롤을 막으므로 가져오지 않고 값만 맞춘다) */
+      :root {
+        --ink: #241b35;
+        --ink-soft: #5b5170;
+        --paper: #fff8e7;
+        --paper-2: #f6ecd2;
+        --yellow: #ffd23f;
+        --purple: #7b5cff;
+        --pink: #ff7eb6;
+        --green: #3ccb7f;
+        --red: #ff5d5d;
+        --border: 2.5px solid var(--ink);
+        --shadow: 0 4px 0 var(--ink);
+        --shadow-sm: 0 2px 0 var(--ink);
+        --font: 'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', system-ui, -apple-system, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: #bfe3f2;
+        color: var(--ink);
+        font-family: var(--font);
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      main {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 20px 16px 48px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: -0.02em;
+      }
+      h1 small {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--ink-soft);
+        margin-left: 8px;
+      }
+      p.lead {
+        margin: 4px 0 14px;
+        color: var(--ink-soft);
+      }
+      .bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        cursor: pointer;
+      }
+      .btn {
+        min-height: 42px;
+        padding: 8px 14px;
+        background: var(--paper);
+        border: var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        font-weight: 700;
+      }
+      .btn:active {
+        transform: translateY(2px);
+        box-shadow: none;
+      }
+      .btn[aria-pressed='true'] {
+        background: var(--yellow);
+      }
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .chip {
+        padding: 6px 12px;
+        background: var(--ink);
+        color: var(--paper);
+        border-radius: 999px;
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+      }
+      .verdict {
+        padding: 10px 14px;
+        margin-bottom: 14px;
+        background: var(--paper);
+        border: var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        white-space: pre-wrap;
+        font-variant-numeric: tabular-nums;
+      }
+      .verdict.ok {
+        background: #dff7e9;
+      }
+      .verdict.bad {
+        background: #ffe1e1;
+      }
+      .grid {
+        display: grid;
+        /* 휴대폰(가로 390px)에서도 두 줄로 놓이게 */
+        grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--paper);
+        border: var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .card.bad {
+        background: #ffe1e1;
+      }
+      .card.playing {
+        outline: 4px solid var(--purple);
+      }
+      .card .play {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        width: 100%;
+        min-height: 42px;
+        padding: 6px 10px;
+        text-align: left;
+        background: var(--yellow);
+        border: var(--border);
+        border-radius: 10px;
+        box-shadow: var(--shadow-sm);
+      }
+      .card .play:active {
+        transform: translateY(2px);
+        box-shadow: none;
+      }
+      .card .play b {
+        font-size: 15px;
+      }
+      .card .play span {
+        font-size: 12px;
+        color: var(--ink-soft);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .card canvas {
+        display: block;
+        width: 100%;
+        height: 72px;
+        border-radius: 8px;
+        background: var(--ink);
+        image-rendering: pixelated;
+      }
+      .card .stats {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink-soft);
+      }
+      .card .stats b {
+        color: var(--ink);
+      }
+      .card .flags {
+        font-size: 12px;
+        font-weight: 700;
+        color: #b3261e;
+      }
+      .card.music {
+        margin-top: 12px;
+      }
+      .card.music canvas {
+        height: 110px;
+      }
+      pre.calib {
+        margin: 14px 0 0;
+        padding: 12px;
+        background: var(--ink);
+        color: var(--paper);
+        border-radius: 12px;
+        font-size: 12px;
+        overflow: auto;
+        user-select: all;
+      }
+      pre.calib:empty {
+        display: none;
+      }
+      .legend {
+        margin: 14px 0 0;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+    <script type="module" src="./sfx.ts"></script>
+  </body>
+</html>

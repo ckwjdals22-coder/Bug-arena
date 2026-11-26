@@ -1,0 +1,345 @@
+/* 재접속 배너 · 소식 피드 · 안내 카드 · 승급 축하 */
+
+/* ── HUD 아래 흐름: 배너(가운데) + 피드(왼쪽) ── */
+.system-stack {
+  position: fixed;
+  top: calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 7px);
+  right: calc(8px + var(--safe-r));
+  left: calc(8px + var(--safe-l));
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+}
+.system-banner {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 15px 6px 11px;
+  border: var(--border);
+  border-radius: 999px;
+  background: var(--red);
+  box-shadow: var(--shadow-sm);
+  color: var(--white);
+  font-size: 13.5px;
+  font-weight: 800;
+}
+.system-spin {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border: 3px solid rgba(255, 255, 255, 0.4);
+  border-top-color: var(--white);
+  border-radius: 50%;
+  animation: system-spin 0.8s linear infinite;
+}
+/* 배너가 떠 있는 동안 토스트가 같은 자리에 겹치지 않게 한 줄 내린다 */
+#ui.system-reconnecting > .toasts {
+  margin-top: 40px;
+}
+
+.system-feed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: min(360px, 76vw);
+}
+.system-feed-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 11px 3px 8px;
+  border-radius: 12px;
+  background: rgba(36, 27, 53, 0.74);
+  color: var(--white);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  animation: system-feed-in 0.22s ease-out;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.system-feed-line.subtle {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  font-size: 12px;
+}
+.system-feed-line.out {
+  opacity: 0;
+  transform: translateX(-10px);
+}
+.system-feed-icon {
+  flex: 0 0 auto;
+}
+.system-feed-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* 세로 폰: 피드 바로 아래가 토스트 자리다 → 줄마다 한 줄로 고정해 높이를 지킨다 */
+@media (max-width: 699px) and (orientation: portrait) {
+  .system-feed {
+    max-width: 90vw;
+  }
+  .system-feed-line {
+    max-width: 100%;
+  }
+  .system-feed-text {
+    display: block;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* 가로 폰: 가운데 토스트와 나란히 놓이므로 폭을 좁히고 한 줄로 */
+@media (max-height: 480px) and (orientation: landscape) {
+  .system-feed {
+    max-width: 26vw;
+  }
+  .system-feed-line {
+    max-width: 100%;
+  }
+  .system-feed-text {
+    display: block;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+/* ── 안내 카드 ── */
+.system-screen {
+  background: rgba(36, 27, 53, 0.5);
+}
+.system-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(380px, 100%);
+  max-height: 100%;
+  margin: auto;
+  padding: 20px 18px 16px;
+  overflow-y: auto;
+  box-shadow: 0 6px 0 var(--ink);
+  text-align: center;
+  animation: panel-in 0.18s ease-out;
+}
+.system-card-icon {
+  font-size: 44px;
+  line-height: 1.1;
+}
+.system-card-title {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 900;
+  word-break: keep-all;
+}
+.system-card-body {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14.5px;
+  font-weight: 700;
+  word-break: keep-all;
+}
+.system-card-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.system-card-extra:empty {
+  display: none;
+}
+.system-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+  padding-bottom: 4px;
+}
+.system-card-code {
+  margin: 0;
+}
+.system-room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+.system-room.full {
+  background: var(--paper-2);
+}
+.system-room-nums {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.system-room .btn {
+  min-height: 42px;
+}
+@media (max-height: 480px) {
+  .system-card {
+    gap: 5px;
+    width: min(520px, 100%);
+    padding: 12px 16px 10px;
+  }
+  .system-card-icon {
+    font-size: 30px;
+  }
+  .system-card-actions .btn.big {
+    min-height: 46px;
+  }
+}
+
+/* ── 승급 축하 ── */
+.system-rank {
+  position: fixed;
+  /* HUD 를 덮지 않게 그 아래에서 시작(리본이 위로 15px 튀어나온다) */
+  top: max(calc(13vh + var(--safe-t)), calc(var(--hud-bottom, 0px) + 26px));
+  right: 0;
+  left: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: center;
+  padding: 0 calc(14px + var(--safe-r)) 0 calc(14px + var(--safe-l));
+  pointer-events: none;
+}
+.system-rank-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: min(380px, 100%);
+  padding: 22px 18px 10px;
+  border: var(--border);
+  border-radius: 22px;
+  background: var(--yellow);
+  box-shadow: 0 7px 0 var(--ink);
+  text-align: center;
+  cursor: pointer;
+  transform: rotate(-1.5deg);
+  animation: system-rank-in 0.42s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.system-rank-ribbon {
+  position: absolute;
+  top: -15px;
+  padding: 2px 20px;
+  border: var(--border);
+  border-radius: 999px;
+  background: var(--purple);
+  box-shadow: var(--shadow-sm);
+  color: var(--white);
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  transform: rotate(-3deg);
+}
+.system-rank-name {
+  font-size: clamp(25px, 7.6vw, 33px);
+  font-weight: 900;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  word-break: keep-all;
+}
+.system-rank-cheer {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 800;
+  word-break: keep-all;
+}
+.system-rank-unlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  margin: 5px 0 0;
+  padding: 7px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+  word-break: keep-all;
+}
+.system-rank-hint {
+  color: rgba(36, 27, 53, 0.6);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+/* 색종이: 카드 위에서 흩날린다(장식이라 입력을 받지 않는다) */
+.system-confetti {
+  position: absolute;
+  inset: -22px -10px 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.system-confetti i {
+  position: absolute;
+  top: -12px;
+  width: 9px;
+  height: 13px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  opacity: 0;
+  animation: system-confetti 1.8s ease-in infinite;
+}
+@media (max-height: 480px) {
+  .system-rank {
+    top: max(calc(9vh + var(--safe-t)), calc(var(--hud-bottom, 0px) + 22px));
+  }
+  .system-rank-card {
+    width: min(480px, 100%);
+    padding: 16px 16px 6px;
+  }
+  .system-rank-name {
+    font-size: 24px;
+  }
+}
+
+@keyframes system-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes system-feed-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+@keyframes system-rank-in {
+  from {
+    opacity: 0;
+    transform: rotate(-9deg) scale(0.5);
+  }
+}
+@keyframes system-confetti {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(210px) rotate(520deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .system-spin,
+  .system-confetti i {
+    animation: none !important;
+  }
+}
