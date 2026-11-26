@@ -29,7 +29,8 @@ import type { NetApi } from '../core/contracts'
 import { type EntityView, type NpcView, type PlayerView, type Store, saveProfile } from '../core/store'
 import { applyInterp, holdSample, pushSample } from './interp'
 
-const BACKOFF_MS = [500, 1000, 2000, 4000, 8000, 8000, 8000, 8000]
+// 합계 약 70초: 서버 재배포(보통 수십 초) 동안은 버틴다
+const BACKOFF_MS = [500, 1000, 2000, 4000, 6000, 8000, 8000, 8000, 10000, 10000, 12000]
 const CONNECT_TIMEOUT_MS = 9000
 
 function makeView(x: number, z: number, yaw: number, st: number, emote: string | null, seed: number, time: number): EntityView {
@@ -263,6 +264,11 @@ export function createNet(store: Store, bus: Bus): Net {
         bus.emit('rooms', msg.rooms)
         break
       case 'kick':
+        if (msg.why === 'shutdown') {
+          // 서버 점검/재시작: 내보내진 게 아니라 잠깐 끊기는 것이므로 자동으로 다시 붙는다
+          setPhase('reconnecting', 'shutdown')
+          break
+        }
         intentional = true
         clearTimers()
         setPhase('kicked', msg.why)
