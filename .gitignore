@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.data/
+.wrangler/
+*.log
+.DS_Store
+tests/e2e/out/
+.env
+.env.*
+!.env.example
+client/.vite/
+.claude/

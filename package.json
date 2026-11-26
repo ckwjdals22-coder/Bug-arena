@@ -1,0 +1,36 @@
+{
+  "name": "do-you-know-the-way",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "도를 아십니까? — 교주 시뮬레이터: 3D 로우폴리 실시간 멀티플레이 풍자 웹게임",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c magenta,cyan \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch server/node/main.ts",
+    "dev:client": "vite",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "esbuild server/node/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server/main.js --external:ws --sourcemap",
+    "start": "node dist/server/main.js",
+    "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node tests/e2e/run.cjs",
+    "loadtest": "tsx tools/loadtest.ts"
+  },
+  "dependencies": {
+    "ws": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/three": "0.187.0",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.7",
+    "esbuild": "^0.28.2",
+    "three": "0.187.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.2"
+  }
+}
