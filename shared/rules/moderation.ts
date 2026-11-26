@@ -11,7 +11,7 @@ export function cleanText(input: unknown, maxLen: number): string {
   if (typeof input !== 'string') return ''
   let s = input.normalize('NFKC')
   // 제어문자, zero-width, 방향 제어 문자 제거
-  s = s.replace(/[\u0000-\u001f\u007f-\u009f​-‏ - ⁠-⁯﻿]/g, '')
+  s = s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g, '')
   s = s.replace(/[<>&"'`\\]/g, '')
   s = s.replace(/\s+/g, ' ').trim()
   return Array.from(s).slice(0, maxLen).join('')
