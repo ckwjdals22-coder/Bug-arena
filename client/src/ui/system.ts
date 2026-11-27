@@ -301,13 +301,21 @@ export function mountSystem(ctx: AppContext): void {
   // 가려던 방이 가득 차 다른 방으로 왔을 때: 친구 링크로 왔다면 친구가 여기 없다는 뜻이므로 꼭 알려 준다
   bus.on('redirected', ({ from }) => {
     const here = store.room?.name ?? '다른 방'
-    const known = store.rooms.find((r) => r.id === from)
-    // 방 목록을 알고 있는데 거기에 없는 방이면 '자리가 없다'가 아니라 '지금 열려 있지 않다'가 맞다(예전 링크의 방 번호 등)
-    const text =
-      !known && store.rooms.length > 0
-        ? `🚧 가려던 방(${from.slice(0, 8)})은 지금 열려 있지 않아서 「${here}」에 들어왔어요.`
-        : `🚧 가려던 ${known?.name ?? `${from}번 출구`}에 자리가 없어서 「${here}」에 들어왔어요. 방 목록에서 자리가 나면 옮길 수 있어요.`
-    window.setTimeout(() => ctx.ui.toast(text, 'info', 6500), 900)
+    const tell = (): void => {
+      const known = store.rooms.find((r) => r.id === from)
+      // 방 목록을 알고 있는데 거기에 없는 방이면 '자리가 없다'가 아니라 '지금 열려 있지 않다'가 맞다(예전 링크의 방 번호 등)
+      const text =
+        !known && store.rooms.length > 0
+          ? `🚧 가려던 방(${from.slice(0, 8)})은 지금 열려 있지 않아서 「${here}」에 들어왔어요.`
+          : `🚧 가려던 ${known?.name ?? `${from}번 출구`}에 자리가 없어서 「${here}」에 들어왔어요. 방 목록에서 자리가 나면 옮길 수 있어요.`
+      ctx.ui.toast(text, 'info', 6500)
+    }
+    // 링크로 곧장 들어오면 방 목록을 아직 받은 적이 없다: 먼저 받아 와서 정확히 말해 준다(받지 못해도 안내는 한다)
+    const listed = store.rooms.length > 0 ? Promise.resolve() : ctx.net.refreshRooms().catch(() => undefined)
+    const waited = new Promise<void>((resolve) => window.setTimeout(resolve, 900))
+    void Promise.all([listed, waited]).then(() => {
+      if (store.phase === 'playing') tell()
+    })
   })
   bus.on('playerUpdate', (id) => void remember(id))
   bus.on('playerJoin', (id) => {
