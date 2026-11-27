@@ -27,5 +27,7 @@ export default defineConfig({
     root: '.',
     include: ['tests/unit/**/*.test.ts'],
     environment: 'node',
+    // 확률 균형을 수십만 번 돌려 보는 테스트가 있어, 느린 CI/바쁜 기계에서도 시간 초과가 나지 않게 넉넉히 둔다
+    testTimeout: 60_000,
   },
 })
