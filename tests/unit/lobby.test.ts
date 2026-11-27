@@ -167,13 +167,13 @@ describe('Lobby', () => {
     expect(t.lobby.pick('1', true)?.id).toBe('1') // 돌아오는 사람은 있던 방으로
     // 남의 자리를 노리고 resume 을 붙여도 방이 '가득 참'으로 돌려보낸다
     const stranger = 9001
-    room.connect(stranger)
+    room.connect(stranger, { resume: true })
     room.message(stranger, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-stranger-1', name: '낯선이', look: [0, 0, 0, 0, 0, 0, 0] }))
     expect(t.closed.has(stranger)).toBe(true)
     expect(room.players.size).toBe(2)
     // 본인은 같은 번호로 이어 붙는다
     const back = 9002
-    room.connect(back)
+    room.connect(back, { resume: true })
     room.message(back, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: me.pid, name: me.name, look: [0, 0, 0, 0, 0, 0, 0] }))
     expect(t.closed.has(back)).toBe(false)
     expect(room.players.size).toBe(2)
@@ -181,6 +181,38 @@ describe('Lobby', () => {
     // 없는 방·auto 에는 resume 이 아무 효과가 없다
     expect(t.lobby.pick('99', true)?.id).toBe('2')
     expect(t.lobby.pick('auto', true)?.id).toBe('2')
+  })
+
+  it('resume 은 그 방에 서 있는 본인에게만 통한다: 입장 중인 사람에게 배정된 자리를 가로채지 못한다', () => {
+    const t = makeLobby(2, 2)
+    t.fill('1', 1)
+    const room = t.lobby.get('1')!
+    // 로비가 1번 방으로 보낸 사람이 아직 hello 전이다(자리 하나가 그 사람 몫으로 세어져 있다)
+    const [joiner] = t.pend('1', 1)
+    expect(t.lobby.pick('1')?.id).toBe('2')
+    // 낯선 사람이 resume 을 붙여 1번 방으로 온다: 로비는 보내 주지만 방이 받아 주지 않는다
+    expect(t.lobby.pick('1', true)?.id).toBe('1')
+    const stranger = 9101
+    room.connect(stranger, { resume: true })
+    room.message(stranger, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-stranger-2', name: '낯선이', look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t.closed.has(stranger)).toBe(true)
+    expect(room.players.size).toBe(1)
+    // 먼저 배정받은 사람은 그대로 입장한다
+    room.message(joiner!, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-joiner-1', name: '입장중', look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t.closed.has(joiner!)).toBe(false)
+    expect(room.players.size).toBe(2)
+    // 자리가 남는 방이어도 resume 연결은 본인이 아니면 돌려보낸다(클라이언트가 평소 경로로 다시 온다)
+    const t2 = makeLobby(1, 5)
+    const room2 = t2.lobby.get('1')!
+    const late = 9102
+    room2.connect(late, { resume: true })
+    room2.message(late, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-late-1', name: '늦은이', look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t2.closed.has(late)).toBe(true)
+    const normal = 9103
+    room2.connect(normal)
+    room2.message(normal, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-late-1', name: '늦은이', look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t2.closed.has(normal)).toBe(false)
+    expect(room2.players.size).toBe(1)
   })
 
   it('전부 가득이면 undefined, 자리가 나면 다시 배정된다', () => {

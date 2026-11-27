@@ -206,7 +206,10 @@ export class RoomDO extends DurableObject<Env> {
     // 상대가 스스로 닫았으면(1000·1001·1005) 바로 퇴장, 그 밖의 끊김은 방이 잠시 자리를 지켜 준다(Node 어댑터와 같은 규칙)
     server.addEventListener('close', (e) => this.drop(id, e.code === 1000 || e.code === 1001 || e.code === 1005))
     server.addEventListener('error', () => this.drop(id, false))
-    room.connect(id)
+    // resume=1 은 '있던 방으로 돌아오는 재접속'이다(로비가 자리 계산 없이 보냈다). 이 방을 콕 집어 온 경우에만 인정하고,
+    // 방은 hello 의 pid 가 여기 서 있는 사람일 때만 받아 준다(Node 어댑터와 같은 규칙)
+    const q = new URL(request.url).searchParams
+    room.connect(id, { resume: q.get('resume') === '1' && q.get('room') === this.roomId })
     this.startLoop()
     this.afterEvent()
     return new Response(null, { status: 101, webSocket: client })
@@ -233,9 +236,15 @@ export class RoomDO extends DurableObject<Env> {
     if (this.conns.size === 0) {
       // 망이 끊겨 잠깐 서 있는 사람이 남아 있으면 틱을 계속 돌린다: 틱이 멈추면 그 사람의 기다리는 시간이 끝나지 않아
       // (다음 사람이 올 때까지) 방에 유령으로 남고, 자리 기억·진행도 인계도 적히지 않는다
-      if (!this.someoneInRoom()) this.stopLoop()
-      // 아무도 없으면 곧 DO 가 내려갈 수 있다 → 메모를 지금 남긴다
-      this.saveMemory(true)
+      if (this.someoneInRoom()) {
+        // 틱이 계속 돈다: 평소 간격(5초에 한 번)으로만 쓴다. 연결이 깜빡일 때마다 저장소에 쓰지 않게.
+        // 기다리던 사람까지 정리되면 onTimer 가 마지막으로 한 번 남긴다
+        this.saveMemory()
+      } else {
+        this.stopLoop()
+        // 아무도 없으면 곧 DO 가 내려갈 수 있다 → 메모를 지금 남긴다
+        this.saveMemory(true)
+      }
     }
   }
 

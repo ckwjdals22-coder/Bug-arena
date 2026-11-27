@@ -40,7 +40,17 @@ import {
   pickEncoding,
   securityHeaders,
 } from './ops'
-import { acquireDataLock, createCultRegistry, type DataLock, loadSecret, newPersistStatus, PersistFatal, probeDataDir, restoreSecretFile } from './persist'
+import {
+  acquireDataLock,
+  createCultRegistry,
+  type DataLock,
+  loadSecret,
+  LockLostError,
+  newPersistStatus,
+  PersistFatal,
+  probeDataDir,
+  restoreSecretFile,
+} from './persist'
 
 // ───────────────────────── 로그 ─────────────────────────
 // 설정을 읽는 중에도 경고를 남기므로 맨 앞에 둔다.
@@ -154,7 +164,15 @@ try {
 process.on('exit', () => dataLock.release())
 
 /** 30초마다: 잠금이 살아 있음을 표시하고, 디스크가 여전히 쓰이는지 확인한다 */
+/**
+ * 다른 서버가 이 DATA_DIR 의 잠금을 차지했다(운영 실수로 같은 폴더에 서버가 둘). 이 뒤로는 이 프로세스가 폴더에 쓰지 않는다:
+ * 두 서버가 각자 메모리의 교단 기록을 통째로 쓰면 서로의 기록을 지운다. 접속은 계속 받되 /healthz 는 503 으로 알리고,
+ * 그 서버가 물러나도 다시 쓰기 시작하지 않는다(그사이 파일은 그쪽 것이 됐다) — 이 서버를 재시작해야 한다.
+ */
+let persistStopped = false
+
 function checkDataDir(): void {
+  if (persistStopped) return
   try {
     probeDataDir(DATA_DIR)
     dataLock.refresh()
@@ -165,6 +183,12 @@ function checkDataDir(): void {
     dataDirError = null
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    if (err instanceof LockLostError) {
+      persistStopped = true
+      dataDirError = `${msg}. 이 서버는 교단 기록 저장을 멈췄습니다(재시작 필요)`
+      log('error', dataDirError)
+      return
+    }
     if (dataDirError === null) log('error', msg)
     dataDirError = msg
   }
@@ -628,7 +652,7 @@ function toBuffer(data: RawData): Buffer {
   return data
 }
 
-function attach(ws: WebSocket, room: Room, ip: string): void {
+function attach(ws: WebSocket, room: Room, ip: string, resume = false): void {
   const id = nextConnId++
   const c: Conn = { id, ws, room, alive: true, ip }
   conns.set(id, c)
@@ -664,7 +688,7 @@ function attach(ws: WebSocket, room: Room, ip: string): void {
     // 누구나 일으킬 수 있으므로 한 건씩 쓰지 않고 10초마다 종류별 건수로 요약한다
     socketErrors.add(err)
   })
-  room.connect(id)
+  room.connect(id, { resume })
 }
 
 server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -704,7 +728,8 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
   const requested = url.searchParams.get('room')
   wss.handleUpgrade(req, socket, head, (ws) => {
     // resume=1: 끊겼다가 있던 방으로 돌아오는 재접속(가득 찬 방이어도 그 방이 직접 판정하게 보낸다)
-    const room = lobby.pick(requested, url.searchParams.get('resume') === '1')
+    const resume = url.searchParams.get('resume') === '1'
+    const room = lobby.pick(requested, resume)
     if (!room) {
       // 전부 가득: 연결은 받아서 사유와 방 목록을 알려 준 뒤 닫는다(클라이언트가 안내를 띄울 수 있게)
       ws.on('error', () => {})
@@ -713,7 +738,8 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
       closeSocket(ws, CLOSE_FULL, 'full')
       return
     }
-    attach(ws, room, ip)
+    // 요청한 방이 아닌 곳으로 배정됐다면(그 방이 없어졌다) 평범한 새 입장이다
+    attach(ws, room, ip, resume && room.id === requested)
   })
 })
 
@@ -739,7 +765,7 @@ const heartbeatTimer = setInterval(() => {
 
 const cultTimer = setInterval(() => {
   checkDataDir()
-  cults.flush(false)
+  if (!persistStopped) cults.flush(false)
 }, CULT_FLUSH_MS)
 
 function shutdown(signal: string): void {
@@ -759,7 +785,7 @@ function shutdown(signal: string): void {
       log('error', `방 ${room.id} 종료 처리 예외`, err)
     }
   }
-  cults.flush(true)
+  if (!persistStopped) cults.flush(true)
   dataLock.release()
   server.close()
   server.closeIdleConnections()

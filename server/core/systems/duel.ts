@@ -20,6 +20,8 @@ export const DUEL_MS = 12_000
 export const DUEL_LISTEN_MS = 14_000
 /** 마감 직전에 누른 선택이 망 지연으로 늦게 도착해도 받아 준다 */
 const DUEL_GRACE_MS = 400
+/** 끊겼다 돌아온 화면에 문제를 다시 보여 줄 때 보장하는 최소 시간(읽고 고를 틈) */
+export const DUEL_RESUME_MIN_MS = 5000
 export const INF_DUEL_WIN = 20
 export const FOL_DUEL_WIN = 2
 export const INF_DUEL_LOSE = 3
@@ -165,7 +167,20 @@ export function createDuelSystem(): RoomSystem {
     },
     onResume(p) {
       const d = duelOf(p)
-      if (d) cancel(p, d, DUEL_VOID_DROPPED)
+      if (!d) return
+      const now = room.now()
+      const rival = room.npcs.get(d.n)
+      // 끊긴 사이에 고를 시간이 지나갔거나 라이벌이 가 버렸다: 벌칙 없이 무효
+      if (!rival || rival.talker !== p.id || now > d.until + DUEL_GRACE_MS) {
+        cancel(p, d, DUEL_VOID_DROPPED)
+        return
+      }
+      // 아직 고를 수 있다: 새 화면에 문제를 다시 보여 준다. 여기서 무효로 접어 주면 '새 탭 열기'가
+      // 질 것 같은 기싸움을 언제든 물리는 버튼이 된다. 읽을 틈은 보장하고, 라이벌도 그만큼 더 기다린다
+      d.until = Math.max(d.until, now + DUEL_RESUME_MIN_MS)
+      room.npcs.beginListen(rival, p, d.until + (DUEL_LISTEN_MS - DUEL_MS))
+      const def = DUELS[d.def] as DuelDef
+      room.send(p, { t: 'duel', ph: 'start', n: d.n, say: def.say, choices: [...def.choices], until: d.until })
     },
     onLeave(p) {
       // 코어가 NPC 쪽 정리(onPlayerLeave)를 이미 했다. 기싸움 기록만 지운다

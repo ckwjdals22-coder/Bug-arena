@@ -22,6 +22,7 @@ import {
   createCultRegistry,
   LOCK_STALE_MS,
   loadSecret,
+  LockLostError,
   newPersistStatus,
   PersistFatal,
   probeDataDir,
@@ -247,7 +248,8 @@ describe('DATA_DIR 점검과 잠금', () => {
     fs.writeFileSync(lock.file, JSON.stringify({ ...info, pid: process.ppid, startedAt: info.startedAt + 1 }))
     fs.utimesSync(lock.file, old, old)
     expect(() => lock.refresh()).toThrow(/다른 서버 프로세스/)
-    expect(() => lock.refresh()).toThrow(/다른 서버 프로세스/)
+    // 어댑터가 '저장 중단'으로 알아볼 수 있게 전용 오류로 던진다
+    expect(() => lock.refresh()).toThrow(LockLostError)
     expect(Date.now() - fs.statSync(lock.file).mtimeMs).toBeGreaterThan(30_000)
     // 풀고 나면 refresh 는 아무것도 하지 않는다
     fs.unlinkSync(lock.file)

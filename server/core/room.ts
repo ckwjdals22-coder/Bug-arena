@@ -317,6 +317,8 @@ interface Session {
   pubMask: number
   /** 바뀐 게 없어도 본인에게는 확정값을 돌려줘야 하는가 */
   pubAck: boolean
+  /** '있던 방으로 돌아오는 재접속'이라며 로비의 자리 계산을 건너뛰고 온 연결인가(이 방에 서 있는 본인만 받아 준다) */
+  resume: boolean
 }
 
 /** 테스트에서 NPC 시뮬을 바꿔 끼우기 위한 틈. 평소에는 생략한다 */
@@ -413,7 +415,11 @@ export class Room implements RoomApi {
     return { id: this.id, name: this.name, players: this.players.size, cap: this.capacity, npcs: this.npcs.list.length }
   }
 
-  connect(conn: ConnId): void {
+  /**
+   * opts.resume: 클라이언트가 '끊겼다가 있던 방으로 돌아온다'며 온 연결. 로비는 자리 계산(입장 대기 포함) 없이 이 방으로 보냈으므로,
+   * hello 의 pid 가 이 방에 서 있는 사람일 때만 받아 준다. 아니면 '가득 참'으로 돌려보낸다(클라이언트가 평소 경로로 다시 온다).
+   */
+  connect(conn: ConnId, opts?: { resume?: boolean }): void {
     if (this.closed) {
       this.host.close(conn, CLOSE_SHUTDOWN, 'shutdown')
       return
@@ -437,6 +443,7 @@ export class Room implements RoomApi {
       saveAt: 0,
       pubMask: 0,
       pubAck: false,
+      resume: opts?.resume === true,
     })
     this.pendingCount++
   }
@@ -993,7 +1000,9 @@ export class Room implements RoomApi {
     // 같은 pid 가 이미 이 방에 있으면 자리를 '교체'하는 것이라 정원 검사에서 빼 준다.
     // (망이 바뀌어 재접속했는데 죽은 옛 연결 때문에 '가득 참'으로 튕기면 안 된다.)
     const old = this.byPid.get(pid)
-    if (!old && this.players.size >= this.capacity) {
+    // s.resume: 로비의 자리 계산을 건너뛰고 온 연결은 이 방에 서 있는 본인일 때만 받는다.
+    // (아무나 resume 을 붙여, 로비가 이미 다른 사람에게 배정한 자리를 먼저 차지하지 못하게)
+    if (!old && (s.resume || this.players.size >= this.capacity)) {
       this.sendTo(s.conn, { t: 'full', rooms: this.host.listRooms() })
       if (this.forget(s)) this.host.close(s.conn, CLOSE_FULL, 'full')
       return

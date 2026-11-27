@@ -20,6 +20,11 @@ export class PersistFatal extends Error {
   override readonly name = 'PersistFatal'
 }
 
+/** 돌던 중 DATA_DIR 잠금의 주인이 다른 서버로 바뀌었다. 이 뒤로 이 프로세스가 그 폴더에 쓰면 남의 기록을 덮어쓴다 */
+export class LockLostError extends Error {
+  override readonly name = 'LockLostError'
+}
+
 /** /healthz 에 그대로 실리는 저장 상태 */
 export interface PersistStatus {
   ok: boolean
@@ -172,7 +177,7 @@ function makeLock(file: string, me: LockInfo, body: string): DataLock {
       }
       if (!mine(cur)) {
         // 내 잠금이 사라진 사이 다른 서버가 이 DATA_DIR 을 차지했다: 남의 잠금을 갱신해 주면 안 된다
-        throw new Error(
+        throw new LockLostError(
           `DATA_DIR 잠금(${file})을 다른 서버 프로세스가 차지했습니다(pid ${cur.pid ?? '?'}, ${cur.host ?? '?'}). ` +
             '한 DATA_DIR 에는 서버 하나만 띄우세요',
         )

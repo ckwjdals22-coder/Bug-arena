@@ -6,6 +6,7 @@ import { DUELS } from '../../shared/content/misc'
 import type { DuelDef } from '../../shared/content/types'
 import {
   DUEL_MS,
+  DUEL_RESUME_MIN_MS,
   FOL_DUEL_WIN,
   INF_DUEL_LOSE,
   INF_DUEL_WIN,
@@ -253,6 +254,61 @@ describe('기싸움: 결과', () => {
     t.advance(DUEL_MS)
     expect(t.host.of(conn, 'duel')).toHaveLength(1)
     expect(t.host.errors()).toEqual([])
+  })
+
+  it('고를 시간이 남았을 때 이어 붙으면(끊김·새 탭) 무효가 아니라 문제를 다시 보여 주고, 그대로 승패가 난다', () => {
+    const hello = (t: T, pid: string) => {
+      const conn = t.nextConn()
+      t.room.connect(conn)
+      t.send(conn, { t: 'hello', v: 1, pid, name: '돌아온사람', look: [0, 0, 0, 0, 0, 0, 0], save: null })
+      return conn
+    }
+    // 새 탭으로 물리기 시도: 옛 연결은 살아 있고, 마감 0.5초 전에 같은 pid 로 다시 들어온다
+    {
+      const t = setup({ systems: [createDuelSystem] })
+      const a = t.join({ pid: 'duel-tab-aaaaaaa' })
+      follow(t, 6, a.id, t.host.t - 1000)
+      const { def } = startDuel(t, a, 3)
+      t.advance(DUEL_MS - 500)
+      const conn = hello(t, 'duel-tab-aaaaaaa')
+      const got = t.host.of(conn, 'duel')
+      expect(got).toHaveLength(1)
+      expect(got[0]).toMatchObject({ ph: 'start', n: 3, say: def.say, choices: def.choices })
+      // 읽고 고를 틈은 보장한다
+      expect(got[0]!.until).toBe(t.host.t + DUEL_RESUME_MIN_MS)
+      // 틀린 답을 고르면 평소처럼 진다(신도 하나가 넘어간다)
+      t.send(conn, { t: 'duel', c: loseIdx(def) })
+      expect(t.host.of(conn, 'duel').at(-1)).toMatchObject({ ph: 'end', win: false, text: def.loseText })
+      expect(t.host.of(conn, 'duel').at(-1)!.void).toBeUndefined()
+      expect(t.sim.called('release:')).toEqual(['release:6:poach'])
+    }
+    // 답하지 않고 버티면 늘어난 마감 뒤에 시간 초과 패배
+    {
+      const t = setup({ systems: [createDuelSystem] })
+      const a = t.join({ pid: 'duel-tab-bbbbbbb' })
+      follow(t, 6, a.id, t.host.t - 1000)
+      startDuel(t, a, 3)
+      t.advance(DUEL_MS - 500)
+      const conn = hello(t, 'duel-tab-bbbbbbb')
+      t.advance(DUEL_RESUME_MIN_MS - 1000)
+      t.send(conn, { t: 'ping', c: 1 })
+      expect(t.host.of(conn, 'duel').filter((m) => m.ph === 'end')).toEqual([])
+      t.advance(2000)
+      expect(t.host.of(conn, 'duel').filter((m) => m.ph === 'end')).toHaveLength(1)
+      expect(t.sim.called('release:')).toEqual(['release:6:poach'])
+    }
+    // 잠깐 끊겼다 바로 돌아온 경우에도 이어서 답할 수 있고, 맞히면 이긴다
+    {
+      const t = setup({ systems: [createDuelSystem] })
+      const a = t.join({ pid: 'duel-tab-ccccccc' })
+      const { def } = startDuel(t, a, 3)
+      t.room.disconnect(a.conn, false)
+      t.advance(2000)
+      const conn = hello(t, 'duel-tab-ccccccc')
+      expect(t.host.of(conn, 'duel')[0]).toMatchObject({ ph: 'start', n: 3 })
+      t.send(conn, { t: 'duel', c: winIdx(def) })
+      expect(t.stat(a.id, STAT.rivalWins)).toBe(1)
+    }
   })
 
   it('끊긴 채 끝내 돌아오지 않으면 기싸움 기록은 퇴장과 함께 정리된다', () => {
