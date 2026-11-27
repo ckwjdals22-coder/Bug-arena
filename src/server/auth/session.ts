@@ -112,7 +112,14 @@ export async function destroySession(kind: SessionKind): Promise<void> {
       data: { revokedAt: new Date() },
     });
   }
-  jar.delete(cookieName(kind));
+  // __Host- 접두사 쿠키는 Secure·Path=/ 속성이 같아야 브라우저가 삭제를 받아들인다.
+  jar.set(cookieName(kind), "", {
+    httpOnly: true,
+    secure: cookieSecure(),
+    sameSite: kind === "admin" ? "strict" : "lax",
+    path: "/",
+    maxAge: 0,
+  });
 }
 
 /** 회원의 모든 세션 폐기(비밀번호 변경·정지·탈퇴 시). exceptSessionId 는 남긴다. */

@@ -45,6 +45,15 @@ const schema = z.object({
 
   /** 1 이면 데모 계정 빠른 로그인 등 시연용 기능을 노출. 운영에서는 반드시 비움 */
   DEMO_MODE: z.string().optional(),
+  /**
+   * 앱 앞단의 신뢰할 수 있는 리버스 프록시 수. X-Forwarded-For 의 오른쪽에서 이 순서에 있는 값을 클라이언트 IP 로 쓴다.
+   * (프록시 1대 = 1. 0 이면 X-Forwarded-For 를 믿지 않는다.)
+   */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
+
+  /** 카카오 로그인(REST API 키). 값이 없으면 카카오 로그인 버튼을 숨긴다 */
+  KAKAO_CLIENT_ID: z.string().optional(),
+  KAKAO_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -65,6 +74,10 @@ export function env(): Env {
     if (!value.CRON_SECRET) missing.push("CRON_SECRET");
     if (value.PAYMENT_PROVIDER === "toss" && (!value.TOSS_CLIENT_KEY || !value.TOSS_SECRET_KEY)) {
       missing.push("TOSS_CLIENT_KEY/TOSS_SECRET_KEY");
+    }
+    // 테스트 결제(mock)는 실제 청구 없이 예약을 확정한다. 운영에서는 시연 배포(DEMO_MODE=1)일 때만 허용한다.
+    if (value.PAYMENT_PROVIDER === "mock" && value.DEMO_MODE !== "1") {
+      missing.push("PAYMENT_PROVIDER=toss (테스트 결제는 DEMO_MODE=1 인 시연 배포에서만 쓸 수 있어요)");
     }
     // 빌드 단계(next build)에서는 비밀값 없이도 통과시키고, 실제 실행 시에만 강제한다.
     if (missing.length > 0 && process.env.NEXT_PHASE !== "phase-production-build") {

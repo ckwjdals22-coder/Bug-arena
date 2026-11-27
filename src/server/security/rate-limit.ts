@@ -32,6 +32,16 @@ export async function enforceRateLimit(key: string, limit: number, windowSec: nu
   if (!result.ok) throw err.rateLimited(message);
 }
 
+/**
+ * 방금 센 1회를 되돌린다(예: 로그인 성공 시 — 실패한 시도만 한도에 남기기 위함).
+ * countedAt 은 rateLimit() 을 호출한 시각. 그 사이 창이 넘어갔으면 아무 일도 하지 않는다.
+ */
+export async function refundRateLimit(key: string, windowSec: number, countedAt: number = Date.now()): Promise<void> {
+  const windowMs = windowSec * 1000;
+  const windowStart = new Date(Math.floor(countedAt / windowMs) * windowMs);
+  await prisma.rateLimit.updateMany({ where: { key, windowStart, count: { gt: 0 } }, data: { count: { decrement: 1 } } });
+}
+
 /** 오래된 카운터 정리(크론에서 호출) */
 export async function purgeRateLimits(olderThanHours = 24): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);

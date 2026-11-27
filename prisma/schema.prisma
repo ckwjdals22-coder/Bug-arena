@@ -36,6 +36,8 @@ model User {
   id                     String     @id @default(cuid())
   email                  String     @unique
   passwordHash           String
+  /// 카카오 로그인 연결 ID(연동 시). 카카오로만 가입한 회원의 passwordHash 는 사용할 수 없는 임의 해시
+  kakaoId                String?    @unique
   name                   String
   nickname               String?
   phone                  String?
@@ -79,6 +81,7 @@ model User {
   alertRules         AlertRule[]
   notifications      Notification[]
   reviews            Review[]
+  consents           ConsentRecord[]
   reports            Report[]            @relation("reporter")
   handledReports     Report[]            @relation("reportHandler")
   crmProfiles        BusinessCustomer[]
@@ -132,20 +135,20 @@ model VerificationToken {
 // ───────────────────────── 분류 · 지역 ─────────────────────────
 
 model Category {
-  id                String   @id @default(cuid())
-  slug              String   @unique
-  name              String
+  id                 String   @id @default(cuid())
+  slug               String   @unique
+  name               String
   /// lucide 아이콘 이름
-  icon              String
-  description       String?
-  sort              Int      @default(0)
-  isActive          Boolean  @default(true)
+  icon               String
+  description        String?
+  sort               Int      @default(0)
+  isActive           Boolean  @default(true)
   /// 좌석 유형에 성별 구분을 기본 제안할지(소개팅 등)
-  suggestGenderSeats Boolean @default(false)
+  suggestGenderSeats Boolean  @default(false)
   /// 업종별 기본 수수료율(bps). null 이면 플랫폼 기본값
-  commissionBps     Int?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  commissionBps      Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   businesses Business[]
   products   Product[]
@@ -188,56 +191,59 @@ enum PlanTier {
 }
 
 model Business {
-  id                 String         @id @default(cuid())
+  id                   String         @id @default(cuid())
   /// 공개 주소 /b/{slug}
-  slug               String         @unique
-  name               String
-  categoryId         String
-  category           Category       @relation(fields: [categoryId], references: [id])
-  tagline            String?
-  description        String?
-  phone              String?
-  address            String?
-  addressDetail      String?
-  areaId             String?
-  area               Area?          @relation(fields: [areaId], references: [id])
-  lat                Float?
-  lng                Float?
-  coverImage         String?
-  logoImage          String?
-  instagram          String?
-  kakaoChannel       String?
-  website            String?
+  slug                 String         @unique
+  name                 String
+  categoryId           String
+  category             Category       @relation(fields: [categoryId], references: [id])
+  tagline              String?
+  description          String?
+  phone                String?
+  address              String?
+  addressDetail        String?
+  areaId               String?
+  area                 Area?          @relation(fields: [areaId], references: [id])
+  lat                  Float?
+  lng                  Float?
+  coverImage           String?
+  logoImage            String?
+  instagram            String?
+  kakaoChannel         String?
+  website              String?
   /// 사업자등록번호(숫자 10자리)
-  businessRegNo      String?
-  representativeName String?
+  businessRegNo        String?
+  representativeName   String?
   /// 통신판매업 신고번호(해당 시)
-  mailOrderRegNo     String?
-  status             BusinessStatus @default(PENDING)
-  reviewedAt         DateTime?
-  reviewedById       String?
-  rejectReason       String?
-  suspendedReason    String?
+  mailOrderRegNo       String?
+  status               BusinessStatus @default(PENDING)
+  reviewedAt           DateTime?
+  reviewedById         String?
+  rejectReason         String?
+  suspendedReason      String?
   /// 사업자별 수수료율 재정의(bps). null 이면 업종/플랫폼 기본값
-  commissionBps      Int?
-  plan               PlanTier       @default(FREE)
+  commissionBps        Int?
+  /// 입점 프로모션(중개 수수료 0%) 종료 시각과 남은 건수 — 승인 시 운영 설정값으로 채운다
+  launchPromoUntil     DateTime?
+  launchPromoRemaining Int            @default(0)
+  plan                 PlanTier       @default(FREE)
   // 정산 계좌 — 계좌번호는 AES-256-GCM 암호문으로만 저장
-  bankName           String?
-  bankAccountEnc     String?
-  bankAccountLast4   String?
-  bankHolder         String?
+  bankName             String?
+  bankAccountEnc       String?
+  bankAccountLast4     String?
+  bankHolder           String?
   // 운영 설정
   /// 취소 발생 시 좌석을 자동으로 다시 열고 대기자·알림 구독자에게 알릴지
-  autoRelist         Boolean        @default(true)
+  autoRelist           Boolean        @default(true)
   /// 예약 마감 기본값: 시작 N분 전
-  defaultDeadlineMin Int            @default(60)
+  defaultDeadlineMin   Int            @default(60)
   /// 캐시된 집계
-  ratingAvg          Float          @default(0)
-  ratingCount        Int            @default(0)
-  followerCount      Int            @default(0)
-  isDemo             Boolean        @default(false)
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  ratingAvg            Float          @default(0)
+  ratingCount          Int            @default(0)
+  followerCount        Int            @default(0)
+  isDemo               Boolean        @default(false)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 
   members          BusinessMember[]
   products         Product[]
@@ -325,7 +331,7 @@ model Product {
   summary           String?
   description       String?
   /// 업로드 이미지 경로 목록. 비어 있으면 업종별 제너레이티브 커버 사용
-  images            String[]
+  images            String[]      @default([])
   durationMin       Int           @default(120)
   /// 정가(1인/1타임 기준)
   basePrice         Int
@@ -343,7 +349,11 @@ model Product {
   requiresIdentity  Boolean       @default(false)
   /// 사업자 승인 후 확정(승인제)
   requiresApproval  Boolean       @default(false)
-  tags              String[]
+  /// 한 번에 예약할 수 있는 최대 인원(사재기 방지)
+  maxPerBooking     Int           @default(4)
+  /// 재판매 연동 환불율(%). 환불 불가 구간에 취소해도 그 자리가 다시 팔리면 이 비율까지 환불. null = 사용 안 함
+  resaleRefundRate  Int?
+  tags              String[]      @default([])
   includes          String?
   notice            String?
   paymentPolicy     PaymentPolicy @default(PREPAY)
@@ -403,6 +413,10 @@ model Slot {
   vacancyPostedAt   DateTime      @default(now())
   /// 사업자 한 줄 메모(고객 노출)
   note              String?
+  /// 최소 인원(좌석별 minCount) 충족 여부를 판정하는 시각. null = 판정 없음(항상 진행)
+  decideAt          DateTime?
+  /// 개최 확정 시각(최소 인원 충족 또는 사업자 확정). 한 번 확정되면 되돌리지 않는다
+  goConfirmedAt     DateTime?
   cancelledAt       DateTime?
   cancelReason      String?
   createdAt         DateTime      @default(now())
@@ -435,6 +449,8 @@ model SlotSeat {
   reserved      Int        @default(0)
   /// 취소로 비었지만 사업자가 아직 다시 열지 않은 좌석 수(reserved 에 포함되어 있음)
   withheld      Int        @default(0)
+  /// 개최 확정에 필요한 최소 확정 인원(0 = 조건 없음)
+  minCount      Int        @default(0)
   price         Int
   /// 정가. price 보다 클 때만 할인 표시
   originalPrice Int?
@@ -489,62 +505,76 @@ enum ActorType {
 }
 
 model Booking {
-  id                String         @id @default(cuid())
+  id                    String         @id @default(cuid())
   /// 고객에게 보이는 예약번호 (예: NJ-7K3M9Q)
-  code              String         @unique
-  userId            String?
-  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
-  businessId        String
-  business          Business       @relation(fields: [businessId], references: [id])
-  productId         String
-  product           Product        @relation(fields: [productId], references: [id])
-  slotId            String
-  slot              Slot           @relation(fields: [slotId], references: [id])
-  slotSeatId        String
-  slotSeat          SlotSeat       @relation(fields: [slotSeatId], references: [id])
-  quantity          Int
-  unitPrice         Int
-  totalAmount       Int
+  code                  String         @unique
+  userId                String?
+  user                  User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  businessId            String
+  business              Business       @relation(fields: [businessId], references: [id])
+  productId             String
+  product               Product        @relation(fields: [productId], references: [id])
+  slotId                String
+  slot                  Slot           @relation(fields: [slotId], references: [id])
+  slotSeatId            String
+  slotSeat              SlotSeat       @relation(fields: [slotSeatId], references: [id])
+  quantity              Int
+  unitPrice             Int
+  totalAmount           Int
   /// 지금 온라인으로 결제할 금액(전액 또는 예약금)
-  payNowAmount      Int
+  payNowAmount          Int
   /// 현장에서 결제할 잔액
-  payOnsiteAmount   Int            @default(0)
-  status            BookingStatus
-  channel           BookingChannel @default(MARKETPLACE)
-  paymentMethod     PaymentMethod
-  paymentState      PaymentState   @default(UNPAID)
+  payOnsiteAmount       Int            @default(0)
+  status                BookingStatus
+  channel               BookingChannel @default(MARKETPLACE)
+  /// 유입 세부 경로(search, home, alert, share, biz_link, waitlist_offer 등) — 수수료 판정 근거 표시용
+  source                String?
+  paymentMethod         PaymentMethod
+  paymentState          PaymentState   @default(UNPAID)
   // 연락처 스냅샷
-  guestName         String
-  guestPhone        String
-  requestNote       String?
-  sellerMemo        String?
+  guestName             String
+  guestPhone            String
+  requestNote           String?
+  sellerMemo            String?
   /// 예약 시점의 취소·환불 정책 스냅샷
-  policySnapshot    Json
+  policySnapshot        Json
+  /// 환불 정책 동의 시각 / 판매자 개인정보 제공 동의 시각(예약 건별 증빙)
+  policyAgreedAt        DateTime?
+  thirdPartyConsentAt   DateTime?
   // 수수료 스냅샷(확정 시 계산)
-  isNewCustomer     Boolean        @default(true)
-  commissionBps     Int            @default(0)
-  commissionAmount  Int            @default(0)
-  pgFeeAmount       Int            @default(0)
+  isNewCustomer         Boolean        @default(true)
+  /// 적용된 수수료 규칙: MARKET_NEW | MARKET_RETURNING | OVERRIDE | PROMO | OWN_CUSTOMER | DIRECT | MANUAL
+  commissionRule        String?
+  commissionBps         Int            @default(0)
+  commissionAmount      Int            @default(0)
+  pgFeeAmount           Int            @default(0)
   // 취소·환불
-  cancelledBy       ActorType?
-  cancelReason      String?
-  cancelledAt       DateTime?
-  refundRate        Int?
-  refundAmount      Int            @default(0)
+  cancelledBy           ActorType?
+  cancelReason          String?
+  cancelledAt           DateTime?
+  refundRate            Int?
+  refundAmount          Int            @default(0)
+  /// 재판매 연동 환불: 예약 시점의 상품 설정 스냅샷, 아직 다시 팔리지 않은 취소 좌석 수
+  resaleRefundRate      Int?
+  resalePendingQty      Int            @default(0)
+  /// 이 예약이 다른 취소 건의 재판매로 정산(매칭)된 시각 — 중복 매칭 방지
+  resaleMatchedAt       DateTime?
   // 진행 시각
-  holdExpiresAt     DateTime?
-  confirmedAt       DateTime?
-  checkedInAt       DateTime?
-  completedAt       DateTime?
-  noShowAt          DateTime?
+  holdExpiresAt         DateTime?
+  confirmedAt           DateTime?
+  /// 리마인드에서 고객이 '참석 확정'을 누른 시각
+  attendanceConfirmedAt DateTime?
+  checkedInAt           DateTime?
+  completedAt           DateTime?
+  noShowAt              DateTime?
   /// 체크인 QR 에 담기는 비밀 토큰
-  checkinToken      String         @unique
+  checkinToken          String         @unique
   /// 중복 제출 방지 키(사용자별 유일)
-  idempotencyKey    String?
-  reminderSentAt    DateTime?
-  reviewRequestedAt DateTime?
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+  idempotencyKey        String?
+  reminderSentAt        DateTime?
+  reviewRequestedAt     DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
 
   payments       Payment[]
   refunds        Refund[]
@@ -558,6 +588,7 @@ model Booking {
   @@index([slotId, status])
   @@index([status, holdExpiresAt])
   @@index([guestPhone])
+  @@index([slotSeatId, status])
 }
 
 enum PaymentProvider {
@@ -617,6 +648,8 @@ model Refund {
   status        RefundStatus @default(REQUESTED)
   providerRef   String?
   error         String?
+  /// 재시도 횟수 — PG 멱등 키를 시도마다 바꾸는 데 쓴다
+  attempts      Int          @default(0)
   requestedBy   ActorType
   requestedById String?
   createdAt     DateTime     @default(now())
@@ -649,12 +682,16 @@ model WaitlistEntry {
   status         WaitlistStatus @default(WAITING)
   offeredAt      DateTime?
   offerExpiresAt DateTime?
+  /// 순번 기준 시각. 제안을 한 번 놓치면 현재 시각으로 바뀌어 맨 뒤로 간다
+  queuedAt       DateTime       @default(now())
+  /// 놓친 제안 횟수(2회면 대기 종료)
+  missedOffers   Int            @default(0)
   bookingId      String?        @unique
   booking        Booking?       @relation(fields: [bookingId], references: [id])
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  @@index([slotSeatId, status, createdAt])
+  @@index([slotSeatId, status, queuedAt])
   @@index([userId, status])
   @@index([status, offerExpiresAt])
 }
@@ -684,25 +721,25 @@ model Follow {
 
 /// 맞춤 빈자리 알림 조건
 model AlertRule {
-  id             String    @id @default(cuid())
+  id             String      @id @default(cuid())
   userId         String
-  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String?
   /// 비어 있으면 전체
-  categorySlugs  String[]
-  areaSlugs      String[]
+  categorySlugs  String[]    @default([])
+  areaSlugs      String[]    @default([])
   keyword        String?
   maxPrice       Int?
   /// 0(일)~6(토). 비어 있으면 전체
-  daysOfWeek     Int[]
+  daysOfWeek     Int[]       @default([])
   /// 하루 중 시작 시각 범위(분, KST). null 이면 제한 없음
   timeFromMin    Int?
   timeToMin      Int?
   seatGender     SeatGender?
-  isActive       Boolean   @default(true)
+  isActive       Boolean     @default(true)
   lastNotifiedAt DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   @@index([userId])
   @@index([isActive])
@@ -835,6 +872,8 @@ enum ReportReason {
   OFF_PLATFORM // 외부 결제 유도
   INAPPROPRIATE // 부적절한 내용·행동
   SAFETY // 안전 문제
+  NO_SHOW_DISPUTE // 노쇼 처리 이의제기(고객)
+  COMMISSION_DISPUTE // 수수료 판정 이의제기(사업자)
   OTHER
 }
 
@@ -873,6 +912,7 @@ enum CustomerSource {
   MARKETPLACE
   DIRECT
   MANUAL
+  IMPORTED // 사업자가 기존 고객 명단을 가져옴
 }
 
 /// 사업자별 고객 카드
@@ -893,7 +933,7 @@ model BusinessCustomer {
   cancelCount    Int            @default(0)
   noShowCount    Int            @default(0)
   totalSpent     Int            @default(0)
-  tags           String[]
+  tags           String[]       @default([])
   memo           String?
   isBlocked      Boolean        @default(false)
   createdAt      DateTime       @default(now())
@@ -1012,4 +1052,34 @@ model AnalyticsEvent {
 
   @@index([businessId, type, createdAt])
   @@index([type, createdAt])
+}
+
+enum ConsentKind {
+  TERMS // 이용약관
+  PRIVACY // 개인정보 수집·이용(필수)
+  MARKETING // 광고성 정보 수신
+  NIGHT_ALERT // 야간 광고성 알림
+  THIRD_PARTY // 판매자에게 개인정보 제공(예약 건별)
+  REFUND_POLICY // 취소·환불 기준 확인(예약 건별)
+}
+
+/// 동의·철회 이력(버전·시각·IP). 법적 증빙용이며 수정하지 않고 쌓기만 한다.
+model ConsentRecord {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      ConsentKind
+  /// true = 동의, false = 철회
+  agreed    Boolean
+  /// 문서 버전(예: 2026-11-27)
+  version   String
+  /// 예약 건별 동의일 때
+  bookingId String?
+  /// 제공받는 자(판매자 상호) 등 표시 내용
+  detail    String?
+  ip        String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId, kind, createdAt])
+  @@index([bookingId])
 }

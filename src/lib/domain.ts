@@ -290,8 +290,9 @@ export function parseSeatTemplates(value: unknown): SeatTemplate[] {
 }
 
 /**
- * 고객 취소 시 환불율(%) 계산.
- * - 예약 직후 graceMinutes 안이면(그리고 시작 전이면) 전액 환불
+ * 고객 취소 시 환불율(%) 계산. 기준점은 항상 회차 시작 시각이다.
+ * - 예약 직후 graceMinutes 안이면(그리고 시작 전이면) 전액 환불.
+ *   단, 예약 시점에 시작까지 graceMinLeadMinutes 미만으로 남았던 임박 예약에는 적용하지 않는다.
  * - 그 밖에는 시작까지 남은 시간이 처음으로 충족되는 구간의 환불율
  */
 export function computeRefundRate(params: {
@@ -300,11 +301,14 @@ export function computeRefundRate(params: {
   bookedAt: Date;
   now?: Date;
   graceMinutes?: number;
+  graceMinLeadMinutes?: number;
 }): number {
   const now = params.now ?? new Date();
   if (now.getTime() >= params.startAt.getTime()) return 0;
   const grace = (params.graceMinutes ?? 0) * 60_000;
-  if (grace > 0 && now.getTime() - params.bookedAt.getTime() <= grace) return 100;
+  const leadAtBooking = params.startAt.getTime() - params.bookedAt.getTime();
+  const graceApplies = leadAtBooking >= (params.graceMinLeadMinutes ?? 0) * 60_000;
+  if (grace > 0 && graceApplies && now.getTime() - params.bookedAt.getTime() <= grace) return 100;
   const hoursLeft = (params.startAt.getTime() - now.getTime()) / 3_600_000;
   const tiers = [...params.tiers].sort((a, b) => b.hoursBefore - a.hoursBefore);
   for (const tier of tiers) {

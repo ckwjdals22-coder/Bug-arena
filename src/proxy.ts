@@ -141,6 +141,6 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // 정적 자산과 업로드 이미지를 제외한 모든 경로
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|manifest.webmanifest|robots.txt|sitemap.xml|fonts/).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|manifest.webmanifest|robots.txt|sitemap.xml|fonts/|uploads/).*)",
   ],
 };

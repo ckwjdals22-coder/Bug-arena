@@ -134,17 +134,33 @@ export async function getAdminContext(): Promise<AdminContext | null> {
   return { user: session.user, role: session.user.adminRole };
 }
 
-/** allowed 를 생략하면 모든 운영자 역할이 통과한다. SUPER 는 항상 통과. */
-export async function requireAdmin(allowed?: AdminRole[]): Promise<AdminContext> {
+export interface AdminGuardOptions {
+  /**
+   * 2단계 인증을 아직 등록하지 않은 운영자도 통과시킨다.
+   * 인증 앱 등록 화면(/admin/setup-2fa)과 그 액션에서만 쓴다.
+   */
+  allowPendingTotp?: boolean;
+}
+
+/** 2단계 인증 등록 화면 경로 — 등록 전에는 다른 운영자 화면을 열 수 없다 */
+export const ADMIN_TOTP_SETUP_PATH = "/admin/setup-2fa";
+
+/**
+ * allowed 를 생략하면 모든 운영자 역할이 통과한다. SUPER 는 항상 통과.
+ * 비밀번호만으로 로그인한(2단계 인증 미등록) 운영자는 등록 화면으로 보낸다.
+ */
+export async function requireAdmin(allowed?: AdminRole[], options: AdminGuardOptions = {}): Promise<AdminContext> {
   const ctx = await getAdminContext();
   if (!ctx) redirect("/admin/login");
+  if (!options.allowPendingTotp && !ctx.user.totpEnabledAt) redirect(ADMIN_TOTP_SETUP_PATH);
   if (!adminAllowed(ctx.role, allowed)) redirect("/admin?denied=1");
   return ctx;
 }
 
-export async function requireAdminOrThrow(allowed?: AdminRole[]): Promise<AdminContext> {
+export async function requireAdminOrThrow(allowed?: AdminRole[], options: AdminGuardOptions = {}): Promise<AdminContext> {
   const ctx = await getAdminContext();
   if (!ctx) throw err.unauthenticated("운영자 로그인이 필요해요.");
+  if (!options.allowPendingTotp && !ctx.user.totpEnabledAt) throw err.forbidden("2단계 인증을 먼저 등록해 주세요.");
   if (!adminAllowed(ctx.role, allowed)) throw err.forbidden();
   return ctx;
 }
