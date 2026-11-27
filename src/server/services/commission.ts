@@ -363,7 +363,7 @@ export const BOOKING_SOURCE_LABEL: Record<string, string> = {
 };
 
 export interface CommissionDescription {
-  /** 적용 규칙 이름. 확정 전이면 "확정 전" */
+  /** 적용 규칙 이름. 확정 전이면 "확정 전", 설명이 없는 규칙이면 "기타" */
   ruleLabel: string;
   ruleDesc: string;
   /** "9.9%" / "0% + 결제 실비" / 확정 전이면 "-" */
@@ -383,14 +383,14 @@ export function describeCommission(booking: {
   const channelLabel = BOOKING_CHANNEL_LABEL[booking.channel];
   const sourceLabel = (booking.source ? BOOKING_SOURCE_LABEL[booking.source] : undefined) ?? channelLabel;
   const rule = booking.commissionRule;
-  const info = rule ? COMMISSION_RULE_LABEL[rule] : undefined;
-  if (!rule || !info) {
+  if (!rule) {
     return { ruleLabel: "확정 전", ruleDesc: "예약이 확정되면 수수료 규칙이 정해져요.", bpsText: "-", channelLabel, sourceLabel };
   }
+  const info = COMMISSION_RULE_LABEL[rule];
   const rate = formatBps(booking.commissionBps);
   return {
-    ruleLabel: info.label,
-    ruleDesc: info.desc,
+    ruleLabel: info?.label ?? "기타",
+    ruleDesc: info?.desc ?? "적용된 규칙의 설명을 찾지 못했어요. 고객센터로 문의해 주세요.",
     bpsText: PG_FEE_RULES.has(rule) ? `${rate} + 결제 실비` : rate,
     channelLabel,
     sourceLabel,
