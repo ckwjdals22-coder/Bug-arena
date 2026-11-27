@@ -1,3 +1,4 @@
+import { REF_COOKIE_MAX_AGE } from "@/lib/cookies";
 import { BANNED_PHRASES } from "@/lib/policy";
 import type { LegalDoc } from "./types";
 
@@ -6,6 +7,18 @@ export const SELLER_TERMS_VERSION = "2026-11-27";
 
 /** 금칙어 목록(띄어쓰기만 다른 표기는 하나로 묶는다). src/lib/policy.ts 가 바뀌면 문서도 함께 바뀐다 */
 const bannedPhraseList = [...new Map(BANNED_PHRASES.map((item) => [item.phrase.replace(/\s+/g, ""), item.phrase])).values()].join(", ");
+
+/**
+ * 플랜별 한도. 원본은 src/server/settings.ts 의 PLAN_FEATURES 인데 서버 전용 모듈이라 여기서 가져올 수 없다.
+ * 값이 달라지면 tests/content.test.ts 가 실패하므로 그때 함께 고친다.
+ */
+export const PLAN_LIMITS = {
+  FREE: { maxActiveProducts: 10, maxTeamMembers: 1 },
+  PRO: { maxActiveProducts: 200, maxTeamMembers: 5 },
+} as const;
+
+/** 내 예약 링크로 들어온 방문을 기억하는 기간(일) — src/proxy.ts 가 심는 유입 쿠키의 유지 기간 */
+const DIRECT_LINK_DAYS = REF_COOKIE_MAX_AGE / 86_400;
 
 const PG_FEE = "온라인 결제액의 {{settings.pgFeeBps|percent}}";
 const INCLUDED = "없음(요율에 포함)";
@@ -132,11 +145,16 @@ const sellerTerms: LegalDoc = {
           head: ["순서", "경우", "중개 수수료", "결제 실비"],
           rows: [
             ["1", "직접 입력 — 전화, 현장, 다른 채널로 받은 예약을 판매자가 직접 입력한 경우", "없음", "없음"],
-            ["2", "내 예약 링크 — 판매자 전용 링크, QR, 사업장 페이지로 들어온 예약", "{{settings.commissionDirectBps|percent}}", PG_FEE],
+            [
+              "2",
+              `내 예약 링크 — 판매자 전용 링크나 QR로 남는자리 밖에서 바로 들어온 방문자가 ${DIRECT_LINK_DAYS}일 안에 그 판매자의 자리를 예약한 경우. 남는자리 안에서 판매자 이름을 눌러 이동한 방문은 해당하지 않습니다`,
+              "{{settings.commissionDirectBps|percent}}",
+              PG_FEE,
+            ],
             ["3", "내 고객 — 판매자가 직접 등록하거나 가져온 고객 명단에 예약 전부터 있던 전화번호의 예약", "없음", PG_FEE],
             [
               "4",
-              "입점 프로모션 — 입점 승인 후 {{settings.launchPromoMonths}}개월이 지나거나 예약 {{settings.launchPromoBookings}}건을 채우는 때 가운데 먼저 오는 때까지",
+              "입점 프로모션 — 입점 승인 후 {{settings.launchPromoMonths}}개월이 지나거나 프로모션을 적용받은 예약이 {{settings.launchPromoBookings}}건이 되는 때 가운데 먼저 오는 때까지. 1~3번에 해당하는 예약은 이 건수에 넣지 않습니다",
               "없음",
               PG_FEE,
             ],
@@ -148,7 +166,7 @@ const sellerTerms: LegalDoc = {
             ],
             [
               "6",
-              "남는자리 재방문 고객 — 최근 {{settings.returningWindowDays|days}} 안에 이 판매자를 이용한 적이 있는 고객이 남는자리 탐색으로 다시 예약한 경우",
+              "남는자리 재방문 고객 — 최근 {{settings.returningWindowDays|days}} 안에 이 판매자를 이용한 적이 있는 고객이 남는자리의 탐색이나 대기로 다시 예약한 경우",
               "{{settings.commissionReturningBps|percent}}",
               INCLUDED,
             ],
@@ -305,6 +323,7 @@ const sellerTerms: LegalDoc = {
           items: [
             "기본 플랜(베이직)은 무료입니다. 프로 플랜은 월 {{settings.proPriceMonthly|krw}}(부가세 포함, 현재 기준)입니다.",
             "프로 플랜에서는 남는자리 신규 고객 요율이 {{settings.proCommissionNewCustomerBps|percent}}로 낮아지고, 자동 메시지의 문구와 발송 시점 편집, 상세 분석, 고객 명단 내려받기, 구성원 추가를 쓸 수 있습니다.",
+            `동시에 판매 중으로 둘 수 있는 상품은 베이직 ${PLAN_LIMITS.FREE.maxActiveProducts}개, 프로 ${PLAN_LIMITS.PRO.maxActiveProducts}개까지입니다. 사업장 구성원은 대표를 포함해 베이직 ${PLAN_LIMITS.FREE.maxTeamMembers}명, 프로 ${PLAN_LIMITS.PRO.maxTeamMembers}명까지 둘 수 있습니다(현재 기준).`,
             "자동 문자는 한 달에 베이직 {{settings.freeMonthlyMessages}}건, 프로 {{settings.proMonthlyMessages}}건까지 보낼 수 있습니다(현재 기준).",
             "대기, 취소된 자리 다시 올리기, 직접 입력 예약, 내 예약 링크, 체크인, 환불 기준 설정, 회차 일괄 등록처럼 자리를 채우는 기능은 플랜과 관계없이 무료입니다.",
             "구독은 언제든 해지할 수 있습니다. 약정 기간이나 중도 해지 위약금은 없습니다.",
@@ -389,6 +408,7 @@ const sellerTerms: LegalDoc = {
     "고객 사정 취소·노쇼로 남는 금액(위약금)에 대한 수수료 부과와 재판매 연동 환불 때의 수수료 재계산이 적법한지",
     "요율과 구독료의 부가가치세 포함 여부 표기, 수수료 세금계산서 발행 방식",
     "소개팅·미팅 업종 판매자에게 결혼중개업법이 적용되는지, 적용된다면 입점 때 받아야 할 서류(신고증, 보증보험)와 상세 화면 표시",
+    "술을 내는 모임이나 성인 대상 모임에 참가 나이 조건 설정과 현장 확인을 판매자 의무로 명시해야 하는지(청소년 보호)",
     "할인 전 가격(기준가) 표시 기준(최근 실제 판매가)과 성별에 따라 가격을 달리하는 좌석의 적법성",
     "판매자에게 제공되는 고객 개인정보의 보유·파기 기준과 사업자 센터의 고객 이력 기능의 관계, 판매자가 가져온 고객 명단의 책임 소재와 위탁 관계",
     "구독 조항(자동결제 미연동 상태의 안내, 구독료 환불 기준, 정기결제를 시작할 때의 고지·동의 요건)",

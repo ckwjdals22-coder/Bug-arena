@@ -12,7 +12,10 @@ import { listNextVacancyCards, visibility, type VacancyCard } from "@/server/ser
  * - 새로 찜·팔로우할 수 있는 대상은 공개 중인 상품·승인된 사업장뿐이다. 해제는 대상이 내려간 뒤에도 언제든 할 수 있다.
  */
 
-const FOLLOWING_VACANCIES = 3;
+/** 팔로우 목록에서 사업장마다 보여 주는 다음 회차 수 */
+export const FOLLOWING_VACANCIES = 3;
+/** 회원 한 명이 1분에 찜(또는 팔로우)을 켜고 끌 수 있는 횟수 */
+export const TOGGLE_LIMIT_PER_MINUTE = 60;
 const LIST_MAX = 200;
 const TOGGLE_RATE_MESSAGE = "잠시 후 다시 시도해 주세요. 너무 빠르게 여러 번 눌렀어요.";
 
@@ -42,7 +45,7 @@ export interface FavoriteToggleResult {
 export async function toggleFavorite(userId: string, productId: string): Promise<FavoriteToggleResult> {
   const user = parseInput(idSchema, userId);
   const product = parseInput(idSchema, productId);
-  await enforceRateLimit(`favorite:user:${user}`, 60, 60, TOGGLE_RATE_MESSAGE);
+  await enforceRateLimit(`favorite:user:${user}`, TOGGLE_LIMIT_PER_MINUTE, 60, TOGGLE_RATE_MESSAGE);
 
   return prisma.$transaction(async (tx) => {
     await lockKey(tx, `favorite:${user}:${product}`);
@@ -138,7 +141,7 @@ export interface FollowToggleResult {
 export async function toggleFollow(userId: string, businessId: string): Promise<FollowToggleResult> {
   const user = parseInput(idSchema, userId);
   const business = parseInput(idSchema, businessId);
-  await enforceRateLimit(`follow:user:${user}`, 60, 60, TOGGLE_RATE_MESSAGE);
+  await enforceRateLimit(`follow:user:${user}`, TOGGLE_LIMIT_PER_MINUTE, 60, TOGGLE_RATE_MESSAGE);
 
   return prisma.$transaction(async (tx) => {
     await lockKey(tx, `follow:${user}:${business}`);

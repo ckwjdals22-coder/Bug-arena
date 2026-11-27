@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import { Prisma, type AdminRole, type ReviewStatus } from "@/generated/prisma/client";
+import { Prisma, type AdminRole, type ReviewStatus, type UserStatus } from "@/generated/prisma/client";
 import { maskName } from "@/lib/format";
 import { DAY } from "@/lib/time";
 import { audit } from "@/server/audit";
@@ -25,6 +25,11 @@ export const REVIEW_CONTENT_MIN = 10;
 export const REVIEW_CONTENT_MAX = 1000;
 export const REVIEW_REPLY_MAX = 500;
 export const REVIEW_HIDE_REASON_MAX = 200;
+/** 회원 한 명이 한 시간에 시도할 수 있는 후기 작성 횟수 */
+export const REVIEW_HOURLY_LIMIT = 10;
+
+/** 탈퇴한 회원이 남긴 후기의 작성자 표시 */
+export const WITHDRAWN_AUTHOR = "탈퇴한 회원";
 
 const REVIEW_MODERATOR_ROLES: AdminRole[] = ["SUPER", "OPS", "CS"];
 const SUMMARY_LATEST = 3;
@@ -118,7 +123,7 @@ export interface PublicReview {
   id: string;
   rating: number;
   content: string;
-  /** 가린 이름(예: 홍*동) */
+  /** 가린 이름(예: 홍*동). 탈퇴한 회원이면 "탈퇴한 회원" */
   authorName: string;
   product: { id: string; title: string };
   /** 참여한 회차의 시작 시각 */
@@ -140,18 +145,21 @@ const publicReviewSelect = {
   sellerReply: true,
   sellerRepliedAt: true,
   createdAt: true,
-  user: { select: { name: true } },
+  user: { select: { name: true, status: true } },
   product: { select: { id: true, title: true } },
   booking: { select: { slot: { select: { startAt: true } } } },
 } satisfies Prisma.ReviewSelect;
 
 type PublicReviewRow = Prisma.ReviewGetPayload<{ select: typeof publicReviewSelect }>;
 
+/** 화면에 보이는 작성자 이름: 이름을 가려서 주고, 탈퇴한 회원은 가리지 않은 안내 문구로 준다. */
+const authorNameOf = (user: { name: string; status: UserStatus }) => (user.status === "WITHDRAWN" ? WITHDRAWN_AUTHOR : maskName(user.name));
+
 const toPublicReview = (row: PublicReviewRow): PublicReview => ({
   id: row.id,
   rating: row.rating,
   content: row.content,
-  authorName: maskName(row.user.name),
+  authorName: authorNameOf(row.user),
   product: row.product,
   attendedAt: row.booking.slot.startAt,
   sellerReply: row.sellerReply,
@@ -306,7 +314,7 @@ const NOT_COMPLETED = "이용을 마친 예약에만 후기를 쓸 수 있어요
  */
 export async function createReview(input: { userId: string; bookingId: string; rating: number; content: string }): Promise<CreatedReview> {
   const data = parseInput(createSchema, input);
-  await enforceRateLimit(`review:user:${data.userId}`, 10, 3600, "후기를 너무 자주 쓰고 있어요. 잠시 후 다시 시도해 주세요.");
+  await enforceRateLimit(`review:user:${data.userId}`, REVIEW_HOURLY_LIMIT, 3600, "후기를 너무 자주 쓰고 있어요. 잠시 후 다시 시도해 주세요.");
 
   const booking = await prisma.booking.findUnique({
     where: { id: data.bookingId },
@@ -516,7 +524,7 @@ export async function listReviewsForSeller(
     id: row.id,
     rating: row.rating,
     content: row.content,
-    authorName: maskName(row.user.name),
+    authorName: authorNameOf(row.user),
     product: row.product,
     attendedAt: row.booking.slot.startAt,
     status: row.status,

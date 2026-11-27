@@ -438,7 +438,9 @@ describe("listVacancies — 조건", () => {
     const tooYoungFor = await slotAt(aged.product, new Date(t.getTime() + 4 * HOUR_MS), pair);
     const soldOut = await slotAt(open.product, new Date(t.getTime() + 5 * HOUR_MS), [{ gender: "ANY", capacity: 2 }]);
     await reserve(soldOut.seats[0]!.id, 2);
-    const everything = [both.id, femaleFull.id, anyone.id, tooOldFor.id, tooYoungFor.id, soldOut.id];
+    // 나이 조건(35~45세)이 있는 모임의 '누구나' 좌석
+    const agedAnyone = await slotAt(aged.product, new Date(t.getTime() + 6 * HOUR_MS), [{ gender: "ANY", capacity: 4 }]);
+    const everything = [both.id, femaleFull.id, anyone.id, tooOldFor.id, tooYoungFor.id, agedAnyone.id, soldOut.id];
 
     // 1992년생 여성: 2026년 기준 34세
     const woman = { id: "viewer-1", gender: "FEMALE" as const, birthYear: 1992 };
@@ -449,17 +451,17 @@ describe("listVacancies — 조건", () => {
 
     // 1990년생 남성(36세): 35~45세 모임은 되고 25~33세 모임은 안 된다
     const man = { id: "viewer-2", gender: "MALE" as const, birthYear: 1990 };
-    expect(await list({ forMe: true }, man)).toEqual([both.id, femaleFull.id, anyone.id, tooYoungFor.id]);
+    expect(await list({ forMe: true }, man)).toEqual([both.id, femaleFull.id, anyone.id, tooYoungFor.id, agedAnyone.id]);
 
-    // 성별만 아는 회원: 나이 조건은 보지 않는다
-    expect(await list({ forMe: true }, { id: "viewer-3", gender: "FEMALE", birthYear: null })).toEqual([
-      both.id,
-      anyone.id,
-      tooOldFor.id,
-      tooYoungFor.id,
-    ]);
-    // 출생 연도만 아는 회원: 성별 조건은 보지 않는다
-    expect(await list({ forMe: true }, { id: "viewer-4", gender: null, birthYear: 1992 })).toEqual([both.id, femaleFull.id, anyone.id]);
+    // 성별만 아는 회원: 나이 조건이 있는 모임은 출생 연도 없이는 예약할 수 없으므로 빠진다(자리 상세의 AGE_REQUIRED 와 같은 기준)
+    const genderOnly = await listVacancies({ forMe: true }, { id: "viewer-3", gender: "FEMALE", birthYear: null });
+    expect(genderOnly.forMeApplied).toBe(true);
+    expect(ids(genderOnly)).toEqual([both.id, anyone.id]);
+    // 출생 연도만 아는 회원: 성별 전용 좌석은 예약할 수 없으므로 '누구나' 좌석이 남은 회차만 남는다(GENDER_REQUIRED 와 같은 기준)
+    const birthYearOnly = await listVacancies({ forMe: true }, { id: "viewer-4", gender: null, birthYear: 1992 });
+    expect(birthYearOnly.forMeApplied).toBe(true);
+    expect(ids(birthYearOnly)).toEqual([anyone.id]);
+    expect(await list({ forMe: true }, { id: "viewer-6", gender: null, birthYear: 1990 })).toEqual([anyone.id, agedAnyone.id]);
 
     // 비로그인이거나 성별·출생 연도가 없으면 적용하지 않는다
     const anonymous = await listVacancies({ forMe: true });
@@ -1385,7 +1387,15 @@ describe("getSlotDetail", () => {
     });
 
     const waiting = (await getSlotDetail(f.slot.id, me))!;
-    expect(waiting.viewer!.waitlistEntry).toEqual({ id: mine.id, status: "WAITING", seatId: f.male.id, quantity: 2, offerExpiresAt: null, position: 3 });
+    expect(waiting.viewer!.waitlistEntry).toEqual({
+      id: mine.id,
+      status: "WAITING",
+      seatId: f.male.id,
+      quantity: 2,
+      offerExpiresAt: null,
+      offerActive: false,
+      position: 3,
+    });
     expect(waiting.viewer!.waitlistEntries).toHaveLength(1);
     expect(waiting.seats.map((s) => s.waitingCount)).toEqual([3, 1]);
     expect(waiting.waitingCount).toBe(4);
@@ -1402,8 +1412,26 @@ describe("getSlotDetail", () => {
       data: { userId: me.id, slotId: f.slot.id, slotSeatId: f.female.id, status: "OFFERED", offeredAt: NOW, offerExpiresAt, queuedAt: queued(5) },
     });
     const viewer = (await getSlotDetail(f.slot.id, me))!.viewer!;
-    expect(viewer.waitlistEntry).toEqual({ id: offered.id, status: "OFFERED", seatId: f.female.id, quantity: 1, offerExpiresAt, position: null });
+    expect(viewer.waitlistEntry).toEqual({
+      id: offered.id,
+      status: "OFFERED",
+      seatId: f.female.id,
+      quantity: 1,
+      offerExpiresAt,
+      offerActive: true,
+      position: null,
+    });
     expect(viewer.waitlistEntries.map((w) => w.id)).toEqual([offered.id, mine.id]);
+
+    // 응답 시간이 지난 제안은 정리 전이라도 살아 있는 제안으로 보여 주지 않고, 줄 선 순서대로만 놓는다
+    vi.setSystemTime(new Date(offerExpiresAt.getTime() + 1000));
+    const stale = (await getSlotDetail(f.slot.id, me))!.viewer!;
+    expect(stale.waitlistEntries.map((w) => [w.id, w.offerActive])).toEqual([
+      [mine.id, false],
+      [offered.id, false],
+    ]);
+    expect(stale.waitlistEntry).toMatchObject({ id: mine.id, status: "WAITING", position: 2 });
+    vi.setSystemTime(NOW);
     expect((await getSlotDetail(f.slot.id, await createUser()))!.viewer!.waitlistEntry).toBeNull();
   });
 
@@ -1778,12 +1806,14 @@ describe("trackEvent", () => {
         nested: { a: 1 },
       } as never,
     });
-    trackEvent({ type: "SEARCH", meta: { q: "문의 010-1234-5678 또는 hong@example.com", resultCount: 3.9 } });
+    trackEvent({ type: "SEARCH", visitorId: "visitor-b", meta: { q: "문의 010-1234-5678 또는 hong@example.com", resultCount: 3.9 } });
     trackEvent({ type: "SHARE", meta: { channel: "  " } });
     await flushEvents();
 
-    const [long, contact] = await prisma.analyticsEvent.findMany({ where: { type: "SEARCH" }, orderBy: { createdAt: "asc" } });
-    const meta = long!.meta as Record<string, unknown>;
+    // 동시에 기록되므로 저장 순서가 아니라 방문자로 구분한다
+    const long = await prisma.analyticsEvent.findFirstOrThrow({ where: { type: "SEARCH", visitorId: "visitor-a" } });
+    const contact = await prisma.analyticsEvent.findFirstOrThrow({ where: { type: "SEARCH", visitorId: "visitor-b" } });
+    const meta = long.meta as Record<string, unknown>;
     expect(Object.keys(meta).sort()).toEqual(["channel", "q", "resultCount", "source"]);
     expect(meta.q).toBe("와인 소개팅 ".repeat(10).trim().slice(0, SEARCH_TERM_MAX));
     expect(String(meta.q).length).toBeLessThanOrEqual(SEARCH_TERM_MAX);
@@ -1791,7 +1821,7 @@ describe("trackEvent", () => {
     expect(String(meta.source)).toHaveLength(60);
     for (const key of Object.keys(meta)) expect(ANALYTICS_META_KEYS).toContain(key);
 
-    expect(contact!.meta).toEqual({ q: "문의 [가림] 또는 [가림]", resultCount: 3 });
+    expect(contact.meta).toEqual({ q: "문의 [가림] 또는 [가림]", resultCount: 3 });
     const share = await prisma.analyticsEvent.findFirstOrThrow({ where: { type: "SHARE" } });
     expect(share.meta).toBeNull();
   });

@@ -62,8 +62,8 @@ export function findBannedPhrases(...texts: (string | null | undefined)[]): { ph
 
 /** 사업자 화면에서 쓰는 수수료 규칙 설명 */
 export const COMMISSION_RULE_LABEL: Record<string, { label: string; desc: string }> = {
-  MARKET_NEW: { label: "남는자리 신규 고객", desc: "남는자리 탐색·검색·알림·대기로 처음 온 고객이에요." },
-  MARKET_RETURNING: { label: "남는자리 재방문 고객", desc: "최근 1년 안에 이용한 적이 있는 고객이 남는자리로 다시 예약했어요." },
+  MARKET_NEW: { label: "남는자리 신규 고객", desc: "남는자리 탐색·검색·알림·대기로 처음 온 고객이에요. 중개 수수료는 처음 한 번만 받아요." },
+  MARKET_RETURNING: { label: "다시 온 고객", desc: "최근 1년 안에 이용한 적이 있는 고객이라 중개 수수료가 없어요. 결제 실비만 차감돼요." },
   OVERRIDE: { label: "개별 요율", desc: "사업자 또는 업종에 따로 정한 요율이 적용됐어요." },
   PROMO: { label: "입점 프로모션", desc: "프로모션 기간이라 중개 수수료가 없어요. 결제 실비만 차감돼요." },
   OWN_CUSTOMER: { label: "내 고객", desc: "직접 등록하거나 가져온 고객이라 중개 수수료가 없어요. 결제 실비만 차감돼요." },

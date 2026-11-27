@@ -114,7 +114,7 @@ const loadAreas = cache(async (city: string | null): Promise<AreaItem[]> => {
 });
 
 /** 활성 지역(정렬 순). city 를 주면 그 시의 동네만. 같은 요청 안에서는 한 번만 조회한다. */
-export function listAreas(options: { city?: string } = {}): Promise<AreaItem[]> {
+export async function listAreas(options: { city?: string } = {}): Promise<AreaItem[]> {
   const city = parseInput(z.string().trim().min(1).max(20).optional(), options.city);
   return loadAreas(city ?? null);
 }
@@ -486,7 +486,11 @@ export interface VacancyFilters {
   maxPrice?: number;
   /** 그 성별이 지금 예약할 수 있는 좌석(해당 성별 전용 또는 누구나)이 남아 있는 회차만 */
   seatGender?: "MALE" | "FEMALE";
-  /** 보는 사람이 지금 예약할 수 있는 회차만(성별·나이 조건이 맞고 자리가 남음). 회원 정보에 성별·출생 연도가 없으면 적용하지 않는다 */
+  /**
+   * 보는 사람이 지금 예약할 수 있는 좌석이 남아 있는 회차만(성별·나이 조건이 맞고 자리가 남음).
+   * 회원 정보에 성별·출생 연도가 둘 다 없으면 적용하지 않는다(forMeApplied=false).
+   * 하나만 있으면, 없는 정보가 필요한 자리(성별 전용 좌석·나이 조건이 있는 상품)는 예약할 수 없으므로 빠진다.
+   */
   forMe?: boolean;
   origin?: VacancyOrigin;
   /** 정가보다 싸게 나온, 남은 좌석이 있는 회차만 */
@@ -580,15 +584,19 @@ function buildConditions(f: ParsedFilters, viewer: CatalogViewer | null, now: Da
     seat.push(Prisma.sql`ss."gender"::text IN (${f.seatGender}, 'ANY')`);
     mustBeOpen = true;
   }
+  // forMe 는 자리 상세의 참가 조건 안내(seatEligibility)와 같은 기준을 쓴다:
+  // 성별 전용 좌석은 내 성별과 같아야 하고, 나이 조건이 있는 상품은 출생 연도가 있어야 하며 범위 안이어야 한다.
   const forMeApplied = Boolean(f.forMe && viewer && (viewer.gender || viewer.birthYear));
   if (forMeApplied && viewer) {
     mustBeOpen = true;
-    if (viewer.gender) seat.push(Prisma.sql`ss."gender"::text IN (${viewer.gender}, 'ANY')`);
+    seat.push(viewer.gender ? Prisma.sql`ss."gender"::text IN (${viewer.gender}, 'ANY')` : Prisma.sql`ss."gender" = 'ANY'`);
     if (viewer.birthYear) {
       const age = ageOf(viewer.birthYear, now);
       conditions.push(
         Prisma.sql`(p."minAge" IS NULL OR p."minAge" <= ${age}::int) AND (p."maxAge" IS NULL OR p."maxAge" >= ${age}::int)`,
       );
+    } else {
+      conditions.push(Prisma.sql`p."minAge" IS NULL AND p."maxAge" IS NULL`);
     }
   }
   if (f.minPrice !== undefined) seat.push(Prisma.sql`ss."price" >= ${f.minPrice}::int`);
@@ -966,6 +974,8 @@ export interface ViewerWaitlistEntry {
   seatId: string;
   quantity: number;
   offerExpiresAt: Date | null;
+  /** 제안(OFFERED)을 받았고 아직 응답 시간이 남아 있는지. 시간이 지난 제안은 정리 전이라도 false 다 */
+  offerActive: boolean;
   /** 대기 중(WAITING)일 때 그 좌석 유형에서의 내 순번(1부터). 제안을 받은 상태면 null */
   position: number | null;
 }
@@ -976,7 +986,7 @@ export interface SlotViewerState {
   eligibility: SeatEligibility[];
   /** 이 회차에 진행 중인 내 예약(결제 대기는 시간이 남아 있을 때만) */
   activeBooking: { code: string; status: BookingStatus; holdExpiresAt: Date | null } | null;
-  /** 가장 먼저 챙겨야 할 내 대기(제안받은 것 우선) */
+  /** 가장 먼저 챙겨야 할 내 대기(응답 시간이 남은 제안이 먼저, 그다음 줄 선 순서) */
   waitlistEntry: ViewerWaitlistEntry | null;
   /** 이 회차에 걸어 둔 내 대기 전체(좌석 유형별) */
   waitlistEntries: ViewerWaitlistEntry[];
@@ -1133,7 +1143,7 @@ interface ViewerSlotData {
   waitlist: ViewerWaitlistEntry[];
 }
 
-async function loadViewerSlotData(slotId: string, businessId: string, viewerId: string): Promise<ViewerSlotData> {
+async function loadViewerSlotData(slotId: string, businessId: string, viewerId: string, now: Date): Promise<ViewerSlotData> {
   const [follow, bookings, waitlist] = await Promise.all([
     prisma.follow.findUnique({ where: { userId_businessId: { userId: viewerId, businessId } }, select: { userId: true } }),
     prisma.booking.findMany({
@@ -1151,19 +1161,23 @@ async function loadViewerSlotData(slotId: string, businessId: string, viewerId: 
              )::int + 1 AS "position"
       FROM "WaitlistEntry" w
       WHERE w."slotId" = ${slotId} AND w."userId" = ${viewerId} AND w."status" IN ('WAITING', 'OFFERED')
-      ORDER BY (w."status" = 'OFFERED') DESC, w."queuedAt" ASC, w."id" ASC`,
+      ORDER BY w."queuedAt" ASC, w."id" ASC`,
   ]);
+  const entries = waitlist.map((w) => ({
+    id: w.id,
+    status: w.status,
+    seatId: w.seatId,
+    quantity: Number(w.quantity),
+    offerExpiresAt: w.offerExpiresAt,
+    // 시간이 지난 제안은 정리 작업이 아직 돌지 않았어도 살아 있는 제안으로 보여 주지 않는다.
+    offerActive: w.status === "OFFERED" && w.offerExpiresAt !== null && w.offerExpiresAt.getTime() > now.getTime(),
+    position: w.status === "WAITING" ? Number(w.position) : null,
+  }));
   return {
     isFollowing: follow !== null,
     bookings,
-    waitlist: waitlist.map((w) => ({
-      id: w.id,
-      status: w.status,
-      seatId: w.seatId,
-      quantity: Number(w.quantity),
-      offerExpiresAt: w.offerExpiresAt,
-      position: w.status === "WAITING" ? Number(w.position) : null,
-    })),
+    // 응답 시간이 남은 제안을 맨 앞에(정렬이 안정적이라 나머지는 줄 선 순서 그대로)
+    waitlist: entries.sort((x, y) => Number(y.offerActive) - Number(x.offerActive)),
   };
 }
 
@@ -1186,7 +1200,7 @@ export async function getSlotDetail(slotId: string, viewer?: CatalogViewer | nul
       limit: 6,
     }),
     getReviewSummary({ productId: product.id }),
-    viewer ? loadViewerSlotData(slot.id, business.id, viewer.id) : Promise.resolve(null),
+    viewer ? loadViewerSlotData(slot.id, business.id, viewer.id, now) : Promise.resolve(null),
   ]);
   const otherIds = others.map((row) => row.id);
   const cards = await loadCards([slot.id, ...otherIds], viewer?.id ?? null);

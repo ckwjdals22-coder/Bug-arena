@@ -176,6 +176,8 @@ export function decideCommission(facts: CommissionFacts): CommissionSnapshot {
  * 이 사업자의 신규 고객인지: 재방문 판정 기간 안에 시작한(또는 앞으로 시작할) 회차에
  * 확정·완료·노쇼 예약이 회원 ID 나 전화번호로 하나도 없으면 true.
  * 식별할 값이 없으면(외부 판매 자리 등) 신규로 본다.
+ * windowDays 를 생략하면 운영 설정의 재방문 판정 기간을 읽는다. 트랜잭션(db = tx) 안에서는 꼭 넘겨야 한다 —
+ * 설정은 트랜잭션 밖 연결로 읽기 때문에, 동시 트랜잭션이 연결 풀을 다 쓰고 있으면 서로를 기다리며 멈춘다.
  */
 export async function isNewCustomerFor(
   businessId: string,
@@ -183,6 +185,9 @@ export async function isNewCustomerFor(
   opts: { now?: Date; excludeBookingId?: string; windowDays?: number } = {},
   db: Db = prisma,
 ): Promise<boolean> {
+  if (opts.windowDays === undefined && db !== prisma) {
+    throw new Error("isNewCustomerFor: 트랜잭션 안에서는 windowDays 를 넘겨야 합니다.");
+  }
   const phone = digitsOnly(who.phone);
   const identities: Prisma.BookingWhereInput[] = [];
   if (who.userId) identities.push({ userId: who.userId });
@@ -303,14 +308,18 @@ export interface SnapshotCommissionInput {
  * 예약 확정 트랜잭션 안에서 부른다. 사업자·업종 요율을 읽어 규칙을 판정하고,
  * PROMO 로 판정되면 프로모션 건수를 1 차감한다. 그사이 프로모션이 소진됐으면 프로모션 없이 다시 판정한다.
  * 돌려준 값을 Booking 의 commissionRule / commissionBps / commissionAmount / pgFeeAmount / isNewCustomer 에 저장한다.
+ *
+ * 운영 설정(ctx.settings)은 트랜잭션을 열기 전에 getSettings() 로 읽어서 넘긴다. 트랜잭션 안에서 다른 연결로
+ * 설정을 읽으면, 확정이 몰릴 때 연결 풀이 바닥나 트랜잭션끼리 서로를 기다리다 시간 초과로 실패한다.
+ * 프로모션을 차감하면 트랜잭션이 끝날 때까지 사업장 행을 잠그므로, 확정 트랜잭션의 뒤쪽에서 부르는 편이 좋다.
  */
 export async function snapshotCommission(
   tx: Tx,
   booking: SnapshotCommissionInput,
-  opts: { now?: Date; settings?: CommissionSettings } = {},
+  ctx: { settings: CommissionSettings; now?: Date },
 ): Promise<CommissionSnapshot> {
-  const now = opts.now ?? new Date();
-  const settings = opts.settings ?? (await getSettings());
+  const now = ctx.now ?? new Date();
+  const { settings } = ctx;
   const business = await tx.business.findUnique({
     where: { id: booking.businessId },
     select: { id: true, plan: true, commissionBps: true, launchPromoUntil: true, launchPromoRemaining: true },

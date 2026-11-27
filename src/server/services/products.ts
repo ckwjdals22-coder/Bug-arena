@@ -351,16 +351,18 @@ function finalize(data: ProductData, storedImages: readonly string[] = []): Prod
   return { ...data, depositAmount, cancellationTiers: tiers };
 }
 
-async function assertActiveCategory(categoryId: string): Promise<void> {
-  const category = await prisma.category.findUnique({ where: { id: categoryId }, select: { isActive: true } });
+type Db = Prisma.TransactionClient | typeof prisma;
+
+async function assertActiveCategory(categoryId: string, db: Db = prisma): Promise<void> {
+  const category = await db.category.findUnique({ where: { id: categoryId }, select: { isActive: true } });
   if (!category?.isActive) {
     const message = "고를 수 없는 분류예요. 다시 골라 주세요.";
     throw err.validation(message, { categoryId: message });
   }
 }
 
-async function assertActiveArea(areaId: string): Promise<void> {
-  const area = await prisma.area.findUnique({ where: { id: areaId }, select: { isActive: true } });
+async function assertActiveArea(areaId: string, db: Db = prisma): Promise<void> {
+  const area = await db.area.findUnique({ where: { id: areaId }, select: { isActive: true } });
   if (!area?.isActive) {
     const message = "아직 서비스하지 않는 지역이에요. 다시 골라 주세요.";
     throw err.validation(message, { areaId: message });
@@ -661,36 +663,47 @@ function storedData(p: ProductRow): ProductData {
   };
 }
 
+const ARCHIVED_LOCKED = "보관된 상품은 고칠 수 없어요. 먼저 보관을 풀어 주세요.";
+
 /**
  * 상품 수정(매니저 이상). 넘어온 항목만 바꾸되, 바꾼 뒤의 상품 전체가 규칙을 지키는지 다시 확인한다.
  * 이미 만든 회차의 좌석·가격은 바뀌지 않는다(회차는 만들 때의 구성을 따로 갖는다).
  */
 export async function updateProduct(actorUserId: string, productId: string, patch: ProductPatch): Promise<SellerProduct> {
-  const current = await loadProduct(actorUserId, productId, "MANAGER");
-  if (current.status === "ARCHIVED") throw err.conflict("보관된 상품은 고칠 수 없어요. 먼저 보관을 풀어 주세요.");
+  const loaded = await loadProduct(actorUserId, productId, "MANAGER");
+  if (loaded.status === "ARCHIVED") throw err.conflict(ARCHIVED_LOCKED);
   const changes: ProductPatchData = definedOnly(parseInput(patchSchema, definedOnly(asRecord(patch))));
   const fields = Object.keys(changes);
-  if (fields.length === 0) return withUpcoming(current);
+  if (fields.length === 0) return withUpcoming(loaded);
 
-  const merged: ProductData = { ...storedData(current), ...changes };
-  // 현장 결제로 바꾸면서 재판매 연동 환불을 따로 건드리지 않았으면, 쓸 수 없게 된 설정을 함께 끈다.
-  if (merged.paymentPolicy === "ONSITE" && changes.resaleRefundRate === undefined) merged.resaleRefundRate = null;
-  const data = finalize(merged, current.images);
-  if (data.categoryId !== current.categoryId) await assertActiveCategory(data.categoryId);
-  if (data.areaId && data.areaId !== current.areaId) await assertActiveArea(data.areaId);
+  await prisma.$transaction(async (tx) => {
+    // 같은 상품을 동시에 고치는 요청을 줄 세운다. 저장된 값과 합쳐서 검증하므로, 줄을 세우지 않으면
+    // 서로의 변경을 덮어쓰거나(가격과 예약금을 따로 고칠 때처럼) 항목 사이의 규칙이 깨진 채 저장될 수 있다.
+    // 예약·회차 생성(외래 키 확인)은 막지 않도록 NO KEY UPDATE 로 잠근다.
+    await tx.$queryRaw`SELECT 1 FROM "Product" WHERE "id" = ${loaded.id} FOR NO KEY UPDATE`;
+    const current = await tx.product.findUnique({ where: { id: loaded.id }, include: productInclude });
+    if (!current) throw err.notFound("상품을 찾을 수 없어요.");
+    // 보관 처리와 겹치면 고치지 않는다.
+    if (current.status === "ARCHIVED") throw err.conflict(ARCHIVED_LOCKED);
 
-  // 보관 처리와 겹치면 고치지 않는다.
-  const updated = await prisma.product.updateMany({ where: { id: current.id, status: { not: "ARCHIVED" } }, data: toWriteData(data) });
-  if (updated.count !== 1) throw err.conflict("보관된 상품은 고칠 수 없어요. 먼저 보관을 풀어 주세요.");
+    const merged: ProductData = { ...storedData(current), ...changes };
+    // 현장 결제로 바꾸면서 재판매 연동 환불을 따로 건드리지 않았으면, 쓸 수 없게 된 설정을 함께 끈다.
+    if (merged.paymentPolicy === "ONSITE" && changes.resaleRefundRate === undefined) merged.resaleRefundRate = null;
+    const data = finalize(merged, current.images);
+    if (data.categoryId !== current.categoryId) await assertActiveCategory(data.categoryId, tx);
+    if (data.areaId && data.areaId !== current.areaId) await assertActiveArea(data.areaId, tx);
+    await tx.product.update({ where: { id: current.id }, data: toWriteData(data) });
+  });
+
   await audit({
     actorId: actorUserId,
     actorType: "SELLER",
     action: "product.update",
     targetType: "Product",
-    targetId: current.id,
+    targetId: loaded.id,
     meta: { fields },
   });
-  return getProductForSeller(actorUserId, current.id);
+  return getProductForSeller(actorUserId, loaded.id);
 }
 
 /** 상품 복제(매니저 이상). 내용을 그대로 옮긴 임시저장 상품을 만든다. 회차·후기·찜은 옮기지 않는다. */

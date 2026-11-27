@@ -377,7 +377,7 @@ describe("verifyInventoryIntegrity", () => {
     const seatId = listing.seat.id;
 
     // 확정 예약 3건(각 1자리)을 좌석 확보와 한 트랜잭션으로 만든다.
-    const bookings = [];
+    const bookings: { id: string }[] = [];
     for (let i = 0; i < 3; i++) {
       bookings.push(
         await prisma.$transaction(async (tx) => {

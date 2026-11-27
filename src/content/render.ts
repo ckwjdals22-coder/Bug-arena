@@ -226,3 +226,17 @@ export function visibleProcessors(processors: readonly Processor[], enabledKeys:
 export function overseasProcessors(processors: readonly Processor[]): Processor[] {
   return processors.filter((p) => typeof p.country === "string" && p.country.trim() !== "");
 }
+
+/**
+ * 문서의 { type: "processors" } 블록에 그릴 수탁자 목록.
+ * 켜진 연동의 수탁자만 고르고, scope 가 "overseas" 면 그 가운데 국외에서 처리하는 곳만 남긴다.
+ * 빈 배열이면 화면은 "해당 없음"으로 표시한다.
+ */
+export function processorsForBlock(
+  block: { scope?: "all" | "overseas" },
+  processors: readonly Processor[],
+  enabledKeys: Iterable<ProcessorEnabledKey>,
+): Processor[] {
+  const visible = visibleProcessors(processors, enabledKeys);
+  return block.scope === "overseas" ? overseasProcessors(visible) : visible;
+}

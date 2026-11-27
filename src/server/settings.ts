@@ -14,17 +14,27 @@ export const settingsSchema = z.object({
   commissionNewCustomerBps: z.number().int().min(0).max(3000),
   /** 프로 플랜 사업자의 신규 고객 요율 */
   proCommissionNewCustomerBps: z.number().int().min(0).max(3000),
-  /** 남는자리로 다시 온 재방문 고객(최근 returningWindowDays 안에 이용 이력) 요율 */
+  /**
+   * 남는자리로 다시 온 재방문 고객(최근 returningWindowDays 안에 이용 이력) 요율.
+   * 기본 0 — 중개 수수료는 고객×사업자 쌍당 처음 한 번만 받는다(결제 실비만 차감).
+   */
   commissionReturningBps: z.number().int().min(0).max(3000),
   /** 사업자 자체 링크·QR·미니 페이지로 온 예약의 중개 수수료(직접 입력 예약은 항상 0) */
   commissionDirectBps: z.number().int().min(0).max(3000),
   /** 1인(좌석 1개)당 중개 수수료 상한(원). 0 이면 상한 없음 */
   commissionCapPerSeat: z.number().int().min(0).max(1_000_000),
+  /**
+   * 1인(좌석 1개)당 최소 중개 수수료(원). 0 이면 최소 없음.
+   * 실제 최소액은 min(이 값, 좌석가 × commissionMinMaxRatioBps) — 싼 좌석에 과한 수수료가 붙지 않게 한다.
+   * 요율이 0 인 예약(재방문·자체 링크·프로모션 등)과 취소 위약금에는 적용하지 않는다.
+   */
+  commissionMinPerSeat: z.number().int().min(0).max(100_000),
+  commissionMinMaxRatioBps: z.number().int().min(0).max(10_000),
   /** 재방문 판정 기간(일) */
   returningWindowDays: z.number().int().min(30).max(1095),
   /**
-   * 결제 실비율. 중개 수수료가 0 인 온라인 결제(자체 링크, 입점 프로모션, 가져온 고객)에만
-   * 정산에서 실비로 차감한다. 카드 3.4% + 부가세 기준.
+   * 결제 실비율. 중개 요율이 0 인 온라인 결제(재방문, 자체 링크, 입점 프로모션, 내 고객)에
+   * 정산에서 실비로 차감한다. 카드 3.4% + 부가세 기준. 중개 요율이 0 보다 크면 요율에 포함되어 따로 떼지 않는다.
    */
   pgFeeBps: z.number().int().min(0).max(1000),
   /** 입점 프로모션: 승인 후 이 건수만큼 또는 이 개월 수 동안 중개 수수료 0% */
@@ -68,13 +78,15 @@ export type PlatformSettings = z.infer<typeof settingsSchema>;
 export const DEFAULT_SETTINGS: PlatformSettings = {
   commissionNewCustomerBps: 990,
   proCommissionNewCustomerBps: 690,
-  commissionReturningBps: 490,
+  commissionReturningBps: 0,
   commissionDirectBps: 0,
   commissionCapPerSeat: 10_000,
+  commissionMinPerSeat: 3_000,
+  commissionMinMaxRatioBps: 2_000,
   returningWindowDays: 365,
   pgFeeBps: 374,
-  launchPromoBookings: 30,
-  launchPromoMonths: 6,
+  launchPromoBookings: 10,
+  launchPromoMonths: 3,
   holdMinutes: 10,
   waitlistOfferMinutes: 30,
   waitlistOfferMinMinutes: 15,

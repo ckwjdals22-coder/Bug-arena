@@ -141,12 +141,13 @@ CONFIRMED ─ 사업자 노쇼 처리 ─▶ NO_SHOW (환불 없음, 고객 노�
 - 예약 직후 `cancelGraceMinutes`(기본 30분) 안에는 전액 환불. 단, 예약 시점에 시작까지 `cancelGraceMinLeadMinutes`(기본 180분) 미만으로 남았던 임박 예약에는 적용하지 않는다. 계산은 `computeRefundRate()`(순수 함수) 하나만 쓴다.
 - 사업자·운영자 취소, 회차 취소, 승인 거절, 최소 인원 미달 취소는 항상 전액 환불.
 - 온라인 결제분은 PG 부분취소 API 로 환불하고 `Refund` 에 기록한다. 환불 실패는 `FAILED` 로 남겨 운영자 콘솔에서 재시도한다.
-- **재판매 연동 환불**(`Product.resaleRefundRate`, 선택): 환불율이 이 값보다 낮은 구간에서 취소해도, 그 좌석이 시작 전에 다시 팔리면 이 비율까지 추가로 환불한다.
-  - 예약 생성 시 상품 설정을 `Booking.resaleRefundRate` 로 스냅샷. 고객 취소 시 `refundRate < resaleRefundRate` 이고 온라인 결제분이 있으면 `resalePendingQty = quantity`.
-  - "다시 팔렸다"의 기준: 같은 좌석 유형(`slotSeatId`)에서 새 예약(직접 입력 제외)이 **확정**된 뒤, 아직 팔리지 않은 좌석 수 `unsold = capacity − reserved + withheld` 가 재판매 대기 합계 `P = Σ resalePendingQty` 보다 적으면 그 차이만큼 다시 팔린 것으로 본다. 즉 `매칭수량 = min(새 예약 수량, max(0, P − unsold))`. (다른 빈자리가 남아 있는 동안에는 취소 좌석이 다시 팔린 것이 아니다. 보류 중(`withheld`)인 좌석도 팔린 것이 아니다.)
-  - 매칭은 `SlotSeat` 행을 잠그고(`SELECT … FOR UPDATE`) `cancelledAt` 이 빠른 취소 건부터 배분한다. 새 예약의 `resaleMatchedAt` 으로 중복 매칭을 막는다.
-  - 추가 환불액 = `floor(payNowAmount × (resaleRefundRate − refundRate) / 100 × 매칭수량 / quantity)`. `refundAmount` 에 더하고 수수료를 남은 금액 기준으로 다시 계산한다. 새 예약이 나중에 취소돼도 회수하지 않는다.
-  - 회차가 시작되면 남은 `resalePendingQty` 는 0 으로 정리한다. 정산은 회차 종료 뒤에만 집계하므로 금액이 뒤바뀌지 않는다.
+- **재판매 연동 환불**(`Product.resaleRefundRate`, 선택): 환불율이 이 값보다 낮은 구간에서 취소해도, 그 좌석이 다시 팔린 채로 회차가 시작되면 이 비율까지 추가로 환불한다.
+  - 예약 생성 시 상품 설정을 `Booking.resaleRefundRate` 로 스냅샷. 고객 취소 시 `refundRate < resaleRefundRate` 이고 온라인 결제분이 있으면 `resalePendingQty = quantity` 로 두고, 고객에게는 "자리가 다시 예약되면 회차 시작 후 ○원을 더 돌려드려요(환불 예정)"라고 알린다.
+  - **판정은 회차 시작 시각에 한 번만 한다**(주기 작업 `settleResaleAtStart`). 예약이 확정되는 순간에 바로 환불하지 않는다 — 대신 예약한 사람이 무료 취소로 빠지는 식의 짬짜미를 막기 위해서다. (이전 설계의 "새 예약 확정 시 즉시 매칭" 방식과 `resaleMatchedAt` 은 쓰지 않는다.)
+  - 좌석 유형(`slotSeatId`)별로, 시작 시점의 팔리지 않은 좌석 수 `unsold = capacity − reserved + withheld` 와 재판매 대기 합계 `P = Σ resalePendingQty` 를 비교한다. `다시 팔린 수 = max(0, P − unsold)`. (다른 빈자리가 남아 있으면 취소 좌석이 다시 팔린 것이 아니다. 보류 중(`withheld`)인 좌석, 직접 입력·외부 판매로 채운 좌석도 다시 팔린 것으로 치지 않는다: `reserved` 에서 MANUAL 채널 확정 수량을 뺀 값으로 계산한다.)
+  - 다시 팔린 수만큼 `cancelledAt` 이 빠른 취소 건부터 배분한다(`SlotSeat` 행 잠금, 취소 건별 조건부 UPDATE 로 한 번만). 추가 환불액 = `floor(payNowAmount × (resaleRefundRate − refundRate) / 100 × 배분수량 / quantity)`. `refundAmount` 에 더하고 수수료를 남은 금액 기준으로 다시 계산한 뒤, 커밋 후 PG 환불과 알림을 보낸다.
+  - 판정이 끝나면 그 회차의 `resalePendingQty` 는 모두 0 이 된다(멱등). 정산은 회차 종료 뒤에만 집계하므로 금액이 뒤바뀌지 않는다.
+  - 같은 회원이 취소하고 다시 예약한 경우(같은 `userId` 또는 같은 전화번호)는 재판매로 치지 않는다.
 
 ### 6.5 좌석이 다시 생겼을 때(취소석 흐름)
 
@@ -174,25 +175,31 @@ CONFIRMED ─ 사업자 노쇼 처리 ─▶ NO_SHOW (환불 없음, 고객 노�
 
 ### 6.6 수수료
 
-원칙: **플랫폼이 채운 자리에만 받는다. 고객에게는 받지 않는다. 사업자에게 보이는 요율은 결제 대행 수수료를 포함한 단일 요율이다.**
+원칙: **플랫폼이 채운 자리에만, 고객×사업자 쌍당 처음 한 번만 받는다. 고객에게는 받지 않는다. 사업자에게 보이는 요율은 결제 대행 수수료를 포함한 단일 요율이다. 결제 실비는 채널과 무관하게 사업자가 낸다.**
 
 확정 시점에 `Booking` 에 스냅샷한다: `commissionRule`, `commissionBps`, `commissionAmount`, `pgFeeAmount`, `isNewCustomer`. 판정 순서(위에서부터 처음 맞는 규칙):
 
-| 순서 | 규칙(`commissionRule`) | 조건 | 중개 수수료 | 결제 실비(`pgFeeAmount`) |
-| --- | --- | --- | --- | --- |
-| 1 | `MANUAL` | 채널 MANUAL(사업자 직접 입력·외부 판매) | 0 | 0 |
-| 2 | `DIRECT` | 채널 DIRECT(사업자 자체 링크·QR·미니 페이지) | `commissionDirectBps`(기본 0) | 온라인 결제액 × `pgFeeBps` |
-| 3 | `OWN_CUSTOMER` | 사업자가 직접 등록·가져온 고객 카드(`BusinessCustomer.source` MANUAL/IMPORTED)가 예약 전에 있던 전화번호 | 0 | 온라인 결제액 × `pgFeeBps` |
-| 4 | `PROMO` | 입점 프로모션 중(`launchPromoUntil > now` 그리고 `launchPromoRemaining > 0`) — 확정 시 남은 건수를 조건부 UPDATE 로 1 차감 | 0 | 온라인 결제액 × `pgFeeBps` |
-| 5 | `OVERRIDE` | 사업자 개별 요율 또는 업종 요율이 있음(재방문 고객은 재방문 요율과 비교해 낮은 쪽) | 해당 요율 | 0 (요율에 포함) |
-| 6 | `MARKET_RETURNING` | 최근 `returningWindowDays`(365일) 안에 이 사업자에서 이용 이력(확정·완료·노쇼)이 있는 회원·전화번호 | `commissionReturningBps`(4.9%) | 0 |
-| 7 | `MARKET_NEW` | 그 밖(탐색·검색·알림·대기 승격으로 온 신규 고객) | `commissionNewCustomerBps`(9.9%), 프로 플랜은 `proCommissionNewCustomerBps`(6.9%) | 0 |
+| 순서 | 규칙(`commissionRule`) | 조건 | 중개 요율 |
+| --- | --- | --- | --- |
+| 1 | `MANUAL` | 채널 MANUAL(사업자 직접 입력·외부 판매) | 0 (결제 실비도 없음) |
+| 2 | `DIRECT` | 채널 DIRECT(사업자 자체 링크·QR·미니 페이지) | `commissionDirectBps`(기본 0) |
+| 3 | `OWN_CUSTOMER` | 사업자가 직접 등록·가져온 고객 카드(`BusinessCustomer.source` MANUAL/IMPORTED)가 예약 전에 있던 전화번호 | 0 |
+| 4 | `MARKET_RETURNING` | 최근 `returningWindowDays`(365일) 안에 이 사업자에서 이용 이력(확정·완료·노쇼)이 있는 회원·전화번호 | `commissionReturningBps`(기본 0) |
+| 5 | `PROMO` | 입점 프로모션 중(`launchPromoUntil > now` 그리고 `launchPromoRemaining > 0`) — 확정 시 남은 건수를 조건부 UPDATE 로 1 차감. 위 1~4에 해당하는 예약은 프로모션 건수를 쓰지 않는다 | 0 |
+| 6 | `OVERRIDE` | 사업자 개별 요율 또는 업종 요율이 있음 | 해당 요율 |
+| 7 | `MARKET_NEW` | 그 밖(탐색·검색·알림·대기 승격으로 온 신규 고객) | `commissionNewCustomerBps`(9.9%), 프로 플랜은 `proCommissionNewCustomerBps`(6.9%) |
 
-- `commissionAmount = min(applyBps(totalAmount, bps), commissionCapPerSeat × quantity)` (상한이 0 이면 상한 없음).
-- 취소로 일부만 남으면 남은 금액(온라인 결제액 − 환불액) 기준으로 다시 계산한다. 전액 환불이면 0.
+금액 계산(모든 규칙 공통):
+
+- 중개 요율이 0 보다 크면: `commissionAmount = clamp(applyBps(totalAmount, bps), 최소 × quantity, 상한 × quantity)`, `pgFeeAmount = 0`(요율에 포함).
+  - 좌석당 최소 = `min(commissionMinPerSeat, floor(좌석가 × commissionMinMaxRatioBps / 10000))` (설정이 0 이면 최소 없음). 좌석가 = `totalAmount / quantity`.
+  - 좌석당 상한 = `commissionCapPerSeat` (0 이면 상한 없음). 수수료는 `totalAmount` 를 넘지 않는다.
+- 중개 요율이 0 이면: `commissionAmount = 0`, `pgFeeAmount = applyBps(payNowAmount, pgFeeBps)` — 온라인으로 결제한 금액의 결제 실비만 차감(`MANUAL` 은 0).
+- 취소로 일부만 남으면 남은 온라인 결제액(위약금) 기준으로 다시 계산한다: 요율 > 0 이면 `min(applyBps(남은 금액, bps), 상한 × quantity)`(최소액은 적용하지 않음), 요율 0 이면 남은 금액 × `pgFeeBps`. 전액 환불이면 둘 다 0.
 - 정산: 회차가 끝난 예약만 집계한다. 건별 지급액 = 온라인 결제 잔액 − `commissionAmount` − `pgFeeAmount`. 현장 결제분은 플랫폼이 수금하지 않으므로 수수료만 차감(음수면 다음 정산에서 상계)한다.
 - 정산서에는 건별 유입 경로(`channel`, `source`)와 적용 규칙을 보여 주고, 사업자는 건별로 이의제기(`Report` 사유 `COMMISSION_DISPUTE`)할 수 있다.
-- 요율·상한·프로모션 값은 모두 운영 설정(`PlatformSetting`)이며 시장 조사의 제안값이다. 출시 전 확정이 필요하다.
+- 요율·최소·상한·프로모션 값은 모두 운영 설정(`PlatformSetting`)이며 시장 조사(`01` 6장, 보완 조사 반영)의 제안값이다. 출시 전 사업자 인터뷰로 확정한다.
+- 이번 범위에 넣지 않은 것(조사 문서의 권고, 운영자 결정 필요): 미이용 시 다음 이용 건으로 수수료 이월, 접점 로그 기반 "마켓 귀속 후보" 표시, 정산 방식 3개 모드 전환.
 
 ### 6.7 개최 확정(최소 인원)
 
@@ -236,7 +243,7 @@ CONFIRMED ─ 사업자 노쇼 처리 ─▶ NO_SHOW (환불 없음, 고객 노�
 | 제안 만료 | 시간 초과된 대기 제안을 넘기고 다음 대기자에게 제안 또는 공개 |
 | 리마인드 | 시작 전날·N시간 전 알림 |
 | 개최 판정 | 판정 시각이 지난 회차를 개최 확정하거나, 최소 인원 미달이면 취소·전액 환불 |
-| 재판매 환불 정리 | 시작된 회차의 미매칭 재판매 환불 대기(`resalePendingQty`)를 0 으로 정리 |
+| 재판매 환불 판정 | 시작된 회차마다 한 번: 다시 팔린 좌석만큼 추가 환불하고 재판매 환불 대기(`resalePendingQty`)를 0 으로 정리 |
 | 자동 완료 | 종료 후 일정 시간이 지난 확정 예약을 이용 완료 처리, 후기 요청 |
 | 결제 대사 | 결과가 불확실한 결제를 PG 에 다시 조회해 예약 확정 또는 환불 |
 | 발송 | MessageOutbox 대기 건 발송 |

@@ -23,7 +23,7 @@ import {
   type CommissionSettings,
   type ResolveCommissionInput,
 } from "@/server/services/commission";
-import { DEFAULT_SETTINGS, updateSettings } from "@/server/settings";
+import { DEFAULT_SETTINGS, getSettings, resetSettingsCache, updateSettings } from "@/server/settings";
 import { createBusiness, createCategory, createProduct, createSlot, createUser, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -359,6 +359,19 @@ describe("resolveCommission — 재방문 판정", () => {
     expect(await isNewCustomerFor(ctx.business.id, { phone: "" }, { now: NOW })).toBe(true);
     expect(await isNewCustomerFor(ctx.business.id, { userId: null, phone: "--" }, { now: NOW })).toBe(true);
   });
+
+  it("isNewCustomerFor: 트랜잭션 안에서는 판정 기간을 넘겨야 한다(트랜잭션 밖 연결로 설정을 읽지 않게)", async () => {
+    const ctx = await setup();
+    await insertHistory(ctx, new Date(NOW.getTime() - 5 * DAY));
+
+    await expect(prisma.$transaction((tx) => isNewCustomerFor(ctx.business.id, { phone: PHONE }, { now: NOW }, tx))).rejects.toThrow("windowDays");
+    expect(
+      await prisma.$transaction((tx) => isNewCustomerFor(ctx.business.id, { phone: PHONE }, { now: NOW, windowDays: S.returningWindowDays }, tx)),
+    ).toBe(false);
+    expect(
+      await prisma.$transaction((tx) => isNewCustomerFor(ctx.business.id, { phone: "01000000000" }, { now: NOW, windowDays: S.returningWindowDays }, tx)),
+    ).toBe(true);
+  });
 });
 
 describe("resolveCommission — 내 고객 카드", () => {
@@ -476,8 +489,11 @@ describe("resolveCommission — 입점 프로모션", () => {
 // ───────────────────────── 확정 트랜잭션용 스냅샷 ─────────────────────────
 
 describe("snapshotCommission", () => {
-  const snapshot = (booking: Parameters<typeof snapshotCommission>[1], now = new Date()) =>
-    prisma.$transaction((tx) => snapshotCommission(tx, booking, { now }));
+  /** 엔진과 같은 순서: 운영 설정은 트랜잭션을 열기 전에 읽어서 넘긴다. */
+  const snapshot = async (booking: Parameters<typeof snapshotCommission>[1], now = new Date()) => {
+    const settings = await getSettings();
+    return prisma.$transaction((tx) => snapshotCommission(tx, booking, { settings, now }));
+  };
 
   it("운영 설정·사업자·상품 분류를 읽어 판정한다(기본 설정)", async () => {
     const ctx = await setup({}, { commissionBps: null });
@@ -530,15 +546,19 @@ describe("snapshotCommission", () => {
   });
 
   it("남은 프로모션보다 많은 예약이 동시에 확정되면 남은 건수만 PROMO, 나머지는 프로모션 없이 다시 판정한다", async () => {
-    const ctx = await setup({ launchPromoUntil: new Date(Date.now() + DAY), launchPromoRemaining: 2 });
-    const bookings = [];
-    for (let i = 0; i < 8; i++) bookings.push(await insertBooking(ctx, { guestPhone: `0104444000${i}`, status: "PENDING_PAYMENT" }));
+    const ctx = await setup({ launchPromoUntil: new Date(Date.now() + DAY), launchPromoRemaining: 3 });
+    const bookings: Awaited<ReturnType<typeof insertBooking>>[] = [];
+    for (let i = 0; i < 30; i++) {
+      bookings.push(await insertBooking(ctx, { guestPhone: `010444400${String(i).padStart(2, "0")}`, status: "PENDING_PAYMENT" }));
+    }
+    // 설정 캐시가 비어 있고 동시 트랜잭션이 연결 풀보다 많아도, 설정을 트랜잭션 밖에서 읽으므로 서로를 기다리지 않는다.
+    resetSettingsCache();
 
     const results = await Promise.all(bookings.map((b) => snapshot(b)));
 
     const rules = results.map((r) => r.rule);
-    expect(rules.filter((r) => r === "PROMO")).toHaveLength(2);
-    expect(rules.filter((r) => r === "MARKET_NEW")).toHaveLength(6);
+    expect(rules.filter((r) => r === "PROMO")).toHaveLength(3);
+    expect(rules.filter((r) => r === "MARKET_NEW")).toHaveLength(27);
     for (const r of results.filter((x) => x.rule === "MARKET_NEW")) {
       expect(r.bps).toBe(DEFAULT_SETTINGS.commissionNewCustomerBps);
       expect(r.pgFeeAmount).toBe(0);

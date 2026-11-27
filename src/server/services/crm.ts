@@ -16,6 +16,8 @@ import { PLAN_FEATURES } from "@/server/settings";
  * - 예약 엔진이 recordBookingEvent 로 예약·취소·이용 완료·노쇼를 알려 주면 카드와 횟수를 자동으로 맞춘다.
  * - 사업자가 직접 등록(MANUAL)하거나 가져온(IMPORTED) 카드는 수수료 판정에서 '내 고객'의 근거가 되므로,
  *   이미 있는 카드의 유입 경로(source)는 어떤 경로로도 바꾸지 않는다.
+ * - 유입 경로는 "처음 만난 경로"다. 남는자리(탐색·대기)로 먼저 예약한 번호는 그 예약이 확정되지 않아
+ *   카드가 아직 없더라도, 나중에 직접 등록·가져오기·직접 입력 예약으로 카드를 만들 때 '남는자리'로 남긴다.
  * - 조회는 스태프 이상, 변경·가져오기·내보내기는 매니저 이상.
  */
 
@@ -75,19 +77,49 @@ const SOURCE_BY_CHANNEL: Record<BookingChannel, CustomerSource> = {
   MANUAL: "MANUAL",
 };
 
+/** 남는자리가 데려온 예약의 채널 */
+const PLATFORM_CHANNELS: BookingChannel[] = ["MARKETPLACE", "WAITLIST"];
+
+/**
+ * 주어진 번호 가운데 이 사업장에 남는자리(탐색·대기)로 예약한 적이 있는 번호(예약 상태와 무관).
+ * before 를 주면 그 시각보다 먼저 만든 예약만 본다.
+ * 승인 대기·거절·시간 초과처럼 카드가 생기기 전의 예약에서 연락처를 보고 직접 등록해
+ * 이후 예약을 '내 고객'(중개 수수료 0)으로 돌리는 것을 막는 근거다.
+ */
+async function phonesFirstSeenOnPlatform(db: Db, businessId: string, phones: string[], before?: Date): Promise<Set<string>> {
+  if (phones.length === 0) return new Set();
+  const rows = await db.booking.findMany({
+    where: {
+      businessId,
+      guestPhone: { in: phones },
+      channel: { in: PLATFORM_CHANNELS },
+      ...(before ? { createdAt: { lt: before } } : {}),
+    },
+    select: { guestPhone: true },
+    distinct: ["guestPhone"],
+  });
+  return new Set(rows.map((row) => row.guestPhone));
+}
+
 /**
  * 예약 흐름의 사건을 고객 카드에 반영한다. (사업장, 전화번호)로 카드를 찾고 없으면 만든다.
  * - BOOKED: 예약이 확정됐을 때 한 번. 예약 수 +1, 최근 예약일 갱신
  * - CANCELLED: 취소 수 +1 / COMPLETED: 이용 완료 수 +1, 누적 결제액·최근 방문일 갱신
  * - NO_SHOW: 노쇼 수 +1 / NO_SHOW_REVERTED: 노쇼 수 −1(0 아래로 내려가지 않음)
  * 전화번호가 비어 있으면(외부 판매 자리 등) 아무것도 하지 않는다.
- * 유입 경로는 카드를 처음 만들 때의 채널로만 정하고 이후에는 바꾸지 않는다.
+ * 유입 경로는 카드를 처음 만들 때의 채널로만 정하고 이후에는 바꾸지 않는다. 직접 입력 예약이라도
+ * 그 번호가 남는자리로 먼저 예약한 적이 있으면 '남는자리'로 만든다.
  * 횟수는 원자적으로 증감하므로 트랜잭션 안(tx)과 밖 어디서 불러도 된다.
  */
 export async function recordBookingEvent(booking: CrmBooking, event: CrmBookingEvent, db: Db = prisma): Promise<void> {
   const phone = digitsOnly(booking.guestPhone);
   if (!phone) return;
   const now = new Date();
+
+  let source = SOURCE_BY_CHANNEL[booking.channel];
+  if (source === "MANUAL" && (await phonesFirstSeenOnPlatform(db, booking.businessId, [phone], booking.createdAt)).has(phone)) {
+    source = "MARKETPLACE";
+  }
 
   // 이미 있는 카드는 건드리지 않는다(ON CONFLICT DO NOTHING).
   await db.businessCustomer.createMany({
@@ -97,7 +129,7 @@ export async function recordBookingEvent(booking: CrmBooking, event: CrmBookingE
         userId: booking.userId,
         name: booking.guestName.trim().slice(0, MAX_NAME_LENGTH) || UNNAMED,
         phone,
-        source: SOURCE_BY_CHANNEL[booking.channel],
+        source,
         firstSeenAt: now,
       },
     ],
@@ -471,13 +503,24 @@ export async function updateCustomer(actorUserId: string, customerId: string, pa
 
 const ALREADY_REGISTERED = "이미 등록된 번호예요. 고객 목록에서 검색해 보세요.";
 
-/** 고객 직접 등록(매니저 이상). 같은 번호의 카드가 이미 있으면 덮어쓰지 않고 CONFLICT 를 낸다. */
+/**
+ * 고객 직접 등록(매니저 이상). 같은 번호의 카드가 이미 있으면 덮어쓰지 않고 CONFLICT 를 낸다.
+ * 카드는 '직접 등록'(MANUAL)으로 만든다. 단, 남는자리로 먼저 예약한 적이 있는 번호는 '남는자리'(MARKETPLACE)로 만든다.
+ */
 export async function addManualCustomer(actorUserId: string, businessId: string, input: CustomerInput): Promise<CustomerDetail> {
   await assertBusinessAccess(actorUserId, businessId, "MANAGER");
   const data = parseInput(customerInputSchema, input);
+  const viaPlatform = await phonesFirstSeenOnPlatform(prisma, businessId, [data.phone]);
   try {
     const customer = await prisma.businessCustomer.create({
-      data: { businessId, name: data.name, phone: data.phone, memo: data.memo ?? null, tags: data.tags ?? [], source: "MANUAL" },
+      data: {
+        businessId,
+        name: data.name,
+        phone: data.phone,
+        memo: data.memo ?? null,
+        tags: data.tags ?? [],
+        source: viaPlatform.has(data.phone) ? "MARKETPLACE" : "MANUAL",
+      },
     });
     await audit({
       actorId: actorUserId,
@@ -506,6 +549,7 @@ export interface ImportCustomersResult {
  * 기존 고객 명단 가져오기(매니저 이상, 한 번에 1~1,000명). 가져온 카드는 '가져온 고객'(IMPORTED)으로 만든다.
  * 형식이 틀린 줄과 앞 줄과 번호가 겹치는 줄은 invalid 로 돌려주고, 나머지는 그대로 등록한다.
  * 이미 카드가 있는 번호는 건너뛴다(유입 경로·메모·태그를 덮어쓰지 않는다).
+ * 남는자리로 먼저 예약한 적이 있는 번호는 카드는 만들되 '남는자리'(MARKETPLACE)로 남긴다.
  */
 export async function importCustomers(actorUserId: string, businessId: string, rows: CustomerInput[]): Promise<ImportCustomersResult> {
   await assertBusinessAccess(actorUserId, businessId, "MANAGER");
@@ -516,21 +560,32 @@ export async function importCustomers(actorUserId: string, businessId: string, r
 
   const invalid: ImportCustomersResult["invalid"] = [];
   const seen = new Set<string>();
-  const data: Prisma.BusinessCustomerCreateManyInput[] = [];
+  const valid: z.output<typeof customerInputSchema>[] = [];
   rows.forEach((raw, index) => {
     const parsed = customerInputSchema.safeParse(raw);
     if (!parsed.success) {
       invalid.push({ row: index + 1, reason: parsed.error.issues[0]?.message ?? "내용을 확인해 주세요." });
       return;
     }
-    const row = parsed.data;
-    if (seen.has(row.phone)) {
+    if (seen.has(parsed.data.phone)) {
       invalid.push({ row: index + 1, reason: "앞 줄과 전화번호가 같아요." });
       return;
     }
-    seen.add(row.phone);
-    data.push({ businessId, name: row.name, phone: row.phone, memo: row.memo ?? null, tags: row.tags ?? [], source: "IMPORTED" });
+    seen.add(parsed.data.phone);
+    valid.push(parsed.data);
   });
+
+  const viaPlatform = await phonesFirstSeenOnPlatform(prisma, businessId, [...seen]);
+  const data = valid.map(
+    (row): Prisma.BusinessCustomerCreateManyInput => ({
+      businessId,
+      name: row.name,
+      phone: row.phone,
+      memo: row.memo ?? null,
+      tags: row.tags ?? [],
+      source: viaPlatform.has(row.phone) ? "MARKETPLACE" : "IMPORTED",
+    }),
+  );
 
   const created = data.length > 0 ? (await prisma.businessCustomer.createMany({ data, skipDuplicates: true })).count : 0;
   const result: ImportCustomersResult = { created, skippedExisting: data.length - created, invalid };
@@ -548,7 +603,8 @@ export async function importCustomers(actorUserId: string, businessId: string, r
 
 // ── 내보내기 ──────────────────────────────────────────
 
-const CSV_BOM = "﻿";
+/** 엑셀이 UTF-8 로 읽게 하는 BOM. 보이지 않는 문자라 이스케이프로 적는다. */
+const CSV_BOM = "\uFEFF";
 const CSV_HEADER = ["이름", "전화번호", "유입 경로", "첫 등록", "최근 예약", "최근 방문", "예약", "이용 완료", "취소", "노쇼", "누적 결제액", "태그", "메모", "차단"];
 
 /**

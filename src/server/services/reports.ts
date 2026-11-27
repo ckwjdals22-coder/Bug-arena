@@ -32,6 +32,8 @@ export const REPORT_REASONS = [
 
 /** 회원 한 명이 하루에 접수할 수 있는 신고 건수 */
 export const REPORT_DAILY_LIMIT = 5;
+/** 회원 한 명이 한 시간에 시도할 수 있는 신고 횟수(접수되지 않은 시도 포함) */
+export const REPORT_ATTEMPT_HOURLY_LIMIT = 30;
 /** 노쇼 처리 후 이의제기할 수 있는 시간(docs 6.8) */
 export const NO_SHOW_DISPUTE_HOURS = 72;
 export const REPORT_DETAIL_MIN = 10;
@@ -74,7 +76,15 @@ export interface CreatedReport {
 
 const lockKey = (tx: Tx, key: string) => tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 
-const bookingSelect = { id: true, userId: true, businessId: true, status: true, noShowAt: true, updatedAt: true } satisfies Prisma.BookingSelect;
+const bookingSelect = {
+  id: true,
+  userId: true,
+  businessId: true,
+  productId: true,
+  status: true,
+  noShowAt: true,
+  updatedAt: true,
+} satisfies Prisma.BookingSelect;
 type ReportBooking = Prisma.BookingGetPayload<{ select: typeof bookingSelect }>;
 
 async function isBusinessMember(userId: string, businessId: string): Promise<boolean> {
@@ -131,9 +141,11 @@ async function resolveBooking(data: z.output<typeof createSchema>): Promise<Repo
   const isOwner = booking.userId === reporterId;
 
   if (reason === "COMMISSION_DISPUTE") {
-    // 수수료 판정 이의제기는 그 사업장의 대표·매니저만 할 수 있다.
+    // 수수료 판정 이의제기는 그 사업장의 대표·매니저만 할 수 있다. 구성원이 아니면 예약이 있는지도 알려 주지 않는다.
     if (!(await isBusinessMember(reporterId, booking.businessId))) throw err.notFound(BOOKING_NOT_FOUND);
-    await assertBusinessAccess(reporterId, booking.businessId, "MANAGER");
+    await assertBusinessAccess(reporterId, booking.businessId, "MANAGER").catch((e: unknown) => {
+      throw e instanceof AppError && e.code === "FORBIDDEN" ? err.forbidden("수수료 이의제기는 대표나 매니저만 신청할 수 있어요.") : e;
+    });
     return booking;
   }
 
@@ -142,6 +154,12 @@ async function resolveBooking(data: z.output<typeof createSchema>): Promise<Repo
   } else if (!isOwner && !(await isBusinessMember(reporterId, booking.businessId))) {
     // 참고로 붙이는 예약도 본인 예약이거나 본인 사업장의 예약이어야 한다.
     throw err.notFound(BOOKING_NOT_FOUND);
+  }
+  // 사업장·상품을 신고하면서 붙이는 예약은 그 사업장·상품의 예약이어야 한다(엉뚱한 예약으로 분쟁이 처리되지 않게).
+  const related =
+    targetType === "BUSINESS" ? booking.businessId === targetId : targetType === "PRODUCT" ? booking.productId === targetId : true;
+  if (!related) {
+    throw err.validation("신고 대상에서 이용한 예약을 골라 주세요.", { bookingId: "신고 대상과 관련된 예약이 아니에요." });
   }
 
   if (reason === "NO_SHOW_DISPUTE") {
@@ -162,7 +180,7 @@ async function resolveBooking(data: z.output<typeof createSchema>): Promise<Repo
 export async function createReport(input: CreateReportInput): Promise<CreatedReport> {
   const data = parseInput(createSchema, input);
   // 대상 확인을 되풀이해 시도하는 것을 막는 한도(실패한 시도도 센다)
-  await enforceRateLimit(`report-attempt:user:${data.reporterId}`, 30, 3600);
+  await enforceRateLimit(`report-attempt:user:${data.reporterId}`, REPORT_ATTEMPT_HOURLY_LIMIT, 3600);
   const limitKey = `report:user:${data.reporterId}`;
   const countedAt = Date.now();
   await enforceRateLimit(

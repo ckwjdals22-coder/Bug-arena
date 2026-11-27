@@ -478,6 +478,54 @@ describe("updateProduct", () => {
     expect((await failure(updateProduct(owner.id, row.id, { title: "새 이름" }))).code).toBe("CONFLICT");
   });
 
+  it("동시에 서로 다른 항목을 고쳐도 서로의 변경을 덮어쓰지 않는다", async () => {
+    const { business, owner, category } = await setup();
+    const created = await createProduct(owner.id, business.id, validInput(category.id));
+
+    await Promise.all([
+      updateProduct(owner.id, created.id, { title: "동시 수정 제목" }),
+      updateProduct(owner.id, created.id, { summary: "동시 수정 소개" }),
+      updateProduct(owner.id, created.id, { notice: "동시 수정 유의 사항" }),
+      updateProduct(owner.id, created.id, { durationMin: 95 }),
+      updateProduct(owner.id, created.id, { maxPerBooking: 6 }),
+      updateProduct(owner.id, created.id, { tags: ["동시"] }),
+      updateProduct(owner.id, created.id, { minAge: 21 }),
+      updateProduct(owner.id, created.id, { requiresApproval: true }),
+    ]);
+
+    expect(await getProductForSeller(owner.id, created.id)).toMatchObject({
+      title: "동시 수정 제목",
+      summary: "동시 수정 소개",
+      notice: "동시 수정 유의 사항",
+      durationMin: 95,
+      maxPerBooking: 6,
+      tags: ["동시"],
+      minAge: 21,
+      requiresApproval: true,
+    });
+  });
+
+  it("따로는 괜찮지만 함께 저장되면 규칙이 깨지는 동시 수정은 하나만 통과한다", async () => {
+    const { business, owner, category } = await setup();
+
+    for (let round = 0; round < 5; round++) {
+      const created = await createProduct(owner.id, business.id, validInput(category.id, { paymentPolicy: "DEPOSIT", depositAmount: 10_000 }));
+
+      // 가격을 15,000원으로 낮추는 요청과 예약금을 20,000원으로 올리는 요청
+      const results = await Promise.allSettled([
+        updateProduct(owner.id, created.id, { basePrice: 15_000 }),
+        updateProduct(owner.id, created.id, { depositAmount: 20_000 }),
+      ]);
+
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      for (const r of results) {
+        if (r.status === "rejected") expect(r.reason).toMatchObject({ code: "VALIDATION", fieldErrors: { depositAmount: expect.any(String) } });
+      }
+      const after = await getProductForSeller(owner.id, created.id);
+      expect(after.depositAmount).toBeLessThanOrEqual(after.basePrice);
+    }
+  });
+
   it("이미 만든 회차의 좌석은 바뀌지 않는다", async () => {
     const { business, owner, category } = await setup();
     const created = await createProduct(owner.id, business.id, validInput(category.id));

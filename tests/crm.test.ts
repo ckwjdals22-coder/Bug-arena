@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { BookingChannel, MemberRole, Prisma } from "@/generated/prisma/client";
+import type { BookingChannel, BookingStatus, MemberRole, Prisma } from "@/generated/prisma/client";
 import { formatPhone, maskPhone } from "@/lib/format";
 import { newBookingCode, newToken } from "@/lib/ids";
 import { DAY } from "@/lib/time";
 import { prisma } from "@/server/db";
 import { AppError } from "@/server/errors";
+import { resolveCommission } from "@/server/services/commission";
 import {
   CUSTOMER_SOURCE_LABEL,
   MAX_IMPORT_ROWS,
@@ -19,7 +20,7 @@ import {
   updateCustomer,
   type CrmBooking,
 } from "@/server/services/crm";
-import { PLAN_FEATURES } from "@/server/settings";
+import { DEFAULT_SETTINGS, PLAN_FEATURES } from "@/server/settings";
 import { createBusiness, createListing, createUser, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -234,6 +235,122 @@ describe("isBlockedCustomer", () => {
     expect(await isBlockedCustomer(business.id, { phone: "" })).toBe(false);
     // 다른 사업장의 차단은 영향을 주지 않는다.
     expect(await isBlockedCustomer(other.business.id, { userId: member.id, phone: PHONE })).toBe(false);
+  });
+});
+
+// ───────────────────────── 처음 만난 경로 ─────────────────────────
+
+describe("유입 경로는 처음 만난 경로다(남는자리로 먼저 예약한 번호는 직접 등록해도 '내 고객'이 되지 않는다)", () => {
+  type Listing = Awaited<ReturnType<typeof createListing>>;
+
+  /** 카드를 만들지 않고 예약 행만 넣는다(확정 전·거절·시간 초과 예약에는 카드가 없다). */
+  const insertBooking = (listing: Listing, overrides: Partial<Prisma.BookingUncheckedCreateInput> = {}) =>
+    prisma.booking.create({
+      data: {
+        code: newBookingCode(),
+        businessId: listing.business.id,
+        productId: listing.product.id,
+        slotId: listing.slot.id,
+        slotSeatId: listing.seat.id,
+        quantity: 1,
+        unitPrice: 30_000,
+        totalAmount: 30_000,
+        payNowAmount: 30_000,
+        status: "PENDING_APPROVAL",
+        paymentMethod: "ONLINE",
+        guestName: "김손님",
+        guestPhone: PHONE,
+        policySnapshot: [],
+        checkinToken: newToken(),
+        ...overrides,
+      },
+    });
+
+  it.each<[BookingChannel, BookingStatus, string]>([
+    ["MARKETPLACE", "PENDING_APPROVAL", "MARKETPLACE"],
+    ["MARKETPLACE", "REJECTED", "MARKETPLACE"],
+    ["MARKETPLACE", "EXPIRED", "MARKETPLACE"],
+    ["WAITLIST", "CANCELLED", "MARKETPLACE"],
+    ["DIRECT", "PENDING_APPROVAL", "MANUAL"],
+    ["MANUAL", "CONFIRMED", "MANUAL"],
+  ])("직접 등록: %s 채널의 %s 예약이 먼저 있던 번호 → %s", async (channel, status, source) => {
+    const listing = await createListing([{ capacity: 10 }]);
+    await insertBooking(listing, { channel, status });
+
+    const created = await addManualCustomer(listing.owner.id, listing.business.id, { name: "김손님", phone: PHONE });
+
+    expect(created.source).toBe(source);
+    expect(created.sourceLabel).toBe(CUSTOMER_SOURCE_LABEL[source as keyof typeof CUSTOMER_SOURCE_LABEL]);
+  });
+
+  it("직접 등록: 다른 사업장·다른 번호의 남는자리 예약은 상관없다", async () => {
+    const mine = await createListing([{ capacity: 10 }]);
+    const other = await createListing([{ capacity: 10 }]);
+    await insertBooking(other, { status: "CONFIRMED" });
+    await insertBooking(mine, { status: "CONFIRMED", guestPhone: "01077770000" });
+
+    expect((await addManualCustomer(mine.owner.id, mine.business.id, { name: "김손님", phone: PHONE })).source).toBe("MANUAL");
+  });
+
+  it("가져오기: 남는자리로 먼저 예약한 번호만 '남는자리'로, 나머지는 '가져온 고객'으로 만든다", async () => {
+    const listing = await createListing([{ capacity: 10 }]);
+    await insertBooking(listing, { guestPhone: "01010000001", status: "PENDING_APPROVAL" });
+    await insertBooking(listing, { guestPhone: "01010000002", status: "REJECTED", channel: "WAITLIST" });
+    await insertBooking(listing, { guestPhone: "01010000003", status: "CONFIRMED", channel: "DIRECT" });
+
+    const result = await importCustomers(listing.owner.id, listing.business.id, [
+      { name: "승인 대기", phone: "010-1000-0001" },
+      { name: "거절됨", phone: "01010000002" },
+      { name: "내 링크", phone: "01010000003" },
+      { name: "처음 보는 번호", phone: "01010000004" },
+    ]);
+
+    expect(result).toEqual({ created: 4, skippedExisting: 0, invalid: [] });
+    expect((await cardOrThrow(listing.business.id, "01010000001")).source).toBe("MARKETPLACE");
+    expect((await cardOrThrow(listing.business.id, "01010000002")).source).toBe("MARKETPLACE");
+    expect((await cardOrThrow(listing.business.id, "01010000003")).source).toBe("IMPORTED");
+    expect((await cardOrThrow(listing.business.id, "01010000004")).source).toBe("IMPORTED");
+  });
+
+  it("직접 입력 예약: 남는자리 예약이 먼저 있었으면 '남는자리', 직접 입력이 먼저였으면 '직접 등록'", async () => {
+    const listing = await createListing([{ capacity: 10 }]);
+    const earlier = new Date(Date.now() - 2 * DAY);
+    const later = new Date(Date.now() - DAY);
+
+    // 남는자리 예약(거절) → 같은 번호를 직접 입력으로 예약
+    await insertBooking(listing, { guestPhone: "01010000001", status: "REJECTED", createdAt: earlier });
+    await recordBookingEvent(crmBooking(listing.business.id, { guestPhone: "01010000001", channel: "MANUAL", createdAt: later }), "BOOKED");
+    expect(await cardOrThrow(listing.business.id, "01010000001")).toMatchObject({ source: "MARKETPLACE", bookingCount: 1 });
+
+    // 직접 입력 예약이 먼저였고, 남는자리 예약은 그 뒤에 들어온 경우
+    await insertBooking(listing, { guestPhone: "01010000002", status: "PENDING_PAYMENT", createdAt: later });
+    await recordBookingEvent(crmBooking(listing.business.id, { guestPhone: "01010000002", channel: "MANUAL", createdAt: earlier }), "BOOKED");
+    expect((await cardOrThrow(listing.business.id, "01010000002")).source).toBe("MANUAL");
+  });
+
+  it("수수료 판정: 승인 대기 중에 연락처를 보고 직접 등록해도 그 고객의 다음 예약은 '내 고객'이 아니다", async () => {
+    const listing = await createListing([{ capacity: 10 }]);
+    const business = await prisma.business.findUniqueOrThrow({ where: { id: listing.business.id } });
+    const resolve = (phone: string) =>
+      resolveCommission({
+        business,
+        categoryCommissionBps: null,
+        channel: "MARKETPLACE",
+        phone,
+        quantity: 1,
+        totalAmount: 30_000,
+        payNowAmount: 30_000,
+        settings: DEFAULT_SETTINGS,
+        now: new Date(Date.now() + DAY),
+      });
+    await insertBooking(listing, { status: "REJECTED" });
+
+    await addManualCustomer(listing.owner.id, listing.business.id, { name: "김손님", phone: PHONE });
+    await addManualCustomer(listing.owner.id, listing.business.id, { name: "원래 단골", phone: "01088887777" });
+
+    expect((await resolve(PHONE)).rule).not.toBe("OWN_CUSTOMER");
+    // 남는자리와 상관없이 직접 등록한 고객은 그대로 '내 고객'이다.
+    expect((await resolve("01088887777")).rule).toBe("OWN_CUSTOMER");
   });
 });
 
