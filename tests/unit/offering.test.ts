@@ -83,6 +83,7 @@ describe('헌금함: 헌납 타임', () => {
     t.send(a.conn, { t: 'offer' })
     expect(t.host.of(a.conn, 'offered')).toEqual([])
     expect(t.host.of(a.conn, 'err')[0]?.code).toBe('far')
+    expect(t.host.of(a.conn, 'err')[0]?.msg).toBe('가상 헌금함이 너무 멀어요.')
     expect(t.npc(1).offered).toBe(false)
   })
 

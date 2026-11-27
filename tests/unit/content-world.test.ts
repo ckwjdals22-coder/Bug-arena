@@ -263,7 +263,8 @@ describe('업적', () => {
       ['fail10', 'worstStreak', 10, 20],
       ['reject100', 'rejects', 100, 50],
       ['king3', 'kings', 3, 30],
-      ['fol50', 'joins', 50, 60],
+      // '신도 50명' 은 HUD 의 신도 수와 같은 값(얻은 신도 누계)을 본다
+      ['fol50', 'folTotal', 50, 60],
     ]
     for (const [id, stat, gte, inf] of kept) {
       const a = ACHIEVEMENT_BY_ID.get(id)
@@ -274,7 +275,8 @@ describe('업적', () => {
 
   it('주요 통계마다 정해진 단계가 있다', () => {
     const ladder: Record<string, number[]> = {
-      joins: [1, 10, 50, 200, 1000],
+      joins: [1],
+      folTotal: [10, 50, 200, 1000],
       rejects: [10, 100, 500],
       worstStreak: [5, 10],
       bestStreak: [3, 7, 12],

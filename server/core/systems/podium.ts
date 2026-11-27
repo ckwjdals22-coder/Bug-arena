@@ -14,8 +14,12 @@ import {
   INF_PROPHECY,
   INF_SERMON_JOIN,
   INF_SERMON_LEADER,
+  INF_SERMON_SOLO,
   MAX_ENTOURAGE,
   PROPHECY_COOLDOWN_MS,
+  PROPHECY_PAY_SLOTS,
+  PROPHECY_PAY_WINDOW_MS,
+  SERMON_SOLO_CONVERTS,
   SERMON_DURATION_MS,
   SERMON_ROOM_COOLDOWN_MS,
   SERMON_ROUNDS,
@@ -90,6 +94,17 @@ export function createPodiumSystem(): RoomSystem {
   }
   const rallyMult = (): number => (room.now() < rallyUntil ? RALLY_MULT : 1)
 
+  /** 계시 보상 칸(쿨타임 표에 둔다 → 재접속해도 유지). 남았으면 하나 쓰고 true */
+  function takeProphecyPay(p: PlayerState, now: number): boolean {
+    for (let i = 0; i < PROPHECY_PAY_SLOTS; i++) {
+      const key = 'podium.pay' + String(i)
+      if ((p.cd.get(key) ?? 0) > now) continue
+      p.cd.set(key, now + PROPHECY_PAY_WINDOW_MS)
+      return true
+    }
+    return false
+  }
+
   // ───────── 오늘의 계시 ─────────
   function pickProphecy(): number {
     const n = PROPHECIES.length
@@ -119,7 +134,8 @@ export function createPodiumSystem(): RoomSystem {
       return [npcKey(n.id), line]
     })
     room.broadcast({ t: 'prophecy', p: p.id, text, re })
-    room.grant(p, { why: 'prophecy', inf: INF_PROPHECY * rallyMult() })
+    // 계시 자체(방송·버프·농담)는 언제나 되지만, 영향력은 10분에 정해진 횟수까지만(단상에 서서 계시만 반복하는 농사 방지)
+    if (takeProphecyPay(p, room.now())) room.grant(p, { why: 'prophecy', inf: INF_PROPHECY * rallyMult() })
     room.bump(p, STAT.prophecies)
     p.buff = Math.max(p.buffUntil > room.now() ? p.buff : 0, PROPHECY_BUFF)
     p.buffUntil = Math.max(p.buffUntil, room.now() + PROPHECY_BUFF_MS)
@@ -221,7 +237,11 @@ export function createPodiumSystem(): RoomSystem {
       // 분모는 실제로 끝까지 남은 참여자 수. 중간에 나간 사람 때문에 남은 사람의 게이지가 깎이지 않게 한다
       const denom = SERMON_ROUNDS * Math.max(1, joined.length)
       score = Math.max(0, Math.min(100, Math.round((100 * total) / denom)))
-      const want = Math.min(SERMON_MAX_CONVERTS, Math.floor(score / 34) + (joined.length >= 3 ? 1 : 0) + (joined.length >= 6 ? 1 : 0))
+      // 교주 혼자 연 설교(참여자가 교주뿐)는 게이지가 차도 합류 1명·영향력 INF_SERMON_SOLO 까지만.
+      // 집단 설교의 보상은 '사람이 모였을 때' 나와야 한다(혼자 단상에서 응답 버튼만 누르는 농사 방지)
+      const solo = joined.length < 2
+      const cap = solo ? SERMON_SOLO_CONVERTS : SERMON_MAX_CONVERTS
+      const want = Math.min(cap, Math.floor(score / 34) + (joined.length >= 3 ? 1 : 0) + (joined.length >= 6 ? 1 : 0))
       const slots = Math.max(0, MAX_ENTOURAGE - room.npcs.followersOf(leader.id).length)
       const crowd = s.gathered
         .map((id) => room.npcs.get(id))
@@ -233,7 +253,7 @@ export function createPodiumSystem(): RoomSystem {
       for (let i = 0; i < converts; i++) room.npcs.startFollow(crowd[i]!, leader.id, now + FOLLOW_DURATION_MS, now)
 
       const mult = rallyMult()
-      room.grant(leader, { why: 'sermon', inf: INF_SERMON_LEADER * mult, fol: converts })
+      room.grant(leader, { why: 'sermon', inf: solo ? INF_SERMON_SOLO : INF_SERMON_LEADER * mult, fol: converts })
       room.bump(leader, STAT.sermonsLed)
       for (const id of responders) {
         if (id === leader.id) continue

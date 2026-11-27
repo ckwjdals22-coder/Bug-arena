@@ -8,7 +8,9 @@ import {
   PATROL_ALERT_MS,
   PATROL_CHASE_MS,
   PATROL_COOLDOWN_MS,
+  PATROL_GRACE_JOINS,
   PATROL_LINES,
+  PATROL_SEE_RANGE,
   PATROL_STUN_MS,
   createPatrolSystem,
 } from '../../server/core/systems/patrol'
@@ -22,8 +24,15 @@ function patrolOf(t: T): NpcState {
   return n
 }
 
-/** 단속반에게서 약 8m 떨어진 NPC 5(x=0,z=8) 옆에서 포교한다 */
-function pitchNear(t: T, who: { conn: number; id: number }, npcId = 5, rnd = R_NO): void {
+/** 새내기 유예(합류 PATROL_GRACE_JOINS 번 미만)를 넘긴 사람으로 만든다 */
+function veteran(t: T, who: { id: number }): void {
+  const stats = t.player(who.id).prog.stats
+  stats[STAT.joins] = Math.max(stats[STAT.joins] ?? 0, PATROL_GRACE_JOINS)
+}
+
+/** 단속반에게서 약 8m 떨어진 NPC 5(x=0,z=8) 옆에서 포교한다(새내기 유예는 넘긴 사람으로) */
+function pitchNear(t: T, who: { conn: number; id: number }, npcId = 5, rnd = R_NO, fresh = false): void {
+  if (!fresh) veteran(t, who)
   t.talk(who, npcId)
   t.pitch(who, npcId, rnd)
 }
@@ -86,7 +95,7 @@ describe('단속반: 등장과 순찰', () => {
 })
 
 describe('단속반: 발각과 추격', () => {
-  it('12m 안에서 포교하면 alert → 0.8초 뒤 chase, 방 전체가 본다', () => {
+  it('9m 안에서 포교하면 alert → 0.8초 뒤 chase, 방 전체가 본다', () => {
     const t = setup({ systems: [createPatrolSystem] })
     const a = t.join()
     const b = t.join()
@@ -106,7 +115,7 @@ describe('단속반: 발각과 추격', () => {
     expect(n.st).toBe(Anim.Run)
   })
 
-  it('12m 밖이거나 비밀 건물 안이면 못 본 척한다', () => {
+  it('9m 밖이거나 비밀 건물 안이면 못 본 척한다', () => {
     const t = setup({ systems: [createPatrolSystem] })
     const a = t.join()
     pitchNear(t, a, 1) // NPC 1(x=-12) 옆 → 단속반과 13m 이상
@@ -122,12 +131,39 @@ describe('단속반: 발각과 추격', () => {
     pa.z = 10 // 6m 거리지만 건물 안
     p.x = 0
     p.z = 16.5
+    veteran(t, a)
     t.send(a.conn, { t: 'talk', n: 2 })
     t.pitch(a, 2, R_NO)
     expect(phases(t, a.conn)).toEqual([])
   })
 
-  it('잡히면 3초 얼어붙고, 신도는 scatter 로 흩어지며, 누적 신도 수는 줄지 않는다', () => {
+  it('보는 거리는 PATROL_SEE_RANGE(9m): 10m 떨어진 포교는 못 본 척한다', () => {
+    expect(PATROL_SEE_RANGE).toBe(9)
+    const t = setup({ systems: [createPatrolSystem] })
+    const a = t.join()
+    const pa = patrolOf(t)
+    const n5 = t.npc(5)
+    n5.x = pa.x + 11
+    n5.z = pa.z
+    pitchNear(t, a, 5) // 플레이어는 NPC 옆(+1m) → 단속반과 12m
+    expect(phases(t, a.conn)).toEqual([])
+  })
+
+  it('새내기 유예: 합류 3번 미만인 사람의 포교에는 호루라기를 불지 않는다', () => {
+    expect(PATROL_GRACE_JOINS).toBe(3)
+    const t = setup({ systems: [createPatrolSystem] })
+    const a = t.join()
+    const p = t.player(a.id)
+    p.prog.stats[STAT.joins] = 2
+    pitchNear(t, a, 5, R_NO, true)
+    expect(phases(t, a.conn)).toEqual([])
+    t.advance(PITCH_COOLDOWN_MS + 100)
+    p.prog.stats[STAT.joins] = 3
+    pitchNear(t, a, 6, R_NO, true)
+    expect(phases(t, a.conn)).toEqual(['alert'])
+  })
+
+  it('잡히면 3초 얼어붙고, 신도 절반(내림)이 scatter 로 흩어지며, 누적 신도 수는 줄지 않는다', () => {
     const t = setup({ systems: [createPatrolSystem] })
     const a = t.join()
     const b = t.join()
@@ -146,8 +182,9 @@ describe('단속반: 발각과 추격', () => {
     const caught = t.host.of(b.conn, 'patrol').find((m) => m.ph === 'caught')
     expect(caught).toMatchObject({ ph: 'caught', p: a.id, ms: PATROL_STUN_MS })
     expect(p.stunUntil).toBeGreaterThan(t.host.t + PATROL_STUN_MS - 200)
-    expect(t.sim.called('release:')).toEqual(['release:7:scatter', 'release:8:scatter'])
-    expect(t.room.npcs.followersOf(a.id)).toEqual([])
+    // 둘 중 하나(먼저 따라온 쪽)만 흩어지고 하나는 남는다
+    expect(t.sim.called('release:')).toEqual(['release:7:scatter'])
+    expect(t.room.npcs.followersOf(a.id).map((n) => n.id)).toEqual([8])
     expect(p.prog.fol).toBe(fol)
     expect(t.stat(a.id, STAT.caught)).toBe(caughtBefore + 1)
     t.advance(TICK)
@@ -222,7 +259,7 @@ describe('단속반: 발각과 추격', () => {
     }
   })
 
-  it('한 번에 한 명만 쫓고, 추격이 끝난 뒤 30초 동안은 아무도 쫓지 않는다', () => {
+  it('한 번에 한 명만 쫓고, 추격이 끝난 뒤 90초 동안은 아무도 쫓지 않는다', () => {
     const t = setup({ systems: [createPatrolSystem] })
     const a = t.join()
     const b = t.join()
@@ -243,7 +280,12 @@ describe('단속반: 발각과 추격', () => {
     pitchNear(t, b, 3)
     expect(t.host.of(b.conn, 'patrol').filter((m) => m.ph === 'alert')).toHaveLength(1)
     // 쿨타임이 지나면 다시 본다
-    t.advance(PATROL_COOLDOWN_MS - (t.host.t - endAt) + 100)
+    // (무응답 퇴장에 걸리지 않게 ping 을 보내며 기다린다)
+    for (let left = PATROL_COOLDOWN_MS - (t.host.t - endAt) + 100; left > 0; left -= 5000) {
+      t.send(a.conn, { t: 'ping', c: 1 })
+      t.send(b.conn, { t: 'ping', c: 1 })
+      t.advance(Math.min(5000, left))
+    }
     t.npc(4).x = n.x + 2
     t.npc(4).z = n.z
     pitchNear(t, b, 4)

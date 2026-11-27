@@ -10,7 +10,7 @@
  */
 import './hud.css'
 import { ROOM_CAPACITY } from '../../../shared/constants'
-import { CULT_COLORS, CULT_EMBLEMS, RANKS } from '../../../shared/content/core'
+import { CULT_COLORS, CULT_EMBLEMS, MAX_RANK, PRESTIGE_STEP, RANKS, nextPrestigeInf, prestigeOf, rankTitle } from '../../../shared/content/core'
 import type { RankDef } from '../../../shared/content/types'
 import type { RoomInfo } from '../../../shared/types'
 import type { AppContext, ContextAction, SfxName } from '../core/contracts'
@@ -305,7 +305,8 @@ export function mountHud(ctx: AppContext): void {
     const cult = prog?.cult ?? null
 
     setText(nameEl, store.profile.name)
-    setText(rankEl, rankName(prog?.rank ?? 0))
+    // 최고 직급 뒤에는 '우주급 절대교주 N회차'(칭호만 오르는 끝없는 회차)
+    setText(rankEl, rankTitle(prog?.rank ?? 0, prog?.inf ?? 0))
     setText(emblem, cult ? (CULT_EMBLEMS[cult.emblem] ?? '🚩') : '🙂')
     const color = cult ? cult.color : -1
     if (color !== lastEmblemColor) {
@@ -317,13 +318,24 @@ export function mountHud(ctx: AppContext): void {
     const inf = prog?.inf ?? 0
     const rp = rankProgress(inf, prog?.rank ?? 0)
     setText(infNum, fmt(inf))
-    setText(infNext, rp.next ? '/' + fmt(rp.next.inf) : '')
-    const pct = Math.round(rp.ratio * 100)
+    // 최고 직급이면 막대는 다음 회차까지의 진행도를 보여 준다
+    const atMax = !rp.next && (prog?.rank ?? 0) >= MAX_RANK
+    const prestigeAt = atMax ? nextPrestigeInf(inf) : 0
+    setText(infNext, rp.next ? '/' + fmt(rp.next.inf) : atMax ? '/' + fmt(prestigeAt) : '')
+    const ratio = atMax ? Math.max(0, Math.min(1, 1 - (prestigeAt - inf) / PRESTIGE_STEP)) : rp.ratio
+    const pct = Math.round(ratio * 100)
     if (pct !== lastBar) {
       lastBar = pct
       infFill.style.width = pct + '%'
     }
-    setTitle(infChip, rp.next ? `다음 직급 '${rp.next.name}'까지 영향력 ${fmt(rp.left)}` : '최고 직급에 도달했어요')
+    setTitle(
+      infChip,
+      rp.next
+        ? `다음 직급 '${rp.next.name}'까지 영향력 ${fmt(rp.left)}`
+        : atMax
+          ? `${prestigeOf(inf) + 1}회차까지 영향력 ${fmt(prestigeAt - inf)} (칭호만 바뀌어요)`
+          : '최고 직급에 도달했어요',
+    )
     infChip.classList.toggle('max', !rp.next)
 
     setText(folNum, fmt(prog?.fol ?? 0))

@@ -86,7 +86,7 @@ export interface PlayerState {
   talk: TalkSession | null
   /** 쿨타임: 키 → 다시 가능한 시각 */
   cd: Map<string, number>
-  /** 포교 확률 버프(춤/계시 등)와 만료 시각 */
+  /** 포교 확률 버프(단상 계시)와 만료 시각 */
   buff: number
   buffUntil: number
   /** 단속 등으로 얼어붙는 만료 시각 */
@@ -286,6 +286,12 @@ export interface PlayerMemory {
   keepUntil: number
   /** 마지막으로 서 있던 자리와 따라오던 신도(잠깐 자리를 비웠다 돌아오면 되찾는다) */
   last?: LastSeat
+  /**
+   * 나갈 때의 진행도와 그 유효 시각. 저장본은 1초에 한 번만 내려가므로, 나가기 직전에 받은 보상이
+   * 클라이언트 저장본에 없을 수 있다 → 곧(같은 pid 로) 다시 들어오면 이쪽이 더 새것일 때 이것을 쓴다.
+   */
+  prog?: Progress
+  progUntil?: number
 }
 
 export interface LastSeat {

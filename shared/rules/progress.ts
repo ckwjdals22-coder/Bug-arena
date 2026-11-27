@@ -44,6 +44,9 @@ export function normalizeProgress(raw: unknown, pid: string, now: number): Progr
       if (k.length <= 24) p.stats[k] = num(v, 1e9)
     }
   }
+  // 얻은 신도 누계(folTotal)가 생기기 전의 저장본: 지금까지의 누적 신도 수(prog.fol)로 채워 둔다(HUD 와 업적 진행이 같은 값을 보게)
+  const folTotal = p.stats['folTotal'] ?? 0
+  if (folTotal < p.fol) p.stats['folTotal'] = p.fol
   if (Array.isArray(r.ach)) p.ach = r.ach.filter((x): x is string => typeof x === 'string').slice(0, 300)
   if (r.items && typeof r.items === 'object') {
     for (const [k, v] of Object.entries(r.items as Record<string, unknown>)) {

@@ -8,7 +8,7 @@ import {
   PITCH_COOLDOWN_MS,
 } from '../../shared/constants'
 import { STAT } from '../../shared/content/core'
-import { createBattleSystem } from '../../server/core/systems/battle'
+import { BATTLE_CAP_CODE, BATTLE_PAIR_WINDOW_MS, createBattleSystem } from '../../server/core/systems/battle'
 import { R_JOIN, R_NO, setup } from './helpers'
 
 type T = ReturnType<typeof setup>
@@ -184,15 +184,76 @@ describe('포교 배틀: 진행과 결과', () => {
     expect(t.host.errors()).toEqual([])
   })
 
-  it('동점이면 무승부로 둘 다 같은 보상을 받는다', () => {
+  it('1:1 이상 동점이면 무승부로 둘 다 같은 보상을 받는다', () => {
+    const t = setup({ systems: [createBattleSystem], npcs: 9 })
+    const { a, b } = start(t)
+    t.talk(a, 1)
+    t.pitch(a, 1, R_JOIN)
+    t.talk(b, 2)
+    t.pitch(b, 2, R_JOIN)
+    const infA = t.player(a.id).prog.inf
+    advanceAlive(t, BATTLE_DURATION_MS + 200, [a, b])
+    expect(last(t.host.of(a.conn, 'battle'))).toMatchObject({ ph: 'end', winner: 0, b: { sa: 1, sb: 1 } })
+    const tie = Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2)
+    expect(t.player(a.id).prog.inf - infA).toBe(tie)
+    expect(t.stat(a.id, STAT.battles)).toBe(1)
+    expect(t.stat(b.id, STAT.battleWins)).toBe(0)
+  })
+
+  it('시간이 끝났는데 0:0 이면 무효: 보상도 전적도 없다(가만히 서서 배틀만 반복하는 농사 차단)', () => {
     const t = setup({ systems: [createBattleSystem] })
     const { a, b } = start(t)
     const infA = t.player(a.id).prog.inf
+    const infB = t.player(b.id).prog.inf
     advanceAlive(t, BATTLE_DURATION_MS + 200, [a, b])
-    expect(last(t.host.of(a.conn, 'battle'))).toMatchObject({ ph: 'end', winner: 0 })
-    const tie = Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2)
-    expect(t.player(a.id).prog.inf - infA).toBe(tie)
-    expect(t.stat(b.id, STAT.battleWins)).toBe(0)
+    expect(last(t.host.of(a.conn, 'battle'))).toMatchObject({ ph: 'end', winner: 0, b: { sa: 0, sb: 0 } })
+    expect(t.player(a.id).prog.inf).toBe(infA)
+    expect(t.player(b.id).prog.inf).toBe(infB)
+    expect(t.stat(a.id, STAT.battles)).toBe(0)
+    expect(t.stat(b.id, STAT.battles)).toBe(0)
+    expect(t.host.of(a.conn, 'feed').some((f) => f.k === 'battle' && f.text.includes('무효'))).toBe(true)
+  })
+
+  it('같은 두 사람은 10분에 세 판까지만 보상을 받는다(재접속해도 유지)', () => {
+    const t = setup({ systems: [createBattleSystem], npcs: 9 })
+    const a = t.join({ pid: 'battle-pair-a-0001' })
+    const b = t.join({ pid: 'battle-pair-b-0001' })
+    let npc = 1
+    const alive: Who[] = [a, b]
+    const round = (who: { a: Who; b: Who }): void => {
+      near(t, who.a, who.b)
+      t.send(who.a.conn, { t: 'battle', a: 'req', to: who.b.id })
+      t.send(who.b.conn, { t: 'battle', a: 'ans', from: who.a.id, ok: true })
+      t.talk(who.a, npc)
+      t.pitch(who.a, npc, R_JOIN)
+      npc = (npc % 9) + 1
+      advanceAlive(t, BATTLE_DURATION_MS + 200, alive)
+      advanceAlive(t, BATTLE_COOLDOWN_MS + 200, alive)
+    }
+    let pair = { a, b }
+    for (let i = 0; i < 3; i++) round(pair)
+    expect(t.stat(a.id, STAT.battleWins)).toBe(3)
+    expect(t.stat(b.id, STAT.battles)).toBe(3)
+    // 재접속해도 칸은 이어진다(쿨타임 표는 접속자 메모로 남는다). 저장본 없이 들어오므로 전적은 0부터 다시 센다
+    t.room.disconnect(a.conn)
+    const a2 = t.join({ pid: 'battle-pair-a-0001' })
+    alive.splice(0, alive.length, a2, b)
+    pair = { a: a2, b }
+    const before = t.player(a2.id).prog.inf
+    round(pair)
+    const joinGain = t.host.of(a2.conn, 'reward').filter((r) => r.why === 'join').reduce((s, r) => s + (r.inf ?? 0), 0)
+    expect(t.player(a2.id).prog.inf - before).toBe(joinGain) // 배틀 보상 없음
+    expect(t.stat(a2.id, STAT.battleWins)).toBe(0)
+    expect(t.host.of(a2.conn, 'err').some((e) => e.code === BATTLE_CAP_CODE)).toBe(true)
+    // 다른 상대와는 따로 센다
+    const c = t.join({ pid: 'battle-pair-c-0001' })
+    alive.push(c)
+    round({ a: a2, b: c })
+    expect(t.stat(a2.id, STAT.battleWins)).toBe(1)
+    // 10분이 지나면 다시 보상
+    advanceAlive(t, BATTLE_PAIR_WINDOW_MS, [a2, b, c])
+    round(pair)
+    expect(t.stat(a2.id, STAT.battleWins)).toBe(2)
   })
 
   it('점수 없이 한쪽이 나가면 무효다(승리·보상 없음, 배틀은 정리된다)', () => {

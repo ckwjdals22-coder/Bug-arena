@@ -6,6 +6,7 @@
  * - 시민(NPC)은 평범한 사람들이고, 거절·도망은 시민이 옳았다는 쪽으로만 쓴다.
  * - 실제 포교 기법·연락처 요구·불안 조장 문구는 쓰지 않는다.
  */
+import { rankTitle } from '../../../shared/content/core'
 import type { CultRef, Look } from '../../../shared/types'
 
 /** 카드를 그리는 데 필요한 내 정보(스토어에서 뽑거나, 하네스에서 가짜로 만든다) */
@@ -157,7 +158,7 @@ export const VERDICTS: readonly (Verdict & { test: (s: SessionNumbers) => boolea
   {
     id: 'empty',
     icon: '🍃',
-    name: '무소유형',
+    name: '빈손형',
     roast: '신도 0명. 교단 운영비가 0원이라 효율은 최고.',
     comfort: '아무도 없으니 내부 분열도 없습니다.',
     test: (s) => s.joins === 0,
@@ -235,6 +236,11 @@ export const CERT_TITLES: readonly string[] = [
   '대교주 임명장',
   '우주급 절대교주 임명장',
 ]
+
+/** 카드에 찍을 직급 이름: 최고 직급 뒤에는 '우주급 절대교주 N회차' */
+export function rankLabel(p: Pick<ShareProfile, 'rank' | 'inf'>): string {
+  return rankTitle(p.rank, p.inf)
+}
 
 export function certTitle(rank: number): string {
   return CERT_TITLES[Math.max(0, Math.min(CERT_TITLES.length - 1, Math.floor(rank)))] ?? CERT_TITLES[0]!

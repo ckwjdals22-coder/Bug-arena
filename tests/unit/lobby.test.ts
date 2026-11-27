@@ -261,3 +261,25 @@ describe('인사(hello) 전 연결로 방을 잠글 수 없다', () => {
   })
 })
 
+describe('자동 증설은 자리 계산과 같은 기준(인사 전 연결은 최대 PENDING_SEAT_CAP 명)으로 센다', () => {
+  it('hello 를 보내지 않는 연결 무더기로는 빈 방이 늘지 않는다', () => {
+    const t = makeLobby(3, 20, 20)
+    for (let round = 0; round < 10; round++) {
+      for (const id of ['1', '2', '3']) t.pend(id, 16)
+      t.lobby.pick('auto')
+    }
+    expect(t.lobby.size).toBe(3)
+    expect(t.lobby.totalPlayers()).toBe(0)
+  })
+  it('진짜 접속자 + 상한까지의 대기 연결이 80% 를 넘으면 그때는 늘린다', () => {
+    const t = makeLobby(2, 5, 4)
+    // 5명 정원: 접속 3 + 대기 1(상한 안에서 센다) = 4 = 80%
+    for (const id of ['1', '2']) {
+      t.fill(id, 3)
+      t.pend(id, 9)
+    }
+    t.lobby.pick('auto')
+    expect(t.lobby.size).toBe(3)
+  })
+})
+

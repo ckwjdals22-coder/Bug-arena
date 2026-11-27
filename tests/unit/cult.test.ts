@@ -13,6 +13,7 @@ import {
   RECRUIT_INF,
   REPORT_MIN_INF,
   REPORT_MIN_SESSION_MS,
+  REPORT_WINDOW_MS,
   createCultSystem,
 } from '../../server/core/systems/cult'
 import { LOOK0, setup } from './helpers'
@@ -91,6 +92,8 @@ describe('교단 창설/수정/탈퇴', () => {
     expect(c.id).toMatch(/^c[0-9a-z]+$/)
     expect(t.host.of(b.conn, 'pu').some((m) => m.id === a.id && m.cult?.id === c.id)).toBe(true)
     expect(t.host.of(b.conn, 'feed').some((m) => m.k === 'cult')).toBe(true)
+    // 받침에 맞는 조사(사람들 → '을')
+    expect(t.host.of(b.conn, 'feed').some((m) => m.text.includes('「퇴근을 믿는 사람들」을 창설'))).toBe(true)
     expect(t.stat(a.id, STAT.cultsMade)).toBe(1)
     expect(reg.map.get(c.id)?.name).toBe('퇴근을 믿는 사람들')
     expect(t.player(a.id).saveDirty).toBe(true)
@@ -423,6 +426,45 @@ describe('신고', () => {
     t.send(rs[2]!.conn, { t: 'report', id: bad.id, why: 'spam' })
     expect(t.player(bad.id).mutedUntil).toBe(t.host.t + MUTE_MS)
     expect(t.host.of(bad.conn, 'err').at(-1)?.code).toBe('muted')
+  })
+
+  it('30분보다 오래된 신고는 세지 않는다: 6시간 간격의 신고 두 건으로는 개명되지 않는다', () => {
+    const t = make()
+    const target = t.join({ pid: 'device-tgt-1234567', name: '평범한이름' })
+    const r1 = t.join({ pid: 'device-r1-12345678' })
+    seasoned(t, r1)
+    t.send(r1.conn, { t: 'report', id: target.id, why: 'name' })
+    t.room.disconnect(target.conn)
+    t.room.disconnect(r1.conn)
+    t.advance(1000)
+    t.host.t += 6 * 3600_000
+    const target2 = t.join({ pid: 'device-tgt-1234567', name: '평범한이름' })
+    const r2 = t.join({ pid: 'device-r2-12345678' })
+    seasoned(t, r2)
+    t.send(r2.conn, { t: 'report', id: target2.id, why: 'name' })
+    expect(t.host.of(target2.conn, 'err').some((e) => e.code === 'renamed')).toBe(false)
+    expect(t.player(target2.id).name).toBe('평범한이름')
+    // 30분 안에 다른 사람이 한 번 더 신고하면 그때는 조치된다
+    const r3 = t.join({ pid: 'device-r3-12345678' })
+    seasoned(t, r3)
+    t.send(r3.conn, { t: 'report', id: target2.id, why: 'name' })
+    expect(t.host.of(target2.conn, 'err').some((e) => e.code === 'renamed')).toBe(true)
+  })
+
+  it('기준에 못 미친 오래된 신고 기록은 틱에서 지워진다', () => {
+    const t = make()
+    const target = t.join()
+    const r1 = t.join()
+    seasoned(t, r1)
+    t.send(r1.conn, { t: 'report', id: target.id, why: 'spam' })
+    // 31분 뒤 같은 사람의 신고 2건이 새로 들어와도 옛 신고와 합쳐 3건이 되지 않는다
+    t.wait(REPORT_WINDOW_MS + 60_000, [target.conn, r1.conn])
+    const r2 = t.join()
+    const r3 = t.join()
+    seasoned(t, r2, r3)
+    t.send(r2.conn, { t: 'report', id: target.id, why: 'spam' })
+    t.send(r3.conn, { t: 'report', id: target.id, why: 'spam' })
+    expect(t.player(target.id).mutedUntil).toBe(0)
   })
 
   it('기타 신고는 기록만 한다', () => {

@@ -299,11 +299,12 @@ export function mountTalk(ctx: AppContext): void {
   }
   const feet = { x: 0, y: 0 }
 
-  function showResult(o: PitchOutcome, npcId: number): void {
+  function showResult(o: PitchOutcome, npcId: number, sympathy = false): void {
     const view = RESULT[o] ?? RESULT.no
     resIcon.textContent = view.icon
     resTitle.textContent = pick(view.titles)
-    resSub.textContent = pick(view.subs).replace('{npc}', npcLabel(npcId).name)
+    // 거절이 한참 쌓인 끝의 합류는 실력이 아니라 동정표였음을 숨기지 않는다(웃음거리는 언제나 교주다)
+    resSub.textContent = pick(view.subs).replace('{npc}', npcLabel(npcId).name) + (sympathy ? ' (동정표 획득)' : '')
     result.className = 'talk-result ' + view.tone
     placeResult()
     // 결과 배너가 보이는 동안에는 자막·업적 배너가 그 위에 겹쳐 뜨지 않게 차례를 잡아 둔다
@@ -335,7 +336,7 @@ export function mountTalk(ctx: AppContext): void {
     clearTimeout(guardTimer)
     // 라이벌(기싸움)은 다른 시스템이 이어받으므로 여기서 단정하지 않는다
     if (msg.o === 'no' || msg.o === 'ignore' || msg.o === 'flee') refusedUntil.set(msg.n, performance.now() + NPC_REJECT_MEMORY_MS)
-    showResult(msg.o, msg.n)
+    showResult(msg.o, msg.n, msg.sym === true)
     ui.refreshContext()
   })
 

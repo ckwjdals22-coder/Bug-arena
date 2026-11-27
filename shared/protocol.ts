@@ -292,6 +292,8 @@ export interface SPitchRes {
   o: PitchOutcome
   /** NPC 대사 */
   say: string
+  /** 연속 실패 끝에 '동정표'로 넘어온 합류일 때만 실린다(화면에 "(동정표 획득)" 표시) */
+  sym?: true
 }
 /** 대화 종료(시간 초과 등) — 당사자에게만 */
 export interface STalkEnd {

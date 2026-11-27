@@ -62,6 +62,7 @@ import {
   parseJsonMsg,
 } from '../../shared/protocol'
 import { hashString, mulberry32, pick, type Rnd } from '../../shared/rng'
+import { withJosa } from '../../shared/rules/josa'
 import { checkNickname, cleanText } from '../../shared/rules/moderation'
 import { type PitchResult, pickLines, resolvePitch } from '../../shared/rules/pitch'
 import { newProgress, normalizeProgress, sanitizeLook } from '../../shared/rules/progress'
@@ -160,10 +161,29 @@ export const RESUME_GRACE_MS = 15_000
 export const REJOIN_MEMORY_MS = 5 * 60_000
 /** 이보다 짧게 머물렀고 신도도 없던 사람의 자리는 기억하지 않는다(스쳐 지나간 접속으로 메모가 쌓이지 않게) */
 const REJOIN_MIN_SESSION_MS = 20_000
+/** 나간 사람의 마지막 진행도를 기억해 두는 시간(방 옮기기·탭 다시 열기 직전에 받은 보상을 잃지 않게) */
+export const PROG_HANDOVER_MS = 60_000
 /** 닉네임을 다시 바꿀 수 있기까지의 시간 */
 export const NAME_CHANGE_COOLDOWN_MS = 5000
 /** 한 번에 내보내는 NPC 말풍선 수 상한 */
 const MAX_SAY_BATCH = 24
+/**
+ * 반복 이모트(춤·기도 등)는 켜 두기만 하면 계속 재생되므로, 통계(emotes/dances)에는 이 간격에 한 번만 센다.
+ * 버튼 연타로 '동작 300번' 같은 업적과 일일 수행을 몇 분 만에 찍어내지 못하게.
+ */
+export const LOOP_EMOTE_STAT_MS = 10_000
+/** 말풍선(빠른 대화)을 통계(says)에 세는 최소 간격 */
+export const SAY_STAT_MS = 5000
+
+/**
+ * 업적 소식을 방 전체 소식 줄에 올리는 기준: 비밀 업적이거나 보상이 이만큼 이상인 '굵직한' 업적만.
+ * 자잘한 업적까지 다 올리면 붐비는 방에서 소식 줄이 업적으로 도배되어 배틀·대집회 같은 소식이 밀려난다.
+ * (달성한 본인은 언제나 reward.ach 로 배너를 본다)
+ */
+export const ACH_FEED_MIN_INF = 60
+/** 방 하나에서 업적 소식을 올리는 최소 간격 */
+export const ACH_FEED_GAP_MS = 8000
+
 /** onStat → bump → onStat … 로 시스템끼리 물고 물리는 경우의 안전장치 */
 const MAX_STAT_DEPTH = 8
 
@@ -242,14 +262,6 @@ function utf8Length(s: string): number {
   return n
 }
 
-/** 받침에 따라 '로/으로' 를 붙인다(ㄹ 받침은 '로') */
-function withRo(word: string): string {
-  const code = word.charCodeAt(word.length - 1)
-  if (!(code >= 0xac00 && code <= 0xd7a3)) return `${word}(으)로`
-  const jong = (code - 0xac00) % 28
-  return word + (jong === 0 || jong === 8 ? '로' : '으로')
-}
-
 const round2 = (v: number): number => Math.round(v * 100) / 100
 
 function toDelta(v: unknown): number {
@@ -324,6 +336,8 @@ export class Room implements RoomApi {
   private lastSnapAt = 0
   private tickCount = 0
   private statDepth = 0
+  /** 마지막으로 업적 소식을 방송한 시각(방 전체 기준) */
+  private lastAchFeedAt = -Infinity
   private sayBuf: [number, string][] = []
   /** 스냅샷용 재사용 배열(틱마다 새로 만들지 않는다) */
   private readonly snapPlayers: PlayerState[] = []
@@ -635,7 +649,12 @@ export class Room implements RoomApi {
     if (p.prog.ach.includes(def.id)) return false
     p.prog.ach.push(def.id)
     this.applyGrant(p, { why: 'ach', inf: def.inf }, [def.id])
-    this.feed('ach', p.id, `${p.name}님이 업적 ‘${def.name}’ 달성!`)
+    // 방 전체 소식은 굵직한 업적만, 방마다 ACH_FEED_GAP_MS 에 한 줄까지(본인은 reward 의 배너로 이미 안다)
+    const now = this.host.now()
+    if ((def.secret === true || def.inf >= ACH_FEED_MIN_INF) && now - this.lastAchFeedAt >= ACH_FEED_GAP_MS) {
+      this.lastAchFeedAt = now
+      this.feed('ach', p.id, `${p.name}님이 업적 ‘${def.name}’ 달성!`)
+    }
     return true
   }
 
@@ -735,7 +754,27 @@ export class Room implements RoomApi {
     mem.nameLockUntil = p.nameLockUntil
     mem.lockedName = p.nameLockUntil > now ? p.name : ''
     mem.last = seat
-    let keep = Math.max(p.mutedUntil, p.nameLockUntil, mem.blocked.size > 0 ? now + BLOCK_MEMORY_MS : 0, seat ? now + REJOIN_MEMORY_MS : 0)
+    // 마지막 진행도: 저장본은 1초 간격이라 그 사이에 받은 보상이 클라이언트에 없을 수 있다.
+    // 아직 못 내려보낸 변경이 있을 때만 기억한다(클라이언트가 이미 최신 저장본을 갖고 있으면 기억할 것이 없다)
+    mem.prog = undefined
+    mem.progUntil = undefined
+    if (p.saveDirty) {
+      try {
+        const prog = JSON.parse(JSON.stringify(p.prog)) as Progress
+        prog.ts = now
+        mem.prog = prog
+        mem.progUntil = now + PROG_HANDOVER_MS
+      } catch (err) {
+        this.host.log('error', `[방 ${this.id}] 진행도 기억 중 예외`, err)
+      }
+    }
+    let keep = Math.max(
+      p.mutedUntil,
+      p.nameLockUntil,
+      mem.blocked.size > 0 ? now + BLOCK_MEMORY_MS : 0,
+      seat ? now + REJOIN_MEMORY_MS : 0,
+      mem.progUntil ?? 0,
+    )
     for (const [key, until] of mem.cd) {
       if (until <= now) mem.cd.delete(key)
       else if (until > keep) keep = until
@@ -945,9 +984,9 @@ export class Room implements RoomApi {
       return
     }
 
-    const prog = this.restoreProgress(msg.save, pid, now)
     // 쿨타임·차단·입막음·이름 고정은 재접속해도 이어진다
     const mem = this.recall(pid, now)
+    const prog = this.restoreProgress(msg.save, pid, now, mem)
     const nick = checkNickname(msg.name)
     // 신고로 이름이 바뀐 동안에는 hello 에 실어 보낸 옛 이름을 받아 주지 않는다
     const locked = mem.nameLockUntil > now && mem.lockedName !== ''
@@ -1101,19 +1140,38 @@ export class Room implements RoomApi {
     }
   }
 
-  private restoreProgress(save: unknown, pid: string, now: number): Progress {
+  /**
+   * 저장본을 검증해 진행도를 만든다. 방금 나간 같은 pid 의 진행도(mem.prog)가 기억에 있고 저장본보다 새것이면 그쪽을 쓴다
+   * (나가기 직전 1초 안에 받은 보상은 아직 저장본으로 내려가지 못했을 수 있다. 메모 저장소는 Node 에서 방끼리 공유된다).
+   */
+  private restoreProgress(save: unknown, pid: string, now: number, mem?: PlayerMemory): Progress {
+    let fromSave: Progress | null = null
+    let saveTs = -Infinity
     if (save && typeof save === 'object') {
       const { d, s } = save as { d?: unknown; s?: unknown }
       if (typeof d === 'string' && typeof s === 'string' && this.host.signer.verify(d, s)) {
         try {
-          const prog = normalizeProgress(JSON.parse(d) as unknown, pid, now)
-          if (prog) return prog
+          const raw = JSON.parse(d) as unknown
+          fromSave = normalizeProgress(raw, pid, now)
+          const ts = (raw as { ts?: unknown } | null)?.ts
+          if (typeof ts === 'number' && Number.isFinite(ts)) saveTs = ts
         } catch {
           /* 서명은 맞는데 JSON 이 아닌 경우는 사실상 없지만, 있더라도 새로 시작하면 된다 */
         }
       }
     }
-    return newProgress(pid, now)
+    const kept = mem?.prog
+    const keptOk = kept !== undefined && (mem?.progUntil ?? 0) > now && kept.pid === pid
+    if (mem) {
+      // 한 번 건네면 지운다(오래된 진행도가 나중에 다시 끼어들지 않게)
+      mem.prog = undefined
+      mem.progUntil = undefined
+    }
+    if (keptOk && (!fromSave || kept.ts > saveTs)) {
+      const prog = normalizeProgress(kept, pid, now)
+      if (prog) return prog
+    }
+    return fromSave ?? newProgress(pid, now)
   }
 
   private randomNickname(): string {
@@ -1284,8 +1342,16 @@ export class Room implements RoomApi {
     p.emote = def.loop ? def.id : null
     // 본인은 이미 재생 중이므로 다른 사람에게만
     this.broadcast({ t: 'emote', id: p.id, e: def.id }, p)
-    this.bump(p, STAT.emotes)
-    if (def.id === 'dance') this.bump(p, STAT.dances)
+    // 반복 이모트는 통계에 LOOP_EMOTE_STAT_MS 에 한 번만 센다(재생과 방송은 그대로)
+    let counts = true
+    if (def.loop) {
+      if (this.cdLeft(p, 'stat.loop', now) > 0) counts = false
+      else p.cd.set('stat.loop', now + LOOP_EMOTE_STAT_MS)
+    }
+    if (counts) {
+      this.bump(p, STAT.emotes)
+      if (def.id === 'dance') this.bump(p, STAT.dances)
+    }
     if (def.id === 'flee') this.bump(p, STAT.sprints)
     return true
   }
@@ -1300,7 +1366,11 @@ export class Room implements RoomApi {
     p.cd.set('say', now + SAY_COOLDOWN_MS)
     // 본인에게도 보낸다: 클라이언트가 자기 말풍선을 서버 확인 뒤에 띄우는 구현이어도 동작하게
     this.broadcast({ t: 'say', id: p.id, q })
-    this.bump(p, STAT.says)
+    // 통계(says)는 SAY_STAT_MS 에 한 번만 센다(말풍선 자체는 SAY_COOLDOWN_MS 마다 띄울 수 있다)
+    if (this.cdLeft(p, 'stat.say', now) <= 0) {
+      p.cd.set('stat.say', now + SAY_STAT_MS)
+      this.bump(p, STAT.says)
+    }
     return true
   }
 
@@ -1467,7 +1537,7 @@ export class Room implements RoomApi {
       this.rnd,
     )
     // 판정 결과(누가 무슨 멘트를 했고 NPC 가 뭐라 했는지)는 가로채기 여부와 무관하게 방 전체가 본다
-    this.broadcast({ t: 'pitchRes', p: p.id, n, l, o: result.outcome, say: result.say })
+    this.broadcast({ t: 'pitchRes', p: p.id, n, l, o: result.outcome, say: result.say, ...(result.sympathy ? { sym: true as const } : {}) })
 
     let intercepted = false
     for (const sys of this.systems) {
@@ -1654,9 +1724,11 @@ export class Room implements RoomApi {
     }
 
     this.send(p, reward)
+    // 얻은 신도 누계: 어떤 길로 얻었든(포교·설교·기싸움) HUD 의 신도 수와 같이 오른다 → '신도 N명' 업적이 HUD 와 맞는다
+    if (fol > 0) this.bump(p, STAT.folTotal, fol)
     if (rankUp) {
       const def = RANKS[rank]
-      if (def) this.feed('rank', p.id, `${p.name}님이 ${withRo(def.name)} 승급!`)
+      if (def) this.feed('rank', p.id, `${p.name}님이 ${withJosa(def.name, '으로')} 승급!`)
     }
     if (fields.length > 0) this.publish(p, fields)
     this.markSave(p)

@@ -8,6 +8,10 @@ import {
   INF_PROPHECY,
   INF_SERMON_JOIN,
   INF_SERMON_LEADER,
+  INF_SERMON_SOLO,
+  PROPHECY_PAY_SLOTS,
+  PROPHECY_PAY_WINDOW_MS,
+  SERMON_SOLO_CONVERTS,
   MAX_ENTOURAGE,
   PROPHECY_COOLDOWN_MS,
   SERMON_DURATION_MS,
@@ -114,6 +118,28 @@ describe('오늘의 계시', () => {
     t.toPodium(b)
     t.send(b.conn, { t: 'prophecy' })
     expect(t.host.of(a.conn, 'prophecy')).toHaveLength(3)
+  })
+
+  it('계시 영향력은 10분에 6번까지(계시·버프는 계속), 10분 뒤 다시 받는다', () => {
+    const t = make()
+    const a = t.join()
+    t.toPodium(a)
+    const say = (): void => {
+      t.send(a.conn, { t: 'prophecy' })
+      t.advance(PROPHECY_COOLDOWN_MS + 100)
+      t.send(a.conn, { t: 'ping', c: 1 })
+    }
+    for (let i = 0; i < 10; i++) say()
+    expect(t.host.of(a.conn, 'prophecy')).toHaveLength(10)
+    expect(t.rewards(a.conn, 'prophecy')).toHaveLength(PROPHECY_PAY_SLOTS)
+    expect(t.stat(a.id, STAT.prophecies)).toBe(10)
+    expect(t.player(a.id).buffUntil).toBeGreaterThan(t.host.t)
+    for (let left = PROPHECY_PAY_WINDOW_MS; left > 0; left -= 20_000) {
+      t.advance(20_000)
+      t.send(a.conn, { t: 'ping', c: 1 })
+    }
+    say()
+    expect(t.rewards(a.conn, 'prophecy')).toHaveLength(PROPHECY_PAY_SLOTS + 1)
   })
 
   it('최근 5개 계시는 반복하지 않는다', () => {
@@ -306,7 +332,8 @@ describe('집단 설교', () => {
 
   it.each([
     // [참여자 수, 각자 응답 라운드 수, 기대 게이지, 기대 합류]
-    [1, 3, 100, 2],
+    // 혼자 연 설교는 게이지가 100% 여도 1명까지
+    [1, 3, 100, 1],
     [1, 0, 0, 0],
     [2, 2, 67, 1],
     [3, 3, 100, 3],
@@ -329,6 +356,22 @@ describe('집단 설교', () => {
     expect(end.score).toBe(score)
     expect(end.converts).toBe(converts)
     expect(t.room.npcs.followersOf(ps[0]!.id)).toHaveLength(converts)
+  })
+
+  it('혼자 연 설교: 합류 1명·영향력 INF_SERMON_SOLO 까지만, 두 명부터 전액', () => {
+    const t = make(12)
+    const a = t.join()
+    t.toPodium(a)
+    t.send(a.conn, { t: 'sermon', a: 'start' })
+    const startedAt = t.last(a.conn)!.s!.startedAt
+    for (let r = 1; r <= SERMON_ROUNDS; r++) {
+      t.toCall(r, startedAt)
+      t.send(a.conn, { t: 'sermon', a: 'resp', r })
+    }
+    t.advance(SERMON_DURATION_MS)
+    expect(t.last(a.conn)).toMatchObject({ score: 100, converts: SERMON_SOLO_CONVERTS })
+    expect(t.rewards(a.conn, 'sermon')).toEqual([expect.objectContaining({ inf: INF_SERMON_SOLO, fol: SERMON_SOLO_CONVERTS })])
+    expect(INF_SERMON_SOLO).toBeLessThanOrEqual(10)
   })
 
   it('합류 수는 신도 정원과 모인 구경꾼 수로 제한된다', () => {

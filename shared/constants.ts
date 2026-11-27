@@ -62,6 +62,13 @@ export const INF_STREAK_BONUS = 2 // 연속 성공 1회당 추가
 export const INF_STREAK_MAX = 10
 export const INF_PROPHECY = 5
 export const INF_SERMON_LEADER = 25
+/** 혼자(참여자가 교주뿐) 연 설교의 교주 보상 상한. 혼자 단상에서 게이지를 채우는 농사를 막는다 */
+export const INF_SERMON_SOLO = 10
+/** 혼자 연 설교에서 합류하는 신도 상한 */
+export const SERMON_SOLO_CONVERTS = 1
+/** 계시는 20초마다 할 수 있지만 영향력은 PROPHECY_PAY_WINDOW_MS 동안 PROPHECY_PAY_SLOTS 번까지만 준다(버프·농담은 그대로) */
+export const PROPHECY_PAY_SLOTS = 6
+export const PROPHECY_PAY_WINDOW_MS = 10 * 60_000
 export const INF_SERMON_JOIN = 12
 export const INF_BATTLE_WIN = 30
 export const INF_BATTLE_LOSE = 8

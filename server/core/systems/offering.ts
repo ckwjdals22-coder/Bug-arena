@@ -83,7 +83,7 @@ export function createOfferingSystem(): RoomSystem {
       if (msg.t !== 'offer') return
       const box = room.world.offeringBox
       if (Math.hypot(p.x - box.x, p.z - box.z) > box.r + OFFER_REACH) {
-        room.send(p, { t: 'err', code: 'far', msg: '헌금함이 너무 멀어요.' })
+        room.send(p, { t: 'err', code: 'far', msg: '가상 헌금함이 너무 멀어요.' })
         return
       }
       if (room.cooldown(p, 'offer', OFFER_COOLDOWN_MS) > 0) return

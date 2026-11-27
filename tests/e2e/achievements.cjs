@@ -223,9 +223,14 @@ async function main() {
     })
 
     await check('춤 3번 → 진행도 3/3 + 수령 가능 토스트 + 메뉴 배지', async () => {
+      // 반복 이모트(춤)는 통계에 10초에 한 번만 센다(서버 LOOP_EMOTE_STAT_MS) → 10.3초 간격으로 세 번
       for (let i = 0; i < 3; i++) {
+        if (i > 0) {
+          await A.evaluate(() => window.__doas.net.send({ t: 'emote', e: '' }))
+          await sleep(10300)
+        }
         await A.evaluate(() => window.__doas.net.send({ t: 'emote', e: 'dance' }))
-        await sleep(700)
+        await sleep(400)
       }
       await waitFor(A, () => (window.__doas.store.me.prog.daily.prog.d_dance3 || 0) >= 3, null, 4000, 'd_dance3 3/3')
       await waitFor(A, () => window.__toasts.some((t) => t.includes('수행 완료')), null, 3000, '수행 완료 토스트')

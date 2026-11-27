@@ -138,6 +138,12 @@ export function mountBattle(ctx: AppContext): void {
     }
   }
 
+  /** 다음 결과 카드가 '보상 없는 친선 경기'인가(서버의 battleCap 안내가 end 보다 먼저 온다) */
+  let capped = false
+  bus.onMsg('err', (m) => {
+    if (m.code === 'battleCap') capped = true
+  })
+
   function showResult(b: BattleState, winner: number, left: boolean): void {
     const me = store.me
     if (!me) return
@@ -146,8 +152,12 @@ export function mountBattle(ctx: AppContext): void {
     const their = mineIsA ? b.sb : b.sa
     const won = winner === me.id
     const tie = winner === 0
-    // 상대가 나갔는데 내가 앞서 있지 않았다면 서버가 승부를 무효로 처리한다(보상·전적 없음)
-    const voided = left && tie
+    // 상대가 나갔는데 내가 앞서 있지 않았거나, 둘 다 0명(0:0)이면 서버가 승부를 무효로 처리한다(보상·전적 없음)
+    const scoreless = my + their === 0
+    const voided = tie && (left || scoreless)
+    // 같은 상대와 보상 상한을 넘긴 판(서버가 battleCap 으로 알려 준다)은 영향력 줄을 띄우지 않는다
+    const friendly = capped
+    capped = false
     const inf = tie ? Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2) : won ? INF_BATTLE_WIN : INF_BATTLE_LOSE
     clear(result)
     result.className = 'battle-result ' + (tie ? 'tie' : won ? 'win' : 'lose')
@@ -157,7 +167,11 @@ export function mountBattle(ctx: AppContext): void {
       h(
         'div.battle-result-text',
         voided
-          ? '상대가 자리를 떠서 없던 승부가 됐어요.'
+          ? scoreless && !left
+            ? '둘 다 한 명도 못 모아서 없던 승부가 됐어요.'
+            : '상대가 자리를 떠서 없던 승부가 됐어요.'
+          : friendly
+            ? '같은 상대와 너무 자주 붙어서 이번 판은 친선 경기예요.'
           : left && won
             ? '상대가 자리를 떴어요. 앞서고 있었으니 승리예요.'
             : tie
@@ -166,7 +180,7 @@ export function mountBattle(ctx: AppContext): void {
                 ? '오늘 이 거리의 포교왕은 당신이에요.'
                 : '괜찮아요. 거절도 수집이 됩니다.',
       ),
-      ...(voided ? [] : [h('div.battle-result-inf', `✨ 영향력 +${inf}`)]),
+      ...(voided || friendly ? [] : [h('div.battle-result-inf', `✨ 영향력 +${inf}`)]),
     )
     playSfx(ctx, tie ? 'pop' : won ? 'win' : 'lose')
     if (!tie) ctx.actions.emote(won ? 'cheer' : 'bow')

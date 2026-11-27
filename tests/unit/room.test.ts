@@ -64,7 +64,7 @@ import type {
   RoomSystem,
   RoomSystemFactory,
 } from '../../server/core/api'
-import { MAX_HELLO_BYTES, NAME_CHANGE_COOLDOWN_MS, Room } from '../../server/core/room'
+import { ACH_FEED_GAP_MS, ACH_FEED_MIN_INF, LOOP_EMOTE_STAT_MS, MAX_HELLO_BYTES, NAME_CHANGE_COOLDOWN_MS, Room, SAY_STAT_MS } from '../../server/core/room'
 import { createSigner } from '../../server/core/save'
 
 // ───────────────────────── 가짜 호스트 ─────────────────────────
@@ -684,7 +684,7 @@ describe('서명 저장본', () => {
     const t = setup()
     const a = t.join({ pid: 'saver-device-001' })
     const p = t.player(a.id)
-    t.room.grant(p, { why: 'test', inf: 150, fol: 4, coins: 9, items: ['sock', 'sock'] })
+    t.room.grant(p, { why: 'test', inf: 250, fol: 4, coins: 9, items: ['sock', 'sock'] })
     t.room.bump(p, STAT.joins, 4)
     t.room.unlockAchievement(p, ACHIEVEMENTS[0]!.id)
     t.advance(1100)
@@ -697,13 +697,13 @@ describe('서명 저장본', () => {
 
     const again = t.join({ pid: 'saver-device-001', save: last!.save })
     expect(again.w.me).toMatchObject({
-      inf: 150 + ACHIEVEMENTS[0]!.inf,
+      inf: 250 + ACHIEVEMENTS[0]!.inf,
       fol: 4,
       coins: 9,
       items: { sock: 2 },
       ach: [ACHIEVEMENTS[0]!.id],
     })
-    const rank = rankForInfluence(150 + ACHIEVEMENTS[0]!.inf)
+    const rank = rankForInfluence(250 + ACHIEVEMENTS[0]!.inf)
     expect(rank).toBeGreaterThanOrEqual(2)
     expect(again.w.me.rank).toBe(rank)
     expect(again.w.me.stats[STAT.joins]).toBe(4)
@@ -713,13 +713,13 @@ describe('서명 저장본', () => {
   it('조작된 저장본·남의 저장본은 버리고 새로 시작한다', () => {
     const t = setup()
     const a = t.join({ pid: 'saver-device-001' })
-    t.room.grant(t.player(a.id), { why: 'test', inf: 500 })
+    t.room.grant(t.player(a.id), { why: 'test', inf: 900 })
     t.advance(1100)
     const save = t.host.of(a.conn, 'save').pop()!.save
     t.room.disconnect(a.conn)
 
     // 내용만 고친 경우
-    const forged = { d: save.d.replace('"inf":500', '"inf":999999'), s: save.s }
+    const forged = { d: save.d.replace('"inf":900', '"inf":999999'), s: save.s }
     expect(forged.d).not.toBe(save.d)
     expect(t.join({ pid: 'saver-device-001', save: forged }).w.me).toMatchObject({ inf: 0, rank: 0 })
     t.room.disconnect(2)
@@ -734,7 +734,7 @@ describe('서명 저장본', () => {
       expect(t.join({ save: junk as unknown as SignedSave }).w.me.inf).toBe(0)
     }
     // 원본은 여전히 유효하다
-    expect(t.join({ pid: 'saver-device-001', save }).w.me).toMatchObject({ inf: 500, rank: 3 })
+    expect(t.join({ pid: 'saver-device-001', save }).w.me).toMatchObject({ inf: 900, rank: 3 })
     expect(t.host.errors()).toEqual([])
   })
 
@@ -1085,6 +1085,41 @@ describe('이모트', () => {
     expect(pa.emote).toBeNull()
   })
 
+  it('반복 이모트는 통계에 10초에 한 번만, 말풍선은 5초에 한 번만 센다(재생·방송은 그대로)', () => {
+    const t = setup()
+    const a = t.join()
+    const b = t.join()
+    t.host.clear()
+    // 0.6초 간격으로 춤 20번(12초): 방송은 20번, 통계는 0초·10초 두 번
+    for (let i = 0; i < 20; i++) {
+      t.send(a.conn, { t: 'emote', e: 'dance' })
+      t.host.t += 600
+    }
+    expect(t.host.of(b.conn, 'emote')).toHaveLength(20)
+    expect(t.stat(a.id, STAT.dances)).toBe(2)
+    expect(t.stat(a.id, STAT.emotes)).toBe(2)
+    // 다른 반복 이모트로 바꿔도 같은 창을 쓴다
+    t.send(a.conn, { t: 'emote', e: 'pray' })
+    expect(t.stat(a.id, STAT.emotes)).toBe(2)
+    // 1회성 이모트는 쿨타임마다 센다
+    t.host.t += EMOTE_COOLDOWN_MS + 10
+    t.send(a.conn, { t: 'emote', e: 'wave' })
+    expect(t.stat(a.id, STAT.emotes)).toBe(3)
+    t.host.t += LOOP_EMOTE_STAT_MS
+    t.send(a.conn, { t: 'emote', e: 'dance' })
+    expect(t.stat(a.id, STAT.dances)).toBe(3)
+
+    const q = QUICK_CHATS.find((x) => x.rank === 0)!.id
+    for (let i = 0; i < 8; i++) {
+      t.send(a.conn, { t: 'say', q })
+      t.host.t += SAY_COOLDOWN_MS + 10
+    }
+    // 1.51초 간격 8번(0 ~ 10.6초) → 0초와 6.04초 두 번만 센다
+    expect(t.host.of(b.conn, 'say')).toHaveLength(8)
+    expect(t.stat(a.id, STAT.says)).toBe(2)
+    expect(SAY_STAT_MS).toBe(5000)
+  })
+
   it('flee 는 스프린트 창을 열어 준다: 창 안에서는 빠른 이동 통과, 끝나면 거절', () => {
     const t = setup()
     const a = t.join()
@@ -1167,7 +1202,8 @@ describe('말풍선 / 프로필 / ping / 방 목록', () => {
       { t: 'say', id: a.id, q: q1 },
       { t: 'say', id: a.id, q: q2 },
     ])
-    expect(t.stat(a.id, STAT.says)).toBe(2)
+    // 통계는 SAY_STAT_MS(5초)에 한 번만 센다: 1.5초 간격 두 번은 1
+    expect(t.stat(a.id, STAT.says)).toBe(1)
     // 직급이 안 되는 말풍선은 방송하지 않는다
     const locked = QUICK_CHATS.find((q) => q.rank > 0)
     if (locked) {
@@ -2158,7 +2194,8 @@ describe('RoomApi', () => {
     const a = t.join({ name: '업적왕' })
     const b = t.join()
     const p = t.player(a.id)
-    const def = ACHIEVEMENTS[0]!
+    // 방 소식에 오르는 굵직한 업적(비밀이 아니고 보상 60 이상)
+    const def = ACHIEVEMENTS.find((x) => !x.secret && x.inf >= ACH_FEED_MIN_INF)!
     t.host.clear()
     expect(t.room.unlockAchievement(p, def.id)).toBe(true)
     expect(p.prog.ach).toEqual([def.id])
@@ -2181,6 +2218,31 @@ describe('RoomApi', () => {
     expect(p.prog.inf).toBe(def.inf)
     expect(t.host.json(a.conn)).toEqual([])
     expect(t.host.json(b.conn)).toEqual([])
+  })
+
+  it('업적 소식: 자잘한 업적은 본인 배너만, 굵직한 것도 방마다 8초에 한 줄', () => {
+    const t = setup()
+    const a = t.join({ name: '업적왕' })
+    const b = t.join()
+    const p = t.player(a.id)
+    const small = ACHIEVEMENTS.filter((x) => !x.secret && x.inf < ACH_FEED_MIN_INF)
+    const big = ACHIEVEMENTS.filter((x) => x.secret === true || x.inf >= ACH_FEED_MIN_INF)
+    t.host.clear()
+    for (const d of small.slice(0, 5)) t.room.unlockAchievement(p, d.id)
+    const achFeeds = () => t.host.of(b.conn, 'feed').filter((f) => f.k === 'ach')
+    expect(achFeeds()).toHaveLength(0)
+    // 본인은 매번 reward.ach 를 받는다(배너)
+    expect(t.host.of(a.conn, 'reward').filter((r) => r.ach && r.ach.length > 0)).toHaveLength(5)
+    // 굵직한 업적 세 개를 연달아: 첫 줄만
+    for (const d of big.slice(0, 3)) t.room.unlockAchievement(p, d.id)
+    expect(achFeeds()).toHaveLength(1)
+    // 8초 뒤에는 다시(다른 사람의 것이라도 같은 방 기준)
+    t.host.t += ACH_FEED_GAP_MS
+    t.room.unlockAchievement(t.player(b.id), big[3]!.id)
+    expect(achFeeds()).toHaveLength(2)
+    t.host.t += ACH_FEED_GAP_MS - 1
+    t.room.unlockAchievement(p, big[4]!.id)
+    expect(achFeeds()).toHaveLength(2)
   })
 
   it('cooldown: 가능하면 0 을 돌려주며 걸고, 쿨타임 중이면 남은 시간만 알려 준다', () => {

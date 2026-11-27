@@ -16,6 +16,7 @@ import {
 import { CULT_COLORS, CULT_EMBLEMS, CULT_MEMBER_TITLE, STAT } from '../../../shared/content/core'
 import type { ClientMsg, ClientMsgOf } from '../../../shared/protocol'
 import { hashString } from '../../../shared/rng'
+import { josaOf } from '../../../shared/rules/josa'
 import { checkCultName, checkTitle } from '../../../shared/rules/moderation'
 import type { CultRef, CultScore } from '../../../shared/types'
 import type { PlayerState, RoomApi, RoomSystem } from '../api'
@@ -35,6 +36,10 @@ export const RECRUIT_REWARD_WINDOW_MS = 10 * 60_000
 export const REPORT_NAME_THRESHOLD = 2
 export const REPORT_MUTE_THRESHOLD = 3
 export const MUTE_MS = 5 * 60_000
+/** 이보다 오래된 신고는 자동 조치에 세지 않는다(몇 시간 전 신고 하나와 오늘 신고 하나가 합쳐져 개명되지 않게) */
+export const REPORT_WINDOW_MS = 30 * 60_000
+/** 오래된 신고 기록을 지우는 주기 */
+const REPORT_PRUNE_MS = 60_000
 /**
  * 자동 조치에 세는 신고의 자격: 이 방에 REPORT_MIN_SESSION_MS 이상 머물렀고 영향력이 REPORT_MIN_INF 이상인 사람.
  * (신고자 구분은 클라이언트가 고른 pid 뿐이라, 소켓을 여러 개 열어 막 들어온 계정으로 남을 개명·입막음시키는 것을 어렵게 한다.
@@ -89,8 +94,9 @@ export function createCultSystem(): RoomSystem {
   const pending = new Map<number, Pending>()
   let fakes: FakeNo[] = []
   let refs: RefInvite[] = []
-  /** 신고 사유 → 대상 pid → 신고한 사람 pid 집합(같은 사람은 한 번만 센다) */
-  const reports = new Map<string, Map<string, Set<string>>>()
+  /** 신고 사유 → 대상 pid → 신고한 사람 pid → 마지막 신고 시각(같은 사람은 한 번만 센다) */
+  const reports = new Map<string, Map<string, Map<string, number>>>()
+  let lastPruneAt = 0
 
   const alive = (p: PlayerState): boolean => room.players.get(p.id) === p
 
@@ -180,7 +186,7 @@ export function createCultSystem(): RoomSystem {
       }
     } else {
       room.bump(p, STAT.cultsMade)
-      room.feed('cult', p.id, `${p.name}님이 새 교단 「${cult.name}」을(를) 창설했습니다!`)
+      room.feed('cult', p.id, `${p.name}님이 새 교단 「${cult.name}」${josaOf(cult.name, '을')} 창설했습니다!`)
     }
     room.send(p, { t: 'cultRes', ok: true })
   }
@@ -317,10 +323,13 @@ export function createCultSystem(): RoomSystem {
     // 자동 조치에는 '이 방에서 어느 정도 놀던 사람'의 신고만 센다(막 만든 계정 여러 개로 남을 제재하지 못하게)
     const now = room.now()
     if (now - p.joinedAt < REPORT_MIN_SESSION_MS || p.prog.inf < REPORT_MIN_INF) return
-    let set = byTarget.get(target.pid)
-    if (!set) byTarget.set(target.pid, (set = new Set()))
-    set.add(p.pid)
-    if (why === 'name' && set.size >= REPORT_NAME_THRESHOLD) {
+    let byReporter = byTarget.get(target.pid)
+    if (!byReporter) byTarget.set(target.pid, (byReporter = new Map()))
+    byReporter.set(p.pid, now)
+    // 최근 REPORT_WINDOW_MS 안의 신고만 센다
+    for (const [pid, at] of byReporter) if (now - at > REPORT_WINDOW_MS) byReporter.delete(pid)
+    const count = byReporter.size
+    if (why === 'name' && count >= REPORT_NAME_THRESHOLD) {
       byTarget.delete(target.pid)
       target.name = neutralName()
       // 바로 되돌리지 못하게 한동안 이름을 고정한다(재접속해도 유지)
@@ -328,10 +337,21 @@ export function createCultSystem(): RoomSystem {
       room.publish(target, ['name'])
       room.markSave(target)
       room.send(target, { t: 'err', code: 'renamed', msg: target.name })
-    } else if ((why === 'spam' || why === 'grief') && set.size >= REPORT_MUTE_THRESHOLD) {
+    } else if ((why === 'spam' || why === 'grief') && count >= REPORT_MUTE_THRESHOLD) {
       byTarget.delete(target.pid)
       target.mutedUntil = now + MUTE_MS
       room.send(target, { t: 'err', code: 'muted', msg: String(MUTE_MS) })
+    }
+  }
+
+  /** 기한이 지난 신고를 지운다. 기준에 못 미친 채 남은 대상이 방이 사는 동안 계속 쌓이지 않게 */
+  function pruneReports(now: number): void {
+    for (const [why, byTarget] of reports) {
+      for (const [target, byReporter] of byTarget) {
+        for (const [pid, at] of byReporter) if (now - at > REPORT_WINDOW_MS) byReporter.delete(pid)
+        if (byReporter.size === 0) byTarget.delete(target)
+      }
+      if (byTarget.size === 0) reports.delete(why)
     }
   }
 
@@ -452,6 +472,10 @@ export function createCultSystem(): RoomSystem {
       }
     },
     onTick(now) {
+      if (now - lastPruneAt >= REPORT_PRUNE_MS || now < lastPruneAt) {
+        lastPruneAt = now
+        pruneReports(now)
+      }
       for (const [id, inv] of pending) {
         if (inv.until > now) continue
         pending.delete(id)

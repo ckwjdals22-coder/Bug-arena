@@ -3,12 +3,13 @@
  * 돌발 이벤트 E2E: 단속반(발각 → 추격 → 훈방/따돌림) + 라이벌 기싸움 + 예능 자막.
  *  1) PC(A): 단속반 근처에서 포교 → alert/chase → 가만히 있다가 잡힘 → 3초 얼어붙음 → 다시 움직임
  *  2) PC(A): 단속반 쉬는 동안 라이벌(role 'rival')을 찾아 포교 → 기싸움 시트에서 선택 → 결과 배너 (확률: 제한 시간 안에 못 만나면 '미실행'으로 보고)
+ *  (단속반은 합류 3번 미만인 새내기를 못 본 척하므로, 두 사람 다 '합류 5번' 서명 저장본을 들고 들어온다)
  *  3) 모바일(B): 쉬는 시간이 끝난 뒤 단속반 근처에서 포교 → 진짜 '도망가기' 버튼을 눌러 달아남 → lost 또는 caught
  *  4) 스크린숏: 자막 3가지 스타일(실제 화면에 뜬 것 + 부족하면 화면 전용 로컬 이벤트로 채움)
  */
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
-const { ROOT, OUT, sleep, startServer, launch, openPlayer, state, walkTo } = require('./lib.cjs')
+const { ROOT, OUT, sleep, startServer, launch, state, walkTo, devices } = require('./lib.cjs')
 
 const shot = (page, name) => page.screenshot({ path: path.join(OUT, `events-${name}.png`) })
 
@@ -87,6 +88,39 @@ async function walkPath(page, getTarget, reach = 3, timeout = 45000) {
   }
 }
 
+// 서명 비밀키를 정해 두고 같은 키로 '합류 5번' 저장본을 만든다(단속반의 새내기 유예를 넘긴 사람으로 시작)
+const SAVE_SECRET = 'e2e-events-secret-0123456789'
+function veteranSave(pid) {
+  const code = `
+    const { createSigner } = await import('./server/core/save.ts')
+    const { newProgress } = await import('./shared/rules/progress.ts')
+    const p = newProgress(${JSON.stringify(pid)}, Date.now())
+    p.stats.joins = 5
+    const d = JSON.stringify(p)
+    console.log(JSON.stringify({ d, s: createSigner(${JSON.stringify(SAVE_SECRET)}).sign(d) }))
+  `
+  return JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { cwd: ROOT, encoding: 'utf8' }))
+}
+/** lib.openPlayer 와 같되, 들어가기 전에 기기 프로필(pid + 저장본)을 심어 둔다 */
+async function openVeteran(browser, base, kind, room, errors, pid) {
+  const save = veteranSave(pid)
+  const context = await browser.newContext(kind === 'mobile' ? { ...devices['iPhone 13'] } : { viewport: { width: 1280, height: 720 } })
+  await context.addInitScript(
+    ([key, value]) => {
+      if (!localStorage.getItem(key)) localStorage.setItem(key, value)
+    },
+    ['doas.profile.v1', JSON.stringify({ pid, save })],
+  )
+  const page = await context.newPage()
+  page.on('pageerror', (e) => errors.push(`${kind} exception: ${e.message}`))
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`${kind} console.error: ${m.text()}`)
+  })
+  await page.goto(`${base}/?room=${room}`, { waitUntil: 'load' })
+  await page.waitForFunction(() => window.__doas && window.__doas.store.phase === 'playing' && window.__doas.store.me, null, { timeout: 25000 })
+  return { context, page }
+}
+
 /** 단속반/기싸움 메시지를 페이지 안에 기록해 둔다 */
 async function record(page) {
   await page.evaluate(() => {
@@ -151,7 +185,8 @@ async function pitchNearPatrol(page) {
     let bd = 1e9
     for (const n of g.store.npcs.values()) {
       if (n.pub.owner || n.pub.role || n.pub.model) continue
-      if (pat && Math.hypot(n.x - pat.x, n.z - pat.z) > 8) continue
+      // 단속반이 보는 거리(9m) 안에서 말을 걸게, 단속반에게서 6m 안의 시민만 고른다
+      if (pat && Math.hypot(n.x - pat.x, n.z - pat.z) > 6) continue
       const d = Math.hypot(n.x - me.x, n.z - me.z)
       if (d < bd) {
         bd = d
@@ -204,7 +239,7 @@ async function provokePatrol(page, label, tries = 10) {
 ;(async () => {
   const port = Number(process.env.E2E_PORT || 8826)
   // 라이벌이 등장할 확률을 높이려고 시민을 조금 늘린다(기본 28)
-  const srv = await startServer(port, { ROOMS: '1', NPCS: '44' })
+  const srv = await startServer(port, { ROOMS: '1', NPCS: '44', SAVE_SECRET })
   const browser = await launch()
   const errors = []
   let failed = 0
@@ -214,9 +249,10 @@ async function provokePatrol(page, label, tries = 10) {
     console.log(`${ok ? '  ✅' : '  ❌'} ${name}${detail ? ' — ' + detail : ''}`)
   }
   try {
-    const A = await openPlayer(browser, srv.base, 'pc', 1, errors)
+    const A = await openVeteran(browser, srv.base, 'pc', 1, errors, 'e2e-events-pc-0001')
     await record(A.page)
     const a0 = await state(A.page)
+    check('서명 저장본으로 들어왔다(합류 5번 — 단속반의 새내기 유예를 넘김)', (await A.page.evaluate(() => window.__doas.store.me.prog.stats.joins ?? 0)) >= 5)
     check('단속반 NPC 가 보인다(이름: 구청 단속반)', await A.page.evaluate(() => [...window.__doas.store.npcs.values()].some((n) => n.pub.role === 'patrol' && n.pub.name.includes('단속반'))))
 
     // ───────── 1) 발각 → 추격 → 훈방 ─────────
@@ -340,10 +376,11 @@ async function provokePatrol(page, label, tries = 10) {
     if (!duelDone) skipped.push('제한 시간(55초) 안에 기싸움(rival 결과)이 나오지 않아 실제 기싸움은 미실행')
 
     // ───────── 3) 모바일: 도망가기 버튼으로 달아나기 ─────────
-    const B = await openPlayer(browser, srv.base, 'mobile', 1, errors)
+    const B = await openVeteran(browser, srv.base, 'mobile', 1, errors, 'e2e-events-mobile-0001')
     await record(B.page)
     const b0 = await state(B.page)
-    const wait = 31000 - (Date.now() - cooldownFrom)
+    // 단속반 쉬는 시간(PATROL_COOLDOWN_MS 90초)이 끝날 때까지
+    const wait = 91000 - (Date.now() - cooldownFrom)
     if (wait > 0) await sleep(wait)
     const alertB = await provokePatrol(B.page, 'B')
     check('모바일: alert', alertB.p === b0.id)

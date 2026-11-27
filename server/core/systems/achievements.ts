@@ -211,14 +211,14 @@ export function createAchievementsSystem(): RoomSystem {
 
   function claim(p: PlayerState, q: unknown): void {
     const fail = (msg: string): void => room.send(p, { t: 'err', code: 'daily', msg })
-    if (typeof q !== 'string' || q.length === 0 || q.length > 32) return fail('알 수 없는 수행입니다.')
+    if (typeof q !== 'string' || q.length === 0 || q.length > 32) return fail('알 수 없는 수행이에요.')
     if (room.cooldown(p, 'achievements.claim', CLAIM_COOLDOWN_MS) > 0) return
     ensureDaily(p, room.now(), true)
     const d = p.prog.daily
     const def = DAILY_QUEST_BY_ID.get(q)
-    if (!d || !def || !d.quests.includes(q)) return fail('오늘의 수행이 아닙니다.')
-    if (d.done.includes(q)) return fail('이미 받은 보상입니다.')
-    if ((d.prog[q] ?? 0) < def.n) return fail('아직 수행을 마치지 않았습니다.')
+    if (!d || !def || !d.quests.includes(q)) return fail('오늘의 수행이 아니에요.')
+    if (d.done.includes(q)) return fail('이미 받은 보상이에요.')
+    if ((d.prog[q] ?? 0) < def.n) return fail('아직 수행을 다 마치지 않았어요.')
     d.done.push(q)
     room.markSave(p)
     room.grant(p, { why: 'daily', inf: def.inf })

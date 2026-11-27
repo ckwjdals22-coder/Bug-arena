@@ -11,6 +11,7 @@ import { mulberry32, pickWeighted } from '../../shared/rng'
 import {
   JOIN_CHANCE_MAX,
   JOIN_CHANCE_MIN,
+  SYMPATHY_SHOW_AT,
   type PitchContext,
   joinChance,
   pickLines,
@@ -96,9 +97,9 @@ describe('joinChance', () => {
     }
   })
 
-  it('직급은 단계당 2%', () => {
+  it('직급은 단계당 1%', () => {
     const a = arch({ base: 0.3 })
-    for (let rank = 0; rank <= 5; rank++) expect(joinChance(a, line(), ctx({ rank }))).toBeCloseTo(0.3 + rank * 0.02, 10)
+    for (let rank = 0; rank <= 5; rank++) expect(joinChance(a, line(), ctx({ rank }))).toBeCloseTo(0.3 + rank * 0.01, 10)
   })
 
   it('연속 성공은 회당 1%, 5회까지만', () => {
@@ -108,12 +109,13 @@ describe('joinChance', () => {
     expect(joinChance(a, line(), ctx({ streak: 50 }))).toBeCloseTo(0.35, 10)
   })
 
-  it('연속 실패 동정표는 회당 3.5%, 8회까지만', () => {
+  it('연속 실패 동정표는 회당 3%, 6회까지만', () => {
     const a = arch({ base: 0.2 })
-    expect(joinChance(a, line(), ctx({ failStreak: 1 }))).toBeCloseTo(0.235, 10)
-    expect(joinChance(a, line(), ctx({ failStreak: 4 }))).toBeCloseTo(0.34, 10)
-    expect(joinChance(a, line(), ctx({ failStreak: 8 }))).toBeCloseTo(0.48, 10)
-    expect(joinChance(a, line(), ctx({ failStreak: 30 }))).toBeCloseTo(0.48, 10)
+    expect(joinChance(a, line(), ctx({ failStreak: 1 }))).toBeCloseTo(0.23, 10)
+    expect(joinChance(a, line(), ctx({ failStreak: 4 }))).toBeCloseTo(0.32, 10)
+    expect(joinChance(a, line(), ctx({ failStreak: 6 }))).toBeCloseTo(0.38, 10)
+    expect(joinChance(a, line(), ctx({ failStreak: 8 }))).toBeCloseTo(0.38, 10)
+    expect(joinChance(a, line(), ctx({ failStreak: 30 }))).toBeCloseTo(0.38, 10)
     // 실패가 쌓일수록 줄어들지 않는다
     let prev = 0
     for (let f = 0; f <= 12; f++) {
@@ -123,17 +125,29 @@ describe('joinChance', () => {
     }
   })
 
-  it("2라운드('더 들어볼게요' 뒤)는 +25%", () => {
+  it("2라운드('더 들어볼게요' 뒤)는 +15%", () => {
     const a = arch({ base: 0.3 })
-    expect(joinChance(a, line(), ctx({ round: 2 })) - joinChance(a, line(), ctx({ round: 1 }))).toBeCloseTo(0.25, 10)
-    expect(joinChance(a, line(), ctx({ round: 3 }))).toBeCloseTo(0.55, 10)
+    expect(joinChance(a, line(), ctx({ round: 2 })) - joinChance(a, line(), ctx({ round: 1 }))).toBeCloseTo(0.15, 10)
+    expect(joinChance(a, line(), ctx({ round: 3 }))).toBeCloseTo(0.45, 10)
   })
 
-  it('버프는 그대로 더하고, 남의 신도 빼앗기는 −20%', () => {
+  it('버프는 그대로 더하고, 남의 신도 빼앗기는 −35%', () => {
     const a = arch({ base: 0.3 })
     expect(joinChance(a, line(), ctx({ buff: 0.12 }))).toBeCloseTo(0.42, 10)
-    expect(joinChance(a, line(), ctx({ poach: true }))).toBeCloseTo(0.1, 10)
-    expect(joinChance(a, line(), ctx({ poach: true, buff: 0.2, rank: 2 }))).toBeCloseTo(0.34, 10)
+    expect(joinChance(a, line(), ctx({ poach: true }))).toBe(JOIN_CHANCE_MIN)
+    expect(joinChance(arch({ base: 0.5 }), line(), ctx({ poach: true }))).toBeCloseTo(0.15, 10)
+    expect(joinChance(a, line(), ctx({ poach: true, buff: 0.2, rank: 2 }))).toBeCloseTo(0.17, 10)
+  })
+})
+
+describe('동정표 표시', () => {
+  it('연속 실패 5번 이상 뒤의 합류에는 sympathy 가 붙는다(그 전에는 없음)', () => {
+    const a = arch({ base: 0.5 })
+    const always = () => 0
+    expect(resolvePitch(a, line(), ctx({ failStreak: SYMPATHY_SHOW_AT }), always)).toMatchObject({ outcome: 'join', sympathy: true })
+    expect(resolvePitch(a, line(), ctx({ failStreak: SYMPATHY_SHOW_AT - 1 }), always).sympathy).toBeUndefined()
+    // 실패한 판정에는 붙지 않는다
+    expect(resolvePitch(a, line(), ctx({ failStreak: 9 }), () => 0.999).sympathy).toBeUndefined()
   })
 })
 
@@ -390,7 +404,7 @@ describe('체감 성공률(몬테카를로)', () => {
 
   it('동정표 덕분에 운이 나빠도 끝없이 실패하지는 않는다', () => {
     // 콘텐츠와 무관하게 규칙만 본다: 기본 10% 짜리 까다로운 시민에게 10번 연달아 말을 걸 때,
-    // 실패가 쌓일수록 확률이 오르므로(회당 3.5%) 10번 안에 한 번은 성공할 가능성이 훨씬 높아진다
+    // 실패가 쌓일수록 확률이 오르므로(회당 3%, 6회까지) 10번 안에 한 번은 성공할 가능성이 훨씬 높아진다
     const hard = arch({ base: 0.1 })
     const within10 = (pity: boolean, seed: number): number => {
       const rnd = mulberry32(seed)
@@ -411,10 +425,10 @@ describe('체감 성공률(몬테카를로)', () => {
     }
     const withPity = within10(true, 31)
     const withoutPity = within10(false, 31)
-    // 이론값: 동정표 없음 1 − 0.9^10 ≈ 65%, 있음 ≈ 93%
+    // 이론값: 동정표 없음 1 − 0.9^10 ≈ 65%, 있음 ≈ 92%
     expect(withoutPity).toBeGreaterThan(0.6)
     expect(withoutPity).toBeLessThan(0.7)
-    expect(withPity).toBeGreaterThan(0.9)
+    expect(withPity).toBeGreaterThan(0.88)
     expect(withPity).toBeLessThan(0.96)
   })
 })

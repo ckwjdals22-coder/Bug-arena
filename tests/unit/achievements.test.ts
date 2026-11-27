@@ -184,10 +184,13 @@ describe('업적', () => {
     t.room.bump(p, STAT.joins)
     t.room.bump(p, STAT.joins, 8)
     expect(t.host.of(a.conn, 'reward').filter((r) => r.ach?.includes('first_join'))).toHaveLength(1)
+    // '신도 N명' 업적은 얻은 신도 누계(folTotal)를 본다
+    expect(p.prog.ach).not.toContain('fol10')
+    t.room.bump(p, STAT.folTotal, 10)
     expect(p.prog.ach).toContain('fol10')
     expect(p.prog.ach).not.toContain('fol50')
     // 한 번에 여러 문턱을 넘으면 각각 달성
-    t.room.bump(p, STAT.joins, 500)
+    t.room.bump(p, STAT.folTotal, 500)
     expect(p.prog.ach).toEqual(expect.arrayContaining(['fol50', 'fol200']))
     expect(p.prog.ach.filter((x) => x === 'fol10')).toHaveLength(1)
   })
@@ -206,6 +209,7 @@ describe('업적', () => {
     const t = make()
     const prog = newProgress('device-catch-01', T0)
     prog.stats[STAT.joins] = 12
+    prog.fol = 12 // folTotal 이 없던 옛 저장본: 입장 때 prog.fol 로 채워진다
     prog.stats[STAT.rejects] = 10
     prog.ach = ['first_join']
     const a = t.join({ pid: 'device-catch-01', save: signed(t, prog) })
@@ -214,6 +218,33 @@ describe('업적', () => {
     const got = t.host.of(a.conn, 'reward').flatMap((r) => r.ach ?? [])
     expect(got).not.toContain('first_join')
     expect(got).toEqual(expect.arrayContaining(['fol10', 'reject10']))
+  })
+})
+
+describe('얻은 신도 누계(folTotal)', () => {
+  it('포교·설교·기싸움 어느 길로 얻든 HUD 신도 수(prog.fol)와 업적 진행(folTotal)이 같다', () => {
+    const t = make()
+    const a = t.join()
+    const p = t.player(a.id)
+    // 포교 합류(1), 설교(3), 기싸움 승리(2) 를 grant 로 흉내 낸다(각 시스템은 room.grant 로 fol 을 준다)
+    t.room.grant(p, { why: 'join', inf: 10, fol: 1 })
+    t.room.grant(p, { why: 'sermon', inf: 25, fol: 3 })
+    t.room.grant(p, { why: 'duel', inf: 20, fol: 2 })
+    t.room.grant(p, { why: 'battle', inf: 30 }) // 신도 없는 보상은 세지 않는다
+    expect(p.prog.fol).toBe(6)
+    expect(p.prog.stats[STAT.folTotal]).toBe(6)
+    t.room.grant(p, { why: 'sermon', fol: 4 })
+    expect(p.prog.stats[STAT.folTotal]).toBe(p.prog.fol)
+    expect(p.prog.ach).toContain('fol10')
+  })
+
+  it('옛 저장본은 normalizeProgress 에서 prog.fol 로 채운다(이미 더 크면 그대로)', () => {
+    const old = { ...newProgress('device-old-0001', T0), fol: 57, stats: { joins: 40 } }
+    expect(normalizeProgress(old, 'device-old-0001', T0)!.stats[STAT.folTotal]).toBe(57)
+    const newer = { ...newProgress('device-old-0001', T0), fol: 57, stats: { folTotal: 60 } }
+    expect(normalizeProgress(newer, 'device-old-0001', T0)!.stats[STAT.folTotal]).toBe(60)
+    const empty = newProgress('device-old-0001', T0)
+    expect(normalizeProgress(empty, 'device-old-0001', T0)!.stats[STAT.folTotal]).toBeUndefined()
   })
 })
 
@@ -272,6 +303,8 @@ describe('일일 진행도', () => {
     t.advance(300)
     expect(dailyRewards()).toHaveLength(1)
     expect(errs().at(-1)!.msg).toContain('이미')
+    // 안내 문구는 해요체
+    for (const e of errs()) expect(e.msg).toMatch(/요\.$/)
     // 완료된 퀘스트는 더 세지 않는다
     t.room.bump(p, STAT.talks, 5)
     expect(p.prog.daily!.prog.d_pitch5).toBe(5)

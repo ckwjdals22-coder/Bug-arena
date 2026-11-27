@@ -4,8 +4,9 @@
  * 쫓기는 쪽은 '플레이어(교주 지망생)'다. 시민은 아무 피해도 입지 않고, 단속반도 화내지 않는다(훈방만 한다).
  * 너무 가혹하지 않게:
  *  - 추격은 최대 9초. 비밀 교단 건물 안으로 숨거나 24m 이상 벌어지면 놓친다.
- *  - 잡혀도 3초 얼어붙고 지금 따라다니던 신도만 흩어진다. 누적 신도 수(prog.fol)는 줄지 않는다.
- *  - 한 번 추격이 끝나면 30초 동안은 아무도 쫓지 않는다(같은 사람을 연달아 괴롭히지 않게).
+ *  - 잡혀도 3초 얼어붙고 지금 따라다니던 신도의 절반(내림)만 흩어진다(행렬은 남고 농담만 남게). 누적 신도 수(prog.fol)는 줄지 않는다.
+ *  - 한 번 추격이 끝나면 90초 동안은 아무도 쫓지 않는다(같은 사람을 연달아 괴롭히지 않게).
+ *  - 합류 경험이 PATROL_GRACE_JOINS 번 미만인 새내기는 못 본 척한다(처음 얻은 신도를 바로 빼앗기지 않게).
  *
  * 단속반 NPC 는 시뮬이 건드리지 않는 'script' 모드 NPC 다. 위치/상태를 이 시스템이 매 틱 직접 움직인다.
  */
@@ -21,7 +22,7 @@ export const PATROL_WALK_SPEED = 1.8
 /** 추격 속도 — 달리기(5.6)보다 조금 빠르고 도망가기(8.4)보다 느리다 */
 export const PATROL_CHASE_SPEED = 6.3
 /** 이 거리 안에서 포교하면 들킨다 */
-export const PATROL_SEE_RANGE = 12
+export const PATROL_SEE_RANGE = 9
 /** 호루라기 → 추격 시작까지 */
 export const PATROL_ALERT_MS = 800
 /** 추격 최대 시간 */
@@ -33,7 +34,9 @@ export const PATROL_LOSE_RANGE = 24
 /** 얼어붙는 시간 */
 export const PATROL_STUN_MS = 3000
 /** 추격이 끝난 뒤 다음 추격까지 */
-export const PATROL_COOLDOWN_MS = 30_000
+export const PATROL_COOLDOWN_MS = 90_000
+/** 누적 합류(stats.joins)가 이보다 적은 사람에게는 호루라기를 불지 않는다 */
+export const PATROL_GRACE_JOINS = 3
 /** 막혀서 이 시간 넘게 제자리면 이동망으로 돌아간다 */
 const BLOCKED_MS = 1000
 /** 우회 경로를 따르는 최대 시간(그 뒤엔 다시 직진 시도) */
@@ -173,8 +176,10 @@ export function createPatrolSystem(): RoomSystem {
 
   function catchPlayer(n: NpcState, p: PlayerState, now: number): void {
     p.stunUntil = now + PATROL_STUN_MS
-    // 지금 따라다니던 신도만 흩어진다(누적 신도 수 prog.fol 은 그대로)
-    for (const f of room.npcs.followersOf(p.id)) {
+    // 지금 따라다니던 신도 중 절반(내림)만 흩어진다. 오래 따라다닌 사람부터(곧 떠날 사람부터) 보낸다.
+    // 누적 신도 수 prog.fol 은 그대로
+    const followers = [...room.npcs.followersOf(p.id)].sort((a, b) => a.followSince - b.followSince || a.id - b.id)
+    for (const f of followers.slice(0, Math.floor(followers.length / 2))) {
       room.npcs.release(f, 'scatter')
       room.npcs.flee(f, n.x, n.z, now)
     }
@@ -305,6 +310,8 @@ export function createPatrolSystem(): RoomSystem {
       // 한 번에 한 명만, 쉬는 시간(쿨타임)에는 못 본 척
       if (phase === 'alert' || phase === 'chase' || now < cooldownUntil) return
       if (Math.hypot(p.x - n.x, p.z - n.z) > PATROL_SEE_RANGE) return
+      // 새내기 유예: 첫 신도 몇 명은 마음 편히 모으게 한다
+      if ((p.prog.stats[STAT.joins] ?? 0) < PATROL_GRACE_JOINS) return
       if (insideHq(p.x, p.z, room.world)) return
       target = p.id
       phase = 'alert'

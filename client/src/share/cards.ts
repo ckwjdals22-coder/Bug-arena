@@ -7,8 +7,7 @@
  *   관공서·실존 단체 문서로 보일 문양(국가 상징, 정형 직인, 봉황 등)은 쓰지 않는다.
  * - 놀림은 플레이어 본인만. 시민은 늘 옳다.
  */
-import { RANKS } from '../../../shared/content/core'
-import { certTitle, issueNo, judge, selfRoast, successRate, type SessionNumbers, type ShareProfile } from './data'
+import { certTitle, issueNo, judge, rankLabel, selfRoast, successRate, type SessionNumbers, type ShareProfile } from './data'
 import {
   CARD_SIZE,
   FOOTER_TEXT,
@@ -42,10 +41,6 @@ export interface CardEnv {
   host: string
   /** 발급일 */
   date: Date
-}
-
-function rankName(rank: number): string {
-  return RANKS[Math.max(0, Math.min(RANKS.length - 1, rank))]?.name ?? RANKS[0]!.name
 }
 
 /** 라면 면발 같은 물결 테두리(장식이 엄숙해 보이지 않게 일부러 꼬불꼬불) */
@@ -96,7 +91,7 @@ function paperBg(g: CanvasRenderingContext2D, w: number, h: number, base: string
 // ───────────────────────── 1. 교주 임명장 ─────────────────────────
 
 function certBody(p: ShareProfile): string {
-  const r = rankName(p.rank)
+  const r = rankLabel(p)
   const talks = Math.floor(p.stats['talks'] ?? 0)
   const rejects = Math.floor(p.stats['rejects'] ?? 0)
   const role = josa(r, '으로', '로')
@@ -197,7 +192,7 @@ export function drawCertificate(p: ShareProfile, portrait: HTMLCanvasElement | n
     g.restore()
   }
   // 초상 아래 리본(직급)
-  const rk = rankName(p.rank)
+  const rk = rankLabel(p)
   g.font = font(900, 44, SANS)
   const rw = Math.min(760, g.measureText(rk).width + 140)
   sticker(g, pcx - rw / 2, 950, rw, 76, 38, main, 7)
@@ -340,7 +335,7 @@ export function drawSummary(p: ShareProfile, s: SessionNumbers, portrait: HTMLCa
   stamp(g, w - 170, vy + 40, 86, '허구', '효력 없음', 0.2)
 
   // 한 줄 자랑(1600~1660)
-  const rk = rankName(p.rank)
+  const rk = rankLabel(p)
   const cultName = p.cult ? `「${p.cult.name}」 ` : ''
   fitText(g, `${cultName}${rk} · 누적 신도 ${num(p.fol)}명`, w / 2, 1630, w - 200, 38, { weight: 900, fill: INK, min: 22 })
 

@@ -2,60 +2,54 @@
  * 코드가 직접 의존하는 핵심 카탈로그: 직급, 이모트, 복장/모자/얼굴/소품/오라, 색상 팔레트, 교단 엠블럼, 통계 키.
  * 여기의 id 는 렌더러/서버 로직과 맞물려 있으므로 순서를 바꾸거나 지우지 말고 뒤에 추가만 한다.
  */
+import { WORLD } from '../world/data'
+import { PITCH_LINES } from './lines'
 import type { CosmeticDef, EmoteDef, OutfitDef, RankDef } from './types'
 
 // ───────── 직급 ─────────
-export const RANKS: readonly RankDef[] = [
-  {
-    id: 0,
-    name: '수상한 행인',
-    inf: 0,
-    cheer: '오늘도 어딘가 수상합니다.',
-    unlock: '기본 동작 전부, 시민·전도사·초보 교주 복장',
-  },
-  {
-    id: 1,
-    name: '길거리 전도사',
-    inf: 30,
-    cheer: '이제 전단지 쥐는 손이 제법 자연스럽습니다!',
-    unlock: '만세·큰절 동작, 갓·삿갓, 등산복, 수상한 반짝이',
-  },
-  {
-    id: 2,
-    name: '열정적인 포교왕',
-    inf: 140,
-    cheer: '반경 5m 안의 시민들이 눈을 피하기 시작했습니다!',
-    unlock: '회전 수련·계시의 손가락, 은박지 모자·피라미드 모자, 흰 도복',
-  },
-  {
-    id: 3,
-    name: '신흥 교단장',
-    inf: 420,
-    cheer: '명함에 "교단장"이라고 써도 아무도 말리지 않습니다!',
-    unlock: '황금 교주 로브, 왕관·안테나 수신기, 후광, 비밀 교단 건물 출입',
-  },
-  {
-    id: 4,
-    name: '대교주',
-    inf: 1000,
-    cheer: '당신이 헛기침만 해도 신도들이 받아 적습니다!',
-    unlock: '공중부양, 반짝이 망토, 후광 머리띠, 무지개 오라',
-  },
-  {
-    id: 5,
-    name: '우주급 절대교주',
-    inf: 2500,
-    cheer: '안드로메다에서 가입 문의가 왔습니다!',
-    unlock: '우주 교신, 우주 절대교주 슈트, UFO 모자, 우주 오라',
-  },
+// 잠금 해제 안내(unlock)는 손으로 쓰지 않고 아래 카탈로그에서 만든다(파일 끝의 RANKS) → 카탈로그에 항목을 더하면 안내도 따라온다.
+// 문턱은 '1직급은 몇십 초, 3직급은 한 세션의 목표, 5직급은 여러 세션' 이 되게 잡았다(2차 검수의 봇 측정 기준).
+const RANK_BASE: readonly Omit<RankDef, 'unlock'>[] = [
+  { id: 0, name: '수상한 행인', inf: 0, cheer: '오늘도 어딘가 수상합니다.' },
+  { id: 1, name: '길거리 전도사', inf: 30, cheer: '이제 전단지 쥐는 손이 제법 자연스럽습니다!' },
+  { id: 2, name: '열정적인 포교왕', inf: 200, cheer: '반경 5m 안의 시민들이 눈을 피하기 시작했습니다!' },
+  { id: 3, name: '신흥 교단장', inf: 800, cheer: '명함에 "교단장"이라고 써도 아무도 말리지 않습니다!' },
+  { id: 4, name: '대교주', inf: 2500, cheer: '당신이 헛기침만 해도 신도들이 받아 적습니다!' },
+  { id: 5, name: '우주급 절대교주', inf: 8000, cheer: '안드로메다에서 가입 문의가 왔습니다!' },
 ]
 
-export const MAX_RANK = RANKS.length - 1
+export const MAX_RANK = RANK_BASE.length - 1
 
 export function rankForInfluence(inf: number): number {
   let r = 0
-  for (const def of RANKS) if (inf >= def.inf) r = def.id
+  for (const def of RANK_BASE) if (inf >= def.inf) r = def.id
   return r
+}
+
+/**
+ * 최고 직급 뒤의 끝없는 '회차'(칭호만 바뀐다. 해금·보상 없음): 최고 직급 문턱에서 1회차, PRESTIGE_STEP 마다 +1.
+ * 더 열 것이 없어도 숫자 하나는 계속 올라가게 하는 장치다. 놀림의 대상은 여전히 교주 본인.
+ */
+export const PRESTIGE_STEP = 5000
+
+/** 영향력 → 회차(최고 직급 문턱 미만이면 0) */
+export function prestigeOf(inf: number): number {
+  const base = RANK_BASE[MAX_RANK]!.inf
+  if (!(inf >= base)) return 0
+  return 1 + Math.floor((inf - base) / PRESTIGE_STEP)
+}
+
+/** 다음 회차가 되는 영향력(최고 직급 전이면 최고 직급 문턱) */
+export function nextPrestigeInf(inf: number): number {
+  return RANK_BASE[MAX_RANK]!.inf + prestigeOf(inf) * PRESTIGE_STEP
+}
+
+/** 표시용 직급 이름: 최고 직급이면 '우주급 절대교주 N회차' */
+export function rankTitle(rank: number, inf: number): string {
+  const r = Math.max(0, Math.min(MAX_RANK, Math.floor(rank) || 0))
+  const name = RANK_BASE[r]!.name
+  const n = r === MAX_RANK ? prestigeOf(inf) : 0
+  return n > 0 ? `${name} ${n}회차` : name
 }
 
 // ───────── 이모트 ─────────
@@ -182,7 +176,7 @@ export const CULT_NAME_SUGGESTIONS: readonly string[] = [
 export const CULT_TITLE_SUGGESTIONS: readonly string[] = ['교주', '명예 과장', '면장', '총무', '큰형님', '수석 졸음이']
 
 /** 교단원(멤버)에게 붙는 표시 문구 */
-export const CULT_MEMBER_TITLE = '신도'
+export const CULT_MEMBER_TITLE = '교단원'
 
 // ───────── 통계 키 (Progress.stats) ─────────
 // 서버가 올리는 카운터. 업적/일일 수행 정의는 이 키를 참조한다.
@@ -191,8 +185,10 @@ export const STAT = {
   talks: 'talks',
   /** 멘트 선택(포교 시도) */
   pitches: 'pitches',
-  /** 합류 성공 */
+  /** 합류 성공(포교로 합류한 횟수만) */
   joins: 'joins',
+  /** 얻은 신도 누계: 포교·설교·기싸움 등 어떤 길로든 prog.fol 이 늘 때마다 같이 오른다(HUD 의 신도 수와 같은 값) */
+  folTotal: 'folTotal',
   /** 거절(no/ignore/flee) */
   rejects: 'rejects',
   /** 도망간 시민 */
@@ -248,3 +244,33 @@ export const STAT = {
 } as const
 
 export type StatKey = (typeof STAT)[keyof typeof STAT]
+
+// ───────── 직급별 잠금 해제 안내(카탈로그에서 만든다) ─────────
+
+/** 직급 r 에서 새로 열리는 것을 한 줄로: 동작(…), 복장(…), …, 새 멘트 N개, 비밀 교단 건물 출입 */
+export function rankUnlockText(r: number): string {
+  const named = (list: readonly { name: string; rank: number; id: number | string; ach?: string }[]): string[] =>
+    list.filter((x) => x.rank === r && !x.ach && !(x.id === 0 && x.name === '없음')).map((x) => x.name)
+  const lines = PITCH_LINES.filter((l) => l.rank === r).length
+  if (r === 0) {
+    // 처음부터 열린 것은 이름을 다 늘어놓으면 너무 길어서 개수로 말한다
+    const count = (list: readonly { rank: number; id: number | string; name: string }[]): number =>
+      list.filter((x) => x.rank === 0 && !(x.id === 0 && x.name === '없음')).length
+    return `기본 동작 ${count(EMOTES)}가지, 복장 ${count(OUTFITS)}벌, 모자 ${count(HATS)}개, 얼굴 ${count(FACES)}가지, 소품 ${count(ACCESSORIES)}개, 멘트 ${lines}개`
+  }
+  const parts: string[] = []
+  const add = (label: string, names: string[]): void => {
+    if (names.length > 0) parts.push(`${label}(${names.join('·')})`)
+  }
+  add('동작', named(EMOTES))
+  add('복장', named(OUTFITS))
+  add('모자', named(HATS))
+  add('얼굴', named(FACES))
+  add('소품', named(ACCESSORIES))
+  add('오라', named(AURAS))
+  if (lines > 0) parts.push(`새 멘트 ${lines}개`)
+  if (WORLD.hq.minRank === r) parts.push('비밀 교단 건물 출입')
+  return parts.join(', ')
+}
+
+export const RANKS: readonly RankDef[] = RANK_BASE.map((d) => ({ ...d, unlock: rankUnlockText(d.id) }))

@@ -17,7 +17,7 @@ export interface PitchContext {
   failStreak: number
   /** 대화 라운드: 1 또는 2('더 들어볼게요' 이후) */
   round: number
-  /** 기타 버프 합(춤 버프, 계시 버프 등). 보통 0 ~ 0.2 */
+  /** 기타 버프 합(지금은 단상 계시 버프뿐). 보통 0 ~ 0.1 */
   buff: number
   /** 이 NPC가 이미 다른 플레이어의 신도인가(뺏기 시도) */
   poach: boolean
@@ -29,22 +29,38 @@ export interface PitchResult {
   say: string
   /** 계산된 합류 확률(테스트/디버그용) */
   chance: number
+  /** 연속 실패가 SYMPATHY_SHOW_AT 번 이상 쌓인 뒤의 합류(동정표 덕을 본 합류). UI 가 '(동정표 획득)' 을 보여 줄 때 쓴다 */
+  sympathy?: boolean
 }
 
 export const JOIN_CHANCE_MIN = 0.04
 export const JOIN_CHANCE_MAX = 0.92
+/** 직급 하나당 더해지는 확률 */
+export const RANK_BONUS = 0.01
+/** 연속 성공 하나당(최대 STREAK_BONUS_MAX 번까지) */
+export const STREAK_BONUS = 0.01
+export const STREAK_BONUS_MAX = 5
+/** 동정표: 연속 실패 하나당(최대 SYMPATHY_MAX 번까지). 거절이 이어지면 시민도 조금 딱해진다 */
+export const SYMPATHY_BONUS = 0.03
+export const SYMPATHY_MAX = 6
+/** 동정표가 '눈에 띄게' 붙었다고 보는 연속 실패 수(결과에 sympathy 표시) */
+export const SYMPATHY_SHOW_AT = 5
+/** '더 들어볼게요' 뒤 2라운드 보너스 */
+export const ROUND2_BONUS = 0.15
+/** 남의 신도를 빼앗으려 할 때의 감점(이미 다른 교주를 따라가는 중인 사람은 잘 안 넘어온다) */
+export const POACH_PENALTY = 0.35
 
 /** 합류 확률 계산 */
 export function joinChance(arch: Archetype, line: PitchLine, ctx: PitchContext): number {
   // 합류 불가 유형은 어떤 보정으로도 넘어오지 않는다(하한 4% 도 적용하지 않음)
   if (arch.recruitable === false) return 0
   let c = arch.base + (arch.like[line.cat] ?? 0) + line.power
-  c += ctx.rank * 0.02
-  c += Math.min(ctx.streak, 5) * 0.01
-  c += Math.min(ctx.failStreak, 8) * 0.035
+  c += ctx.rank * RANK_BONUS
+  c += Math.min(ctx.streak, STREAK_BONUS_MAX) * STREAK_BONUS
+  c += Math.min(ctx.failStreak, SYMPATHY_MAX) * SYMPATHY_BONUS
   c += ctx.buff
-  if (ctx.round >= 2) c += 0.25
-  if (ctx.poach) c -= 0.2
+  if (ctx.round >= 2) c += ROUND2_BONUS
+  if (ctx.poach) c -= POACH_PENALTY
   c = Math.max(JOIN_CHANCE_MIN, Math.min(JOIN_CHANCE_MAX, c))
   // 유형별 상한: 보정이 아무리 쌓여도 이 유형은 이 확률을 넘지 않는다(하한 4% 보다 낮은 상한도 그대로 지킨다)
   if (arch.maxChance !== undefined) c = Math.min(c, Math.max(0, arch.maxChance))
@@ -71,9 +87,11 @@ export function resolvePitch(arch: Archetype, line: PitchLine, ctx: PitchContext
   if (rnd() < chance) {
     // 특수: 전생 멘트 + royal 유형이면 "제가 왕이었나요?"
     if (arch.special === 'royal' && line.cat === 'past' && rnd() < 0.5) {
-      return { outcome: 'king', say: '혹시 전생에 제가 왕이었나요?', chance }
+      return { outcome: 'king', say: '혹시 전생에 제가 왕이었나요?', chance, ...(ctx.failStreak >= SYMPATHY_SHOW_AT ? { sympathy: true } : {}) }
     }
-    return { outcome: 'join', say: reaction(arch, line, 'join', rnd), chance }
+    const out: PitchResult = { outcome: 'join', say: reaction(arch, line, 'join', rnd), chance }
+    if (ctx.failStreak >= SYMPATHY_SHOW_AT) out.sympathy = true
+    return out
   }
 
   // 실패 분기: 2라운드 기회 → 도망 → 무시 → 말로 거절

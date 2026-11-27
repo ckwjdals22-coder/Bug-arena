@@ -18,6 +18,15 @@ import { STAT } from '../../../shared/content/core'
 import type { BattleState, CBattle } from '../../../shared/protocol'
 import type { PlayerState, RoomApi, RoomSystem } from '../api'
 
+/** 같은 두 사람(pid)이 보상을 받는 배틀 수 상한과 그 창: 둘이 짜고 배틀만 반복해 영향력을 찍어내지 못하게 */
+export const BATTLE_PAIR_REWARDS = 3
+export const BATTLE_PAIR_WINDOW_MS = 10 * 60_000
+/** 상한에 걸린 배틀 당사자에게 보내는 안내(err 코드) */
+export const BATTLE_CAP_CODE = 'battleCap'
+
+/** 쿨타임 표의 칸 이름: 상대 pid 별로 BATTLE_PAIR_REWARDS 칸(재접속해도 유지된다) */
+const pairSlotKey = (otherPid: string, i: number): string => `battle.pair:${otherPid}:${i}`
+
 interface Pending {
   from: number
   to: number
@@ -31,6 +40,8 @@ interface FakeDecline {
 export function createBattleSystem(): RoomSystem {
   let room: RoomApi
   const battles: BattleState[] = []
+  /** 배틀 → [a 의 pid, b 의 pid]. 나간 사람의 pid 도 끝날 때 알아야 상한 칸을 셀 수 있다 */
+  const pidsOf = new WeakMap<BattleState, [string, string]>()
   /** 대상 플레이어 id → 대기 중인 신청 */
   const pending = new Map<number, Pending>()
   const fakeDeclines: FakeDecline[] = []
@@ -44,6 +55,17 @@ export function createBattleSystem(): RoomSystem {
   const coolLeft = (p: PlayerState, now: number): number => (p.cd.get('battle') ?? 0) - now
   const setCool = (p: PlayerState | undefined, now: number): void => {
     p?.cd.set('battle', now + BATTLE_COOLDOWN_MS)
+  }
+
+  /** 이 상대와의 보상 칸이 남았으면 하나 쓰고 true */
+  function takePairSlot(p: PlayerState, otherPid: string, now: number): boolean {
+    for (let i = 0; i < BATTLE_PAIR_REWARDS; i++) {
+      const key = pairSlotKey(otherPid, i)
+      if ((p.cd.get(key) ?? 0) > now) continue
+      p.cd.set(key, now + BATTLE_PAIR_WINDOW_MS)
+      return true
+    }
+    return false
   }
 
   function finish(b: BattleState, why: 'time' | 'left', leftId = 0): void {
@@ -62,14 +84,23 @@ export function createBattleSystem(): RoomSystem {
       if (stayIsA ? b.sa > b.sb : b.sb > b.sa) winner = stayIsA ? b.a : b.b
       else voided = true
     } else if (b.sa !== b.sb) winner = b.sa > b.sb ? b.a : b.b
+    // 둘 다 한 명도 못 모은 승부(0:0)는 무효: 마주 서서 시간만 보내는 배틀로 영향력을 받지 못하게
+    const scoreless = b.sa + b.sb === 0
+    if (scoreless) voided = true
     const tie = Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2)
-    for (const [p, id] of [
-      [pa, b.a],
-      [pb, b.b],
+    const pids = pidsOf.get(b)
+    for (const [p, id, otherPid] of [
+      [pa, b.a, pids?.[1] ?? ''],
+      [pb, b.b, pids?.[0] ?? ''],
     ] as const) {
       if (!p) continue
       setCool(p, now)
       if (voided) continue
+      // 같은 상대와의 보상은 10분에 BATTLE_PAIR_REWARDS 판까지. 넘으면 친선 경기(보상·전적 없음)
+      if (!takePairSlot(p, otherPid, now)) {
+        room.send(p, { t: 'err', code: BATTLE_CAP_CODE, msg: '같은 상대와는 10분에 세 판까지만 보상이 나와요. 이번 판은 친선 경기!' })
+        continue
+      }
       room.bump(p, STAT.battles)
       if (winner === id) room.bump(p, STAT.battleWins)
       room.grant(p, { why: 'battle', inf: winner === 0 ? tie : winner === id ? INF_BATTLE_WIN : INF_BATTLE_LOSE })
@@ -77,7 +108,8 @@ export function createBattleSystem(): RoomSystem {
     room.broadcast({ t: 'battle', ph: 'end', b, winner, ...(why === 'left' ? { why: 'left' as const } : {}) })
     const na = pa?.name ?? '상대'
     const nb = pb?.name ?? '상대'
-    if (voided) room.feed('battle', 0, `포교 배틀 무효 — 한 분이 자리를 떴습니다. (${b.sa}:${b.sb})`)
+    if (scoreless) room.feed('battle', 0, `${na} vs ${nb} — 둘 다 한 명도 못 모아 무효! 말만 많았습니다. (0:0)`)
+    else if (voided) room.feed('battle', 0, `포교 배틀 무효 — 한 분이 자리를 떴습니다. (${b.sa}:${b.sb})`)
     else if (winner === 0) room.feed('battle', 0, `${na} vs ${nb} — ${b.sa}:${b.sb} 무승부! 둘 다 말은 많았습니다.`)
     else {
       const w = winner === b.a ? na : nb
@@ -125,6 +157,7 @@ export function createBattleSystem(): RoomSystem {
     }
     const b: BattleState = { a: from.id, b: p.id, sa: 0, sb: 0, endsAt: now + BATTLE_DURATION_MS }
     battles.push(b)
+    pidsOf.set(b, [from.pid, p.pid])
     room.broadcast({ t: 'battle', ph: 'start', b })
     room.feed('battle', from.id, `${from.name} vs ${p.name} 포교 배틀 시작! 60초 동안 누가 더 많이 모으나`)
   }

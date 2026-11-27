@@ -12,12 +12,12 @@
 import type { AchievementDef, DailyQuestDef } from './types'
 
 export const ACHIEVEMENTS: readonly AchievementDef[] = [
-  // ── 신도 수(누적 합류) ──
+  // ── 신도 수(첫 합류 + 얻은 신도 누계: 포교·설교·기싸움 모두. HUD 의 신도 수와 같은 값을 본다) ──
   { id: 'first_join', name: '첫 신도', desc: '첫 번째 신도를 얻었다. 왜 따라오는지는 본인도 모른다.', icon: '🐣', stat: 'joins', gte: 1, inf: 5 },
-  { id: 'fol10', name: '조별과제 조장', desc: '신도 10명. 조별과제 조원보다 말을 잘 듣는다.', icon: '👥', stat: 'joins', gte: 10, inf: 15 },
-  { id: 'fol50', name: '중견 교단', desc: '신도 50명 확보. 단체 사진은 가로로 찍어야 한다.', icon: '🏛️', stat: 'joins', gte: 50, inf: 60 },
-  { id: 'fol200', name: '대형 교단', desc: '신도 200명. 이제 이름은 못 외운다.', icon: '🏟️', stat: 'joins', gte: 200, inf: 100 },
-  { id: 'fol1000', name: '천 명의 행렬', desc: '신도 1000명. 수상역 유동 인구를 넘어섰다.', icon: '🌏', stat: 'joins', gte: 1000, inf: 150, secret: true },
+  { id: 'fol10', name: '조별과제 조장', desc: '신도 10명. 조별과제 조원보다 말을 잘 듣는다.', icon: '👥', stat: 'folTotal', gte: 10, inf: 15 },
+  { id: 'fol50', name: '중견 교단', desc: '신도 50명 확보. 단체 사진은 가로로 찍어야 한다.', icon: '🏛️', stat: 'folTotal', gte: 50, inf: 60 },
+  { id: 'fol200', name: '대형 교단', desc: '신도 200명. 이제 이름은 못 외운다.', icon: '🏟️', stat: 'folTotal', gte: 200, inf: 100 },
+  { id: 'fol1000', name: '천 명의 행렬', desc: '신도 1000명. 수상역 유동 인구를 넘어섰다.', icon: '🌏', stat: 'folTotal', gte: 1000, inf: 150, secret: true },
 
   // ── 거절 ──
   { id: 'reject10', name: '거절 입문', desc: '거절 10회. 아직은 얼굴이 화끈거린다.', icon: '🙈', stat: 'rejects', gte: 10, inf: 10 },
@@ -56,11 +56,11 @@ export const ACHIEVEMENTS: readonly AchievementDef[] = [
 
   // ── 동작 / 춤 / 말풍선 ──
   { id: 'emote30', name: '몸이 먼저 말한다', desc: '동작 30번 사용. 말보다 손이 빠르다.', icon: '🙆', stat: 'emotes', gte: 30, inf: 10 },
-  { id: 'emote300', name: '인간 풍선 인형', desc: '동작 300번. 가게 앞에 세워 두면 손님이 온다.', icon: '🎈', stat: 'emotes', gte: 300, inf: 50, secret: true },
+  { id: 'emote300', name: '인간 풍선 인형', desc: '동작 300번. 가게 앞에 세워 두면 손님이 온다.', icon: '🎈', stat: 'emotes', gte: 300, inf: 20, secret: true },
   { id: 'dance10', name: '신비로운 몸짓', desc: '춤 10번. 신비롭다는 건 본인 생각이다.', icon: '💃', stat: 'dances', gte: 10, inf: 15 },
   { id: 'dance100', name: '춤신춤왕', desc: '춤 100번. 아무도 시키지 않았다.', icon: '🕺', stat: 'dances', gte: 100, inf: 60 },
   { id: 'say20', name: '말풍선 애호가', desc: '말풍선 20번. 정해진 말만으로도 할 말은 많다.', icon: '💬', stat: 'says', gte: 20, inf: 10 },
-  { id: 'say200', name: '말이 많다', desc: '말풍선 200번. 듣는 사람은 없었다.', icon: '📢', stat: 'says', gte: 200, inf: 50, secret: true },
+  { id: 'say200', name: '말이 많다', desc: '말풍선 200번. 듣는 사람은 없었다.', icon: '📢', stat: 'says', gte: 200, inf: 20, secret: true },
 
   // ── 단상: 계시 / 집단 설교 ──
   { id: 'prophecy1', name: '첫 계시', desc: '단상에서 첫 계시를 발표했다. 내용은 당연했다.', icon: '📜', stat: 'prophecies', gte: 1, inf: 10 },

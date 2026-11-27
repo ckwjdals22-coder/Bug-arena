@@ -596,14 +596,16 @@ describe('상성과 밸런스', () => {
 
   const TALKS = 40_000
 
-  it('직급 0 에서 아무 멘트나 고르면 합류율이 30~50% 다', () => {
+  // 설계 목표(2차 밸런스 조정): 실패 농담을 충분히 보게 합류율을 낮췄다 — 재도전 보정 0.25 → 0.15, 직급 보정 축소,
+  // 취약해 보이는 유형(할머니·취준생)은 절대 넘어오지 않음. 동정표(연속 실패 보정)는 이 계산에 넣지 않으므로 실제 체감은 이보다 조금 높다.
+  it('직급 0 에서 아무 멘트나 고르면 합류율이 25~45% 다', () => {
     const r = simulate(0, 101, TALKS, randomPick(202))
     const perTalk = r.joinedTalks / r.talks
     const perPitch = (r.outcomes.join + r.outcomes.king) / r.pitches
-    expect(perTalk).toBeGreaterThan(0.3)
-    expect(perTalk).toBeLessThan(0.5)
-    expect(perPitch).toBeGreaterThan(0.3)
-    expect(perPitch).toBeLessThan(0.5)
+    expect(perTalk).toBeGreaterThan(0.25)
+    expect(perTalk).toBeLessThan(0.45)
+    expect(perPitch).toBeGreaterThan(0.25)
+    expect(perPitch).toBeLessThan(0.45)
   })
 
   it('도망 결과는 전체 포교의 8~25% 다', () => {
