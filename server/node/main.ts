@@ -40,7 +40,7 @@ import {
   pickEncoding,
   securityHeaders,
 } from './ops'
-import { acquireDataLock, createCultRegistry, type DataLock, loadSecret, newPersistStatus, PersistFatal, probeDataDir } from './persist'
+import { acquireDataLock, createCultRegistry, type DataLock, loadSecret, newPersistStatus, PersistFatal, probeDataDir, restoreSecretFile } from './persist'
 
 // ───────────────────────── 로그 ─────────────────────────
 // 설정을 읽는 중에도 경고를 남기므로 맨 앞에 둔다.
@@ -139,6 +139,8 @@ let dataDirError: string | null = null
 let dataLock: DataLock
 let cults: ReturnType<typeof createCultRegistry>
 let saveSecret: string
+/** 비밀키를 환경변수가 아니라 DATA_DIR/secret 에서 읽었는가(그 파일이 사라지면 되살려야 한다) */
+const secretFromFile = !(process.env.SAVE_SECRET !== undefined && process.env.SAVE_SECRET.trim().length > 0)
 try {
   probeDataDir(DATA_DIR)
   dataLock = acquireDataLock(DATA_DIR)
@@ -156,6 +158,9 @@ function checkDataDir(): void {
   try {
     probeDataDir(DATA_DIR)
     dataLock.refresh()
+    // 폴더가 비워졌다 돌아왔다면 메모리에 있는 것으로 파일을 되살린다(다음 재시작 때 저장본·교단 기록을 잃지 않게)
+    if (secretFromFile && restoreSecretFile(DATA_DIR, saveSecret)) log('warn', 'DATA_DIR 의 비밀키 파일이 사라져 다시 만들었습니다')
+    if (cults.ensureFile()) log('warn', 'DATA_DIR 의 교단 기록 파일이 사라져 다시 씁니다')
     if (dataDirError) log('info', 'DATA_DIR 에 다시 쓸 수 있습니다')
     dataDirError = null
   } catch (err) {

@@ -241,11 +241,29 @@ export function loadSecret(dir: string, fromEnv: string | undefined, log?: Log):
   }
 }
 
+/**
+ * 돌던 중 DATA_DIR 이 비워졌다면(볼륨이 잠깐 빠졌다 돌아옴, 실수로 지움) 메모리에 있는 비밀키로 파일을 다시 만든다.
+ * 그대로 두면 지금은 멀쩡해 보여도 다음 재시작 때 새 키가 만들어져 모든 플레이어 저장본이 무효가 된다.
+ * 이미 파일이 있으면 건드리지 않는다(내용이 달라도 — 사람이 바꿔 둔 것일 수 있다). 다시 만들었으면 true.
+ */
+export function restoreSecretFile(dir: string, secret: string): boolean {
+  const file = path.join(dir, 'secret')
+  try {
+    fs.writeFileSync(file, `${secret}\n`, { mode: 0o600, flag: 'wx' })
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw err
+  }
+}
+
 // ───────────────────────── 교단 기록 저장소(메모리 + 파일) ─────────────────────────
 
 export interface FileCultRegistry extends CultRegistry {
   /** sync = 종료 직전(끝날 때까지 기다린다). 비동기 쓰기가 이미 진행 중이면 sync 가 아닌 호출은 건너뛴다 */
   flush(sync: boolean): void
+  /** 기록이 있는데 파일이 사라졌다면(DATA_DIR 이 비워졌다) 다음 flush 가 다시 쓰도록 표시한다. 표시했으면 true */
+  ensureFile(): boolean
   readonly size: number
 }
 
@@ -419,6 +437,11 @@ export function createCultRegistry(opts: CultRegistryOptions): FileCultRegistry 
     },
     remove(id) {
       if (map.delete(id)) touch()
+    },
+    ensureFile() {
+      if (dirty || writing || map.size === 0 || fs.existsSync(file)) return false
+      dirty = true
+      return true
     },
     flush(sync) {
       if (!dirty || (writing && !sync)) return

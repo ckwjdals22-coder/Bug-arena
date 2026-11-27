@@ -25,6 +25,7 @@ import {
   newPersistStatus,
   PersistFatal,
   probeDataDir,
+  restoreSecretFile,
 } from '../../server/node/persist'
 
 const dirs: string[] = []
@@ -284,6 +285,19 @@ describe('비밀키', () => {
     expect(loadSecret(d, '')).toBe(a)
     expect(loadSecret(d, '  env-secret-0123456789  ')).toBe('env-secret-0123456789')
   })
+  it('돌던 중 파일이 사라지면 메모리의 키로 다시 만들고(다음 부팅이 같은 키를 읽는다), 있는 파일은 건드리지 않는다', () => {
+    const d = tmpDir()
+    const a = loadSecret(d, undefined)
+    expect(restoreSecretFile(d, a)).toBe(false)
+    fs.unlinkSync(path.join(d, 'secret'))
+    expect(restoreSecretFile(d, a)).toBe(true)
+    expect(loadSecret(d, undefined)).toBe(a)
+    expect(fs.statSync(path.join(d, 'secret')).mode & 0o777).toBe(0o600)
+    // 사람이 바꿔 둔 파일은 덮어쓰지 않는다
+    fs.writeFileSync(path.join(d, 'secret'), 'operator-chosen-secret-0123456789\n')
+    expect(restoreSecretFile(d, a)).toBe(false)
+    expect(loadSecret(d, undefined)).toBe('operator-chosen-secret-0123456789')
+  })
   it('짧은 파일은 조용히 넘기지 않고 PersistFatal', () => {
     const d = tmpDir()
     fs.writeFileSync(path.join(d, 'secret'), 'short\n')
@@ -323,6 +337,27 @@ describe('교단 기록 파일', () => {
     const again = createCultRegistry({ file, maxCults: 100, log: c.log, status: newPersistStatus() })
     expect(again.get('c1')).toMatchObject({ name: '라면교', fol: 3, inf: 10 })
     expect(again.size).toBe(2)
+  })
+
+  it('돌던 중 기록 파일이 사라지면 ensureFile 이 다시 쓰게 한다(기록이 없으면 아무것도 하지 않는다)', () => {
+    const d = tmpDir()
+    const file = path.join(d, 'cults.json')
+    const c = collector()
+    const r = createCultRegistry({ file, maxCults: 100, log: c.log, status: newPersistStatus() })
+    // 기록이 없으면 만들 파일도 없다
+    expect(r.ensureFile()).toBe(false)
+    r.record(cult('c1', '라면교'), { fol: 3, inf: 10 })
+    r.flush(true)
+    expect(r.ensureFile()).toBe(false)
+    // 폴더가 비워졌다
+    fs.rmSync(file)
+    fs.rmSync(`${file}.bak`, { force: true })
+    r.flush(true) // 바뀐 것이 없으니 평소에는 쓰지 않는다
+    expect(fs.existsSync(file)).toBe(false)
+    expect(r.ensureFile()).toBe(true)
+    r.flush(true)
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).map((x: { id: string }) => x.id)).toEqual(['c1'])
+    expect(r.ensureFile()).toBe(false)
   })
 
   it('깨진 cults.json 은 덮어쓰지 않고 corrupt-<시각> 으로 옮긴 뒤 .bak 에서 되살린다', () => {
