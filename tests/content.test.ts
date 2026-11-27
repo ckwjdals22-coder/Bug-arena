@@ -1401,13 +1401,15 @@ describe("문서에 적은 숫자가 엔진 상수와 같다", () => {
   });
 
   it("판매자 약관의 금칙 표현 목록이 policy.ts 와 같다", () => {
-    // 등록된 표기를 하나도 줄이지 않고 그대로 적는다(검사는 등록된 표기와 글자 그대로 견준다).
+    // 등록된 표기를 하나도 줄이지 않고 그대로 적는다(검사는 띄어쓰기를 무시하고 견준다).
     const section = LEGAL_DOCS["seller-terms"].sections.find((s) => s.id === "listing-rules");
     const text = allStrings(section).join("\n");
     expect(text).toContain(`쓸 수 없는 표현(현재 기준): ${BANNED_PHRASES.map((item) => item.phrase).join(", ")}.`);
-    // 띄어쓰기만 바꾼 표기가 모두 걸리는 것은 아니므로 그렇게 말하지 않는다.
-    expect(findBannedPhrases("커플보장")).toEqual([]);
-    expect(text).not.toContain("띄어쓰기를 바꿔 써도 같은 표현으로 봅니다");
+    // 띄어쓰기만 바꾼 표기도 같은 표현으로 잡는다.
+    expect(findBannedPhrases("커플보장").map((item) => item.phrase)).toEqual(["커플 보장"]);
+    expect(findBannedPhrases("땡 처리 특가", "입금시 할인")).toHaveLength(2);
+    expect(findBannedPhrases("둔산동 와인 소셜 4:4")).toEqual([]);
+    expect(text).toContain("띄어쓰기를 바꿔 써도 같은 표현으로 봅니다");
   });
 
   it("판매자 약관의 수수료 표가 설계 문서의 판정 순서와 같다", () => {
