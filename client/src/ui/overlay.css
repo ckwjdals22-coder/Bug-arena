@@ -163,7 +163,8 @@
   content: '';
   position: absolute;
   bottom: -8px;
-  left: 50%;
+  /* 말풍선을 화면 안으로 밀어 넣었을 때 꼬리는 말한 사람 쪽에 남는다(overlay.ts 가 --tail 을 정한다) */
+  left: calc(50% + var(--tail, 0px));
   width: 11px;
   height: 11px;
   margin-left: -6px;

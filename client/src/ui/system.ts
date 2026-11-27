@@ -272,6 +272,19 @@ export function mountSystem(ctx: AppContext): void {
     enteredAt = performance.now()
     resetNames()
   })
+  // 끊겼다 돌아왔을 때: 그사이 사라진 것이 있으면 한 줄로 알려 준다(아무 말 없이 점수판·대화 창이 사라지면 고장처럼 보인다)
+  bus.on('resumed', (r) => {
+    const parts: string[] = []
+    if (r.lost.includes('battle')) parts.push('진행 중이던 배틀은 취소됐어요.')
+    if (r.lost.includes('sermon')) parts.push('듣던 설교는 끝났어요.')
+    if (r.lost.includes('talk')) parts.push('하던 대화는 닫혔어요.')
+    let head = ''
+    if (r.idle) head = r.same ? '' : '자리를 비운 사이 잠시 나가 있었어요. 다시 들어왔습니다.'
+    else if (parts.length > 0) head = '연결이 잠깐 끊겼다 돌아왔어요.'
+    const text = [head, ...parts].filter(Boolean).join(' ')
+    if (text) window.setTimeout(() => ui.toast(`📡 ${text}`, 'info', 5200), 600)
+  })
+
   // 가려던 방이 가득 차 다른 방으로 왔을 때: 친구 링크로 왔다면 친구가 여기 없다는 뜻이므로 꼭 알려 준다
   bus.on('redirected', ({ from }) => {
     const here = store.room?.name ?? '다른 방'

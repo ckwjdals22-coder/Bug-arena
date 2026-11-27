@@ -554,7 +554,7 @@ describe('hello → welcome', () => {
     expect(t.host.of(a.conn, 'kick')).toEqual([{ t: 'kick', why: 'dup' }])
   })
 
-  it('같은 방에 같은 pid 가 들어오면 옛 연결을 dup 으로 내보내고 진행도를 이어받는다', () => {
+  it('같은 방에 같은 pid 가 들어오면 옛 연결을 dup 으로 내보내고, 방에 있던 그 사람에게 새 연결을 이어 붙인다', () => {
     const t = setup()
     const a = t.join({ pid: 'same-device-0001', name: '원래사람' })
     const b = t.join({ name: '구경꾼' })
@@ -567,14 +567,15 @@ describe('hello → welcome', () => {
     expect(t.host.closes.get(a.conn)).toEqual({ code: CLOSE_KICK, reason: 'dup' })
     // 쫓겨나기 전에 마지막 저장본을 받는다
     expect(t.host.of(a.conn, 'save')[0]?.me.inf).toBe(50)
-    expect(a2.id).not.toBe(a.id)
+    // 같은 번호, 같은 진행도(메모리에만 있던 것 포함)로 이어진다
+    expect(a2.id).toBe(a.id)
     expect(a2.w.me).toMatchObject({ inf: 50, fol: 3, rank: 1 })
     expect(t.room.players.size).toBe(2)
     expect(t.room.playerByPid('same-device-0001')?.id).toBe(a2.id)
-    // 구경꾼은 leave(옛 id) → join(새 id) 순서로 본다
+    expect(t.player(a2.id).conn).toBe(a2.conn)
+    // 구경꾼에게는 아무 일도 없었던 것처럼 보인다(나갔다 들어온 것으로 보이지 않는다)
     const seen = t.host.json(b.conn).filter((m) => m.t === 'leave' || m.t === 'join')
-    expect(seen.map((m) => m.t)).toEqual(['leave', 'join'])
-    expect(seen[0]).toEqual({ t: 'leave', id: a.id })
+    expect(seen).toEqual([])
     // 옛 연결이 뒤늦게 끊겨도 새 세션에는 영향이 없다
     t.room.disconnect(a.conn)
     expect(t.room.players.has(a2.id)).toBe(true)

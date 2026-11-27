@@ -14,7 +14,7 @@ import { CULT_COLORS, CULT_EMBLEMS, RANKS } from '../../../shared/content/core'
 import type { RankDef } from '../../../shared/content/types'
 import type { RoomInfo } from '../../../shared/types'
 import type { AppContext, ContextAction, SfxName } from '../core/contracts'
-import { bindCooldown, clear, fmt, h, hex, onContextRefresh } from './kit'
+import { bindCooldown, clear, fmt, h, hex, onContextRefresh, onPress } from './kit'
 
 // ───────────────────────── 형제 모듈(talk/emotes/system/profile)과 같이 쓰는 도우미 ─────────────────────────
 
@@ -483,7 +483,9 @@ export function mountHud(ctx: AppContext): void {
     if (!v) {
       const icon = h('span.hud-action-icon')
       const label = h('small.hud-action-label')
-      const btn = h('button.round-btn.hud-action', { type: 'button', onclick: () => trigger(id) }, icon, label, h('kbd.hud-key', { 'aria-hidden': 'true' }, 'E'))
+      const btn = h('button.round-btn.hud-action', { type: 'button' }, icon, label, h('kbd.hud-key', { 'aria-hidden': 'true' }, 'E'))
+      // 조이스틱을 누른 채로도 눌리도록 터치는 pointerup 에서 처리한다
+      onPress(btn, () => trigger(id))
       v = { btn, icon, label, readyAt: 0 }
       views.set(id, v)
     }

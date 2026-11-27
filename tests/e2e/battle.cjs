@@ -35,6 +35,16 @@ const { OUT, sleep, startServer, launch, openPlayer, state, waitState, walkToPla
     await waitState(B.page, (s) => s.battles.length === 1, 5000, 'battle start B')
     check('수락하면 양쪽 모두 점수판이 뜬다', (await A.page.locator('.battle-board').isVisible()) && (await B.page.locator('.battle-board').isVisible()))
 
+    // 배틀 도중 B(모바일)의 연결이 1초쯤 끊긴다(와이파이 ↔ 데이터 전환 같은 상황): 배틀은 무효가 되지 않고 이어져야 한다
+    const posB = await state(B.page)
+    await B.page.evaluate(() => window.__doas.net.debugDrop())
+    await waitState(B.page, (s) => s.phase === 'playing' && s.battles.length === 1, 12000, 'B resumes with battle')
+    const afterB = await state(B.page)
+    check('배틀 중 잠깐 끊겨도 같은 번호·같은 자리로 이어지고 배틀이 유지된다', afterB.id === b0.id && Math.hypot(afterB.x - posB.x, afterB.z - posB.z) < 1.5 && (await state(A.page)).battles.length === 1, `id ${b0.id}→${afterB.id}, 이동 ${Math.hypot(afterB.x - posB.x, afterB.z - posB.z).toFixed(2)}m`)
+    check('상대 화면에는 퇴장·무효 소식이 뜨지 않는다', !(await A.page.locator('.battle-result:not(.hidden)').count()) && (await A.page.locator('.battle-board').isVisible()))
+    await B.page.locator('.battle-board').waitFor({ state: 'visible', timeout: 4000 }).catch(() => {})
+    check('돌아온 쪽 화면에도 점수판이 다시 보인다', await B.page.locator('.battle-board').isVisible())
+
     // 60초 동안 A 는 포교를 시도한다(결과는 확률). 합류 횟수 = 점수여야 한다
     let joins = 0
     const t0 = Date.now()

@@ -86,8 +86,9 @@
   .cert-tabs .tab {
     flex: 1 1 0;
     min-width: 0;
-    padding: 6px 6px;
-    font-size: 13.5px;
+    padding: 6px 2px;
+    font-size: 12.5px;
+    letter-spacing: -0.03em;
     white-space: nowrap;
   }
 }

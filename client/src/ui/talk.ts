@@ -76,6 +76,9 @@ const RESULT: Record<PitchOutcome, ResultView> = {
 
 const pick = <T>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)]!
 
+/** 시트가 뜬 뒤 이 시간 동안은 멘트 선택·그만두기를 받지 않는다(연타 방지) */
+const OPEN_GUARD_MS = 380
+
 export function mountTalk(ctx: AppContext): void {
   const { store, bus, ui } = ctx
 
@@ -123,6 +126,7 @@ export function mountTalk(ctx: AppContext): void {
     {
       type: 'button',
       onclick: () => {
+        if (performance.now() - openedAt < OPEN_GUARD_MS) return
         playSfx(ctx, 'close')
         ctx.actions.endTalk()
       },
@@ -179,6 +183,8 @@ export function mountTalk(ctx: AppContext): void {
   function choose(lineId: number): void {
     const t = store.talk
     if (!t || !open || isWaiting(t) || !lineIds.includes(lineId)) return
+    // [말 걸기]를 두 번 톡톡 누르면 두 번째 누름이 막 올라온 시트(멘트 카드·그만두기)에 떨어진다 → 뜬 직후에는 받지 않는다
+    if (performance.now() - openedAt < OPEN_GUARD_MS) return
     picked = lineId
     pickedAt = performance.now()
     playSfx(ctx, 'pick')
@@ -225,6 +231,8 @@ export function mountTalk(ctx: AppContext): void {
   }
 
   const keyOf = (t: TalkState): string => `${t.npc}:${t.round}:${t.lines.join(',')}`
+  /** 시트가 뜬 시각 — 뜬 직후의 누름(연타의 두 번째)을 걸러 내는 데 쓴다 */
+  let openedAt = -1e9
 
   function onTalk(t: TalkState | null): void {
     if (!t) {
@@ -246,6 +254,7 @@ export function mountTalk(ctx: AppContext): void {
     }
     if (!open) {
       open = true
+      openedAt = performance.now()
       sheet.classList.remove('hidden')
       playSfx(ctx, 'talk')
     }

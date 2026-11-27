@@ -284,6 +284,8 @@ async function main() {
         tried.add(talk.npc)
         assert(talk.lines.length >= 2, '멘트 선택지가 부족합니다')
         assert((await A.locator('.talk-line').count()) === talk.lines.length, '화면의 멘트 버튼 수가 서버가 준 멘트 수와 다릅니다')
+        // 시트는 뜬 직후 잠깐(연타 방지) 누름을 받지 않는다. 사람이 멘트를 읽는 시간만큼 기다린다
+        await sleep(450)
         // 최대 2라운드
         for (let round = 0; round < 2; round++) {
           const cur = (await snapshot(A)).talk
@@ -358,6 +360,7 @@ async function main() {
               setTimeout(() => resolve('timeout'), 6000)
             }),
         )
+        await sleep(450)
         await B.locator('.talk-line').first().tap()
         const o = await res
         if (o !== 'timeout') outcomes.push(o)

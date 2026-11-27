@@ -730,14 +730,16 @@ function attach(ws: WebSocket, room: Room, ip: string): void {
   ws.on('pong', () => {
     c.alive = true
   })
-  ws.on('close', () => {
+  ws.on('close', (code: number) => {
     // 표에서 먼저 지운다: 퇴장 처리 중 이 연결로 보내려는 것이 조용히 버려지게
     conns.delete(id)
     preHello.delete(id)
     const left = (connsPerIp.get(ip) ?? 1) - 1
     if (left > 0) connsPerIp.set(ip, left)
     else connsPerIp.delete(ip)
-    room.disconnect(id)
+    // 상대가 스스로 닫았으면(1000 정상, 1001 탭 닫기·페이지 이동, 1005 코드 없음) 바로 퇴장시킨다.
+    // 그 밖(1006 끊김, 응답 없어 끊은 경우 등)은 방이 잠시 자리를 지켜 주며 재접속을 기다린다.
+    room.disconnect(id, code === 1000 || code === 1001 || code === 1005)
   })
   ws.on('error', (err: Error) => {
     // 프레임 상한 초과·잘못된 프레임 등. ws 가 알아서 닫고 close 이벤트가 뒤따른다

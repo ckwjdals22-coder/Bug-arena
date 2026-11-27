@@ -45,7 +45,10 @@ export function joinChance(arch: Archetype, line: PitchLine, ctx: PitchContext):
   c += ctx.buff
   if (ctx.round >= 2) c += 0.25
   if (ctx.poach) c -= 0.2
-  return Math.max(JOIN_CHANCE_MIN, Math.min(JOIN_CHANCE_MAX, c))
+  c = Math.max(JOIN_CHANCE_MIN, Math.min(JOIN_CHANCE_MAX, c))
+  // 유형별 상한: 보정이 아무리 쌓여도 이 유형은 이 확률을 넘지 않는다(하한 4% 보다 낮은 상한도 그대로 지킨다)
+  if (arch.maxChance !== undefined) c = Math.min(c, Math.max(0, arch.maxChance))
+  return c
 }
 
 function reaction(arch: Archetype, line: PitchLine, key: keyof ReactionSet, rnd: Rnd): string {

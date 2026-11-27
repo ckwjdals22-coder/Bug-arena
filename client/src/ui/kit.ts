@@ -80,6 +80,37 @@ export function fmt(n: number): string {
   return n.toLocaleString('ko-KR')
 }
 
+/**
+ * 누름 처리. 터치는 손가락을 떼는 순간(pointerup) 바로 실행한다: 다른 손가락(조이스틱)이 화면에 닿아 있는 동안에는
+ * 브라우저가 click 을 만들어 주지 않아, 달리면서 [도망]·[말 걸기]를 누를 수 없기 때문이다.
+ * 마우스·키보드(Enter/Space)는 평소처럼 click 으로 처리한다.
+ */
+export function onPress(el: HTMLElement, fn: () => void): void {
+  let downId = -1
+  let firedAt = -1e9
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse') downId = e.pointerId
+  })
+  el.addEventListener('pointercancel', () => {
+    downId = -1
+  })
+  el.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== downId) return
+    downId = -1
+    if ((el as HTMLButtonElement).disabled) return
+    // 버튼 밖으로 밀어서 뗐다면 취소로 본다
+    const r = el.getBoundingClientRect()
+    if (e.clientX < r.left - 10 || e.clientX > r.right + 10 || e.clientY < r.top - 10 || e.clientY > r.bottom + 10) return
+    firedAt = performance.now()
+    fn()
+  })
+  el.addEventListener('click', () => {
+    // 터치로 이미 처리했다면 뒤따라오는 click 은 버린다
+    if (performance.now() - firedAt < 700) return
+    fn()
+  })
+}
+
 /** 버튼 쿨타임 표시: readyAt(performance.now 기준) 까지 비활성 + 남은 초 표시 */
 export function bindCooldown(btn: HTMLElement, readyAt: number): void {
   const prev = (btn as unknown as { __cd?: number }).__cd
@@ -152,7 +183,11 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
     if (e.target === panelLayer) closePanel()
   })
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && openId) closePanel()
+    if (e.key === 'Escape' && openId) {
+      closePanel()
+      // Esc 한 번에는 한 가지만 닫는다: 패널을 닫았으면 그 아래의 대화 창·팝업까지 같이 닫히지 않게 한다
+      e.stopImmediatePropagation()
+    }
   })
 
   function toast(text: string, kind: 'info' | 'good' | 'bad' | 'gold' = 'info', ms = 2600): void {

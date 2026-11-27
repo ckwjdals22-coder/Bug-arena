@@ -5,20 +5,29 @@
  */
 import type * as THREE from 'three'
 import { WORLD } from '../../../shared/world'
+import { PROPS } from '../../../shared/world/data'
 
 const DIST_MIN = 4.5
 const DIST_MAX = 19
 const PITCH_MIN = 0.16
 const PITCH_MAX = 1.15
 
-/** 카메라와 캐릭터 사이에 끼면 캐릭터를 가리는 낮은 지붕(지하철 출입구 캐노피). h = 지붕 윗면 높이 */
+/**
+ * 카메라와 캐릭터 사이에 끼면 캐릭터를 가리는 것: 지하철 출입구 캐노피(낮은 지붕)와 나무의 수관.
+ * y0 = 가리기 시작하는 높이(나무는 줄기 위 수관부터), h = 윗면 높이.
+ */
 interface Occluder {
   x0: number
   z0: number
   x1: number
   z1: number
+  y0: number
   h: number
 }
+/** 나무 수관: 반폭·아랫면·윗면(render/world/props.ts 의 tree 모양에 맞춘 값) */
+const TREE_HALF = 1.55
+const TREE_Y0 = 1.9
+const TREE_TOP = 4.5
 const CANOPY_TOP = 2.9
 const CANOPY_EAVE = 0.2
 /** 가림 회피로 올릴 수 있는 시선 각도의 한 단계와 반응 속도 */
@@ -39,15 +48,20 @@ function findOccluders(): Occluder[] {
     const dist = Math.hypot(dx, dz)
     if (dist < bestD) {
       bestD = dist
-      best = { x0: b.x0 - CANOPY_EAVE, z0: b.z0 - CANOPY_EAVE, x1: b.x1 + CANOPY_EAVE, z1: b.z1 + CANOPY_EAVE, h: CANOPY_TOP }
+      best = { x0: b.x0 - CANOPY_EAVE, z0: b.z0 - CANOPY_EAVE, x1: b.x1 + CANOPY_EAVE, z1: b.z1 + CANOPY_EAVE, y0: 0, h: CANOPY_TOP }
     }
   }
-  return best ? [best] : []
+  const out: Occluder[] = best ? [best] : []
+  for (const p of PROPS) {
+    if (p.kind !== 'tree') continue
+    out.push({ x0: p.x - TREE_HALF, z0: p.z - TREE_HALF, x1: p.x + TREE_HALF, z1: p.z + TREE_HALF, y0: TREE_Y0, h: TREE_TOP })
+  }
+  return out
 }
 
 /**
- * 캐릭터 발치(ax, ay, az)에서 카메라(bx, by, bz)까지의 시선이 지붕 아래를 지나는가.
- * 평면에서 선분이 상자에 들어가는 지점의 시선 높이가 지붕보다 낮으면 가려진 것이다.
+ * 캐릭터 발치(ax, ay, az)에서 카메라(bx, by, bz)까지의 시선이 가림막(지붕·수관)을 지나는가.
+ * 평면에서 선분이 상자를 지나는 구간의 시선 높이가 가림막의 높이 범위와 겹치면 가려진 것이다.
  */
 function sightBlocked(o: Occluder, ax: number, ay: number, az: number, bx: number, by: number, bz: number): boolean {
   const dx = bx - ax
@@ -71,7 +85,8 @@ function sightBlocked(o: Occluder, ax: number, ay: number, az: number, bx: numbe
     t1 = Math.min(t1, Math.max(a, b))
   }
   if (t0 >= t1) return false
-  return ay + (by - ay) * t0 < o.h + 0.25
+  // 시선은 카메라 쪽으로 갈수록 높아진다: 들어설 때 윗면보다 낮고, 나올 때 아랫면보다 높으면 그 사이를 뚫고 지나간다
+  return ay + (by - ay) * t0 < o.h + 0.25 && ay + (by - ay) * t1 > o.y0
 }
 
 export interface CameraRig {

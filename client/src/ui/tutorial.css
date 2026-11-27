@@ -43,10 +43,11 @@
   font-weight: 800;
   pointer-events: auto !important;
 }
-/* 터치 화면: 조이스틱 구역(왼쪽 아래)과 오른쪽 버튼을 피해 화면 위쪽에 둔다 */
+/* 터치 화면: 조이스틱 구역(왼쪽 아래)과 오른쪽 버튼을 피해 화면 위쪽(HUD 바로 아래)에 둔다.
+   소식 줄은 안내가 보이는 동안 그 아래로 내려간다(.tutorial-on, 아래 규칙) */
 .hud-touch .tutorial-hint {
   bottom: auto;
-  top: calc(var(--hud-bottom, 100px) + 44px);
+  top: calc(var(--hud-bottom, 100px) + 7px);
   left: 12px;
   right: 12px;
   transform: none;
@@ -142,3 +143,14 @@
 .tutorial-wait-title {
   font-weight: 900;
 }
+
+/* 안내 말풍선이 떠 있는 동안: 소식 줄을 그 아래로 내린다(겹쳐서 둘 다 못 읽게 되지 않도록) */
+.hud-touch.tutorial-on .system-stack {
+  top: calc(var(--hud-bottom, 100px) + 7px + var(--hint-h, 60px) + 6px);
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .hud-touch.tutorial-on .system-stack {
+    top: calc(var(--hud-bottom, 60px) + 7px);
+  }
+}
+

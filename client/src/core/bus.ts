@@ -12,6 +12,11 @@ export interface BusEvents {
   phase: Phase
   /** 방 입장 완료(welcome 처리 후, store 가 채워진 상태) */
   entered: void
+  /**
+   * 끊겼다가 다시 들어왔다(첫 입장이 아니다). same = 서버가 같은 번호·같은 자리로 이어 붙여 줬는가,
+   * lost = 끊긴 사이 사라진 것(진행 중이던 배틀·설교·대화), idle = 자리를 오래 비워 내보내졌다 돌아온 것인가
+   */
+  resumed: { same: boolean; lost: ('battle' | 'sermon' | 'talk')[]; idle: boolean }
   /** 가려던 방이 가득 차서 서버가 다른 방으로 안내했다(from = 가려던 방 id, to = 들어온 방 id) */
   redirected: { from: string; to: string }
   /** 다른 플레이어 입장/퇴장/공개 정보 변경 (store 반영 후) */

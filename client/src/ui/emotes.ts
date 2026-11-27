@@ -11,7 +11,7 @@ import { QUICK_CHATS } from '../../../shared/content/misc'
 import type { EmoteDef } from '../../../shared/content/types'
 import type { AppContext } from '../core/contracts'
 import { blurAfterPointerClick, isTyping, makePopup, playSfx, rankName } from './hud'
-import { bindCooldown, clear, h } from './kit'
+import { bindCooldown, clear, h, onPress } from './kit'
 
 export function mountEmotes(ctx: AppContext): void {
   const { store, bus, ui } = ctx
@@ -98,12 +98,9 @@ export function mountEmotes(ctx: AppContext): void {
   // ───────── 터치 버튼 ─────────
   const tChat = h('button.round-btn.emotes-tbtn', { type: 'button', 'aria-label': '말풍선', 'aria-haspopup': 'true' }, '💬', h('small', '말풍선'))
   const tEmote = h('button.round-btn.emotes-tbtn', { type: 'button', 'aria-label': '이모트', 'aria-haspopup': 'true' }, '🙌', h('small', '이모트'))
-  const tFlee = h(
-    'button.round-btn.emotes-tbtn',
-    { type: 'button', 'aria-label': '도망가기', onclick: flee },
-    fleeDef?.icon ?? '💨',
-    h('small', '도망'),
-  )
+  const tFlee = h('button.round-btn.emotes-tbtn', { type: 'button', 'aria-label': '도망가기' }, fleeDef?.icon ?? '💨', h('small', '도망'))
+  // 달리는 중(조이스틱 손가락이 닿아 있는 중)에도 눌려야 한다 → 터치는 pointerup 에서 처리
+  onPress(tFlee, flee)
   chatBtns.push(tChat)
   fleeBtns.push(tFlee)
   const touchBox = h('div.emotes-touch.hidden', tChat, tEmote, tFlee)
@@ -159,7 +156,7 @@ export function mountEmotes(ctx: AppContext): void {
     sheetMode = 'extra'
     sheet.toggle()
   })
-  tEmote.addEventListener('click', () => {
+  onPress(tEmote, () => {
     click()
     if (sheet.open && sheetMode !== 'all') sheet.hide()
     sheetMode = 'all'
@@ -206,7 +203,7 @@ export function mountEmotes(ctx: AppContext): void {
     chat.toggle()
   }
   chatBtn.addEventListener('click', toggleChat)
-  tChat.addEventListener('click', toggleChat)
+  onPress(tChat, toggleChat)
 
   root.append(bar, sheetBox, chatBox)
   blurAfterPointerClick(bar)

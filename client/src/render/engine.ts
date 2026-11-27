@@ -108,7 +108,13 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
     camera.updateProjectionMatrix()
   }
   resize()
-  if (typeof ResizeObserver === 'function') new ResizeObserver(() => resize()).observe(canvas)
+  // 크기·해상도 변경은 '다음 그리기 직전'에 적용한다. 그 자리에서 바로 바꾸면 그리기 버퍼가 비워진 채로
+  // 화면에 한 번 나가서(특히 자동 화질 조정 때) 하늘색 빈 화면이 깜빡인다.
+  let needResize = false
+  const requestResize = (): void => {
+    needResize = true
+  }
+  if (typeof ResizeObserver === 'function') new ResizeObserver(requestResize).observe(canvas)
 
   canvas.addEventListener('webglcontextlost', (e) => {
     e.preventDefault()
@@ -118,7 +124,7 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
   canvas.addEventListener('webglcontextrestored', () => {
     lost = false
     console.info('[engine] WebGL 컨텍스트 복구')
-    resize()
+    requestResize()
   })
 
   const v = new THREE.Vector3()
@@ -145,12 +151,12 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
       const next = Math.min(1, Math.max(0.55, v))
       if (Math.abs(next - resScale) < 0.01) return
       resScale = next
-      resize()
+      requestResize()
     },
     setQuality(q) {
       if (q === quality) return
       quality = q
-      resize()
+      requestResize()
       for (const fn of listeners) {
         try {
           fn(q)
@@ -176,9 +182,13 @@ export function createEngine(canvas: HTMLCanvasElement, initialQuality: QualityT
       if (!raycaster.ray.intersectPlane(ground, hit)) return null
       return { x: hit.x, z: hit.z }
     },
-    resize,
+    resize: requestResize,
     render() {
       if (lost) return
+      if (needResize) {
+        needResize = false
+        resize()
+      }
       renderer.render(scene, camera)
     },
     applySky,

@@ -30,7 +30,15 @@ const store = createStore()
 const bus = new Bus()
 
 const setting = store.profile.settings.quality
-const engine = createEngine(canvas, setting === 'auto' ? guessQuality() : setting)
+const engine = (() => {
+  try {
+    return createEngine(canvas, setting === 'auto' ? guessQuality() : setting)
+  } catch (err) {
+    // 3D(WebGL)를 켤 수 없는 기기·브라우저: 첫 화면에 이유를 적고 멈춘다(index.html 의 __bootFail)
+    window.__bootFail?.('이 기기·브라우저에서는 3D 화면(WebGL)을 켤 수 없어요. 크롬·사파리 최신 버전에서 열거나, 브라우저 설정에서 하드웨어 가속을 켜 주세요.')
+    throw err
+  }
+})()
 engine.applySky(WORLD_SKY)
 const sfx = createSfx()
 const ui = createUi(uiRoot, bus)
@@ -161,10 +169,19 @@ function syncHqDoor(): void {
 bus.on('progress', syncHqDoor)
 bus.on('rankUp', syncHqDoor)
 
+// 잠깐 끊겼다가 같은 자리로 이어 붙었을 때는 '새로 입장'한 것처럼 굴지 않는다(카메라를 돌리지 않고 입장음도 내지 않는다)
+let resumedInPlace = false
+bus.on('resumed', (r) => {
+  resumedInPlace = r.same
+})
 bus.on('entered', () => {
   const me = store.me
   if (!me) return
   syncHqDoor()
+  if (resumedInPlace) {
+    resumedInPlace = false
+    return
+  }
   // 막 나온 출구에서 광장 쪽을 바라보게 하고, 카메라를 등 뒤에 둔다
   me.yaw = Math.atan2(WORLD.plaza.x - me.x, WORLD.plaza.z - me.z)
   rig.snapBehind(me.x, me.y, me.z, me.yaw)
@@ -295,8 +312,18 @@ function buildVisuals(now: number): readonly CharVisual[] {
 let accMs = 0
 let accFrames = 0
 let goodWindows = 0
+/** 이 시각 전에는 재지 않는다: 입장 직후에는 셰이더 컴파일 등으로 긴 프레임이 한두 번 나오는 것이 정상이다 */
+let perfHoldUntil = 0
+bus.on('entered', () => {
+  perfHoldUntil = performance.now() + 3000
+  accMs = 0
+  accFrames = 0
+})
 function watchPerformance(frameMs: number): void {
   if (store.profile.settings.quality !== 'auto') return
+  if (performance.now() < perfHoldUntil) return
+  // 어쩌다 한 번 튀는 프레임(탭 전환, GC, 컴파일)은 평균에서 뺀다. 그런 한 번 때문에 해상도를 깎으면 한참 뒤에야 돌아온다
+  if (frameMs > 250) return
   accMs += frameMs
   accFrames++
   if (accMs < 2000) return
@@ -371,6 +398,8 @@ requestAnimationFrame(frame)
 declare global {
   interface Window {
     __doas?: { store: typeof store; bus: Bus; net: typeof net; actions: Actions; engine: typeof engine; player: typeof player; rig: typeof rig }
+    /** index.html 이 정의한다: 첫 화면에 '시작하지 못한 이유'를 보여 준다 */
+    __bootFail?: (msg?: string) => void
   }
 }
 window.__doas = { store, bus, net, actions, engine, player, rig }

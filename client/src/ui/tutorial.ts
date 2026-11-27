@@ -52,12 +52,21 @@ export function mountTutorial(ctx: AppContext): void {
   }
   hintSkip.addEventListener('click', finish)
 
+  /** 안내가 보이는 동안 소식 줄(feed)이 그 아래로 내려가도록 높이를 알려 준다(터치 화면에서는 둘 다 화면 위쪽에 있다) */
+  function syncHintSpace(): void {
+    const on = !hint.classList.contains('hidden')
+    ui.root.classList.toggle('tutorial-on', on)
+    if (on) ui.root.style.setProperty('--hint-h', `${hint.offsetHeight}px`)
+  }
+  new MutationObserver(syncHintSpace).observe(hint, { attributes: true, attributeFilter: ['class'] })
+
   function show(text: string): void {
     hintText.textContent = text
     hint.classList.remove('hidden')
     hint.classList.remove('pop')
     void hint.offsetWidth
     hint.classList.add('pop')
+    syncHintSpace()
   }
   function showStep(): void {
     if (step === 'done' || store.phase !== 'playing') {
@@ -84,6 +93,10 @@ export function mountTutorial(ctx: AppContext): void {
     if (step === 'done') return
     if (t && (step === 'move' || step === 'talk')) {
       step = 'pick'
+      showStep()
+    } else if (!t && step === 'pick') {
+      // 멘트를 고르지 않고 대화가 닫혔다(그만두기·시간 초과·끊김): '멘트를 골라 보세요'를 남겨 두지 않는다
+      step = 'talk'
       showStep()
     }
   })
@@ -119,7 +132,7 @@ export function mountTutorial(ctx: AppContext): void {
   const hqRank = RANKS[WORLD.hq.minRank]?.name ?? ''
   const pins: Pin[] = [
     mkPin('📜', '단상', WORLD.podium.x, WORLD.podium.z),
-    mkPin('🎁', '헌금함', WORLD.offeringBox.x, WORLD.offeringBox.z),
+    mkPin('🎁', '가상 헌금함', WORLD.offeringBox.x, WORLD.offeringBox.z),
     mkPin('🚇', '4번 출구', WORLD.subway.x, WORLD.subway.z),
     mkPin('👁️', '교단 건물', WORLD.hq.door.x, WORLD.hq.door.z, () => (store.me?.prog.rank ?? 0) < WORLD.hq.minRank),
   ]

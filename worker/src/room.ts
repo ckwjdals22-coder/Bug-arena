@@ -151,8 +151,9 @@ export class RoomDO extends DurableObject<Env> {
       this.afterEvent()
     })
     // compatibility_date ≥ 2026-04-07: 상대의 Close 에 런타임이 알아서 답한다
-    server.addEventListener('close', () => this.drop(id))
-    server.addEventListener('error', () => this.drop(id))
+    // 상대가 스스로 닫았으면(1000·1001·1005) 바로 퇴장, 그 밖의 끊김은 방이 잠시 자리를 지켜 준다(Node 어댑터와 같은 규칙)
+    server.addEventListener('close', (e) => this.drop(id, e.code === 1000 || e.code === 1001 || e.code === 1005))
+    server.addEventListener('error', () => this.drop(id, false))
     room.connect(id)
     this.startLoop()
     this.afterEvent()
@@ -167,10 +168,10 @@ export class RoomDO extends DurableObject<Env> {
     return hit
   }
 
-  private drop(id: ConnId): void {
+  private drop(id: ConnId, clean = true): void {
     // 표에서 먼저 지운다: 퇴장 처리 중 이 연결로 보내려는 것이 조용히 버려지게
     if (!this.conns.delete(id)) return
-    this.room?.disconnect(id)
+    this.room?.disconnect(id, clean)
     this.afterEvent()
     if (this.conns.size === 0) this.stopLoop()
   }
@@ -183,8 +184,8 @@ export class RoomDO extends DurableObject<Env> {
     try {
       c.ws.send(data)
     } catch {
-      // Close 를 보낸(또는 받은) 소켓에 send() 하면 예외 → 끊긴 연결로 정리
-      this.drop(id)
+      // Close 를 보낸(또는 받은) 소켓에 send() 하면 예외 → 끊긴 연결로 정리(비정상 끊김: 방이 잠시 자리를 지켜 준다)
+      this.drop(id, false)
     }
   }
 

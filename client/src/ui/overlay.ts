@@ -40,6 +40,8 @@ const CULT_TAG_MAX = 240
 const MAX_NPC_TAGS_NARROW = 6
 const NARROW_PX = 560
 const MAX_BUBBLES = 8
+/** 좁은 화면에서는 말풍선이 금방 화면을 덮는다 → 가까운 몇 개만 */
+const MAX_BUBBLES_NARROW = 4
 const PICK_MS = 100
 
 /** 이름표 높이(px) — CSS 의 고정 높이와 맞춘 값. 말풍선을 이름표 위에 얹을 때 쓴다(레이아웃을 읽지 않기 위해) */
@@ -101,6 +103,15 @@ interface Bubble {
   x: number
   y: number
   shown: boolean
+  /** 이번 프레임의 투영 위치(꼬리가 가리킬 곳)와 화면에 있어야 하는지 */
+  vis: boolean
+  px: number
+  py: number
+  /** 어림한 폭·높이(px) — 화면 안에 가두고 서로 겹치지 않게 놓는 데 쓴다(레이아웃을 읽지 않는다) */
+  w: number
+  h: number
+  /** 화면 안으로 밀어 넣느라 생긴 가로 어긋남(px). 꼬리를 그만큼 옮겨 말하는 사람을 계속 가리키게 한다 */
+  tail: number
 }
 
 interface Pop {
@@ -241,10 +252,17 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
   const want = new Set<number>()
   // 화면 폭은 크기가 바뀔 때만 읽는다(update 안에서는 레이아웃/창 크기를 읽지 않는다)
   let npcCap = MAX_NPC_TAGS
+  let narrow = false
+  let bubbleCap = MAX_BUBBLES
+  let viewW = window.innerWidth
   const measure = (): void => {
-    npcCap = Math.min(window.innerWidth, window.innerHeight) < NARROW_PX ? MAX_NPC_TAGS_NARROW : MAX_NPC_TAGS
+    viewW = window.innerWidth
+    narrow = Math.min(window.innerWidth, window.innerHeight) < NARROW_PX
+    npcCap = narrow ? MAX_NPC_TAGS_NARROW : MAX_NPC_TAGS
+    bubbleCap = narrow ? MAX_BUBBLES_NARROW : MAX_BUBBLES
     dirty = true
   }
+  measure()
   window.addEventListener('resize', measure)
 
   function pickVisible(me: MeView): void {
@@ -340,7 +358,8 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
   }
 
   /** 겹치는 상자가 있으면 그중 가장 높이 있는 것의 윗변 y, 없으면 NaN. pad 만큼 넉넉히 본다 */
-  function hitTop(x0: number, y0: number, x1: number, y1: number, pad: number): number {
+  function hitTop(x0: number, y0: number, x1: number, y1: number, pad: number, boxes: number[] = placed): number {
+    const placed = boxes
     let top = NaN
     for (let i = 0; i < placed.length; i += 4) {
       // 폭은 어림값이라 가로로 살짝(4px) 겹치는 것은 봐준다
@@ -432,17 +451,25 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
         const body = h('div.overlay-bubble-body')
         const el = h('div.overlay-bubble.off', body)
         layer.append(el)
-        b = { key: 0, el, body, until: 0, dying: 0, ranked: false, d2: 0, x: NaN, y: NaN, shown: false }
+        b = { key: 0, el, body, until: 0, dying: 0, ranked: false, d2: 0, x: NaN, y: NaN, shown: false, vis: false, px: 0, py: 0, w: 120, h: 40, tail: 0 }
       }
       b.key = key
       b.x = NaN
       b.y = NaN
       b.ranked = false
+      b.vis = false
       bubbles.set(key, b)
       bubbleList.push(b)
     }
     b.body.textContent = str
     b.body.className = 'overlay-bubble-body ' + kind
+    // 크기 어림: overlay.css 의 글자 크기·최대 폭과 맞춘 값
+    const shout = kind === 'shout'
+    const maxW = shout ? (narrow ? 230 : 270) : narrow ? 180 : 210
+    const tw = textWidth(str, shout ? (narrow ? 15 : 16.5) : narrow ? 13 : 13.5)
+    const padX = shout ? 36 : 28
+    b.w = Math.min(maxW, tw + padX)
+    b.h = Math.max(1, Math.ceil(tw / (maxW - padX))) * (shout ? 21 : 18) + (shout ? 34 : 26)
     // 글이 길수록 조금 더 오래(읽을 시간)
     b.until = performance.now() + (ms && ms > 0 ? ms : clamp(1600 + chars.length * 75, 2200, 5200))
     b.dying = 0
@@ -477,8 +504,52 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       b.d2 = b.key === me.id ? -1 : dx * dx + dz * dz
       rankBuf.push(b)
     }
-    if (rankBuf.length > MAX_BUBBLES) rankBuf.sort((a, b) => a.d2 - b.d2)
-    for (let i = 0; i < rankBuf.length; i++) rankBuf[i]!.ranked = i < MAX_BUBBLES
+    // 가까운 순서(내 말풍선이 맨 앞). 이 순서는 겹침을 풀 때의 우선순위이기도 하다
+    rankBuf.sort((a, b) => a.d2 - b.d2)
+    for (let i = 0; i < rankBuf.length; i++) rankBuf[i]!.ranked = i < bubbleCap
+    // HUD 아래쪽 경계: HUD 가 #ui 에 적어 둔 CSS 변수에서 읽는다(레이아웃 계산 없음)
+    hudBottom = parseFloat(root.style.getPropertyValue('--hud-bottom')) || 60
+  }
+  let hudBottom = 60
+  /** 이미 자리 잡은 말풍선 상자들 */
+  const placedBubbles: number[] = []
+
+  /**
+   * 말풍선을 화면 안에 가두고(좌우·HUD 아래) 서로 겹치면 위로 쌓는다. 우선순위는 가까운 순서.
+   * 밀어 넣느라 옆으로 어긋난 만큼 꼬리를 옮겨, 누가 한 말인지는 계속 보이게 한다.
+   */
+  function layoutBubbles(): void {
+    placedBubbles.length = 0
+    for (let i = 0; i < rankBuf.length; i++) {
+      const b = rankBuf[i]!
+      if (b.key === 0 || !b.vis || bubbles.get(b.key) !== b) continue
+      const hw = b.w / 2
+      const x = hw * 2 + 12 >= viewW ? Math.round(viewW / 2) : Math.round(clamp(b.px, hw + 6, viewW - hw - 6))
+      const floor = hudBottom + b.h + 4
+      let y = Math.max(floor, b.py)
+      for (let k = 0; k < 3; k++) {
+        const top = hitTop(x - hw, y - b.h, x + hw, y, 0, placedBubbles)
+        if (top !== top) break
+        y = top - 3
+      }
+      // 위로 쌓다가 HUD 를 침범하게 되면 쌓기를 포기하고 제자리에 둔다
+      if (y < floor) y = Math.max(floor, b.py)
+      placedBubbles.push(x - hw, y - b.h, x + hw, y)
+      if (x !== b.x || y !== b.y) {
+        b.x = x
+        b.y = y
+        b.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
+      }
+      const tail = Math.round(clamp(b.px - x, -hw + 16, hw - 16))
+      if (tail !== b.tail) {
+        b.tail = tail
+        b.body.style.setProperty('--tail', `${tail}px`)
+      }
+      if (!b.shown) {
+        b.shown = true
+        b.el.classList.remove('off')
+      }
+    }
   }
 
   function updateBubbles(now: number): void {
@@ -501,24 +572,18 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
         continue
       }
       if (!b.ranked || !engine.project(e.x, e.y + headOf(b.key), e.z, pt)) {
+        b.vis = false
         hideBubble(b)
         continue
       }
       const tag = tags.get(b.key)
       // 이름표가 겹침을 피해 위로 올라가 있으면 말풍선도 그만큼 따라 올라간다
       const lift = tag && tag.shown ? (tag.lines === 2 ? TAG_H2 : TAG_H1) - tag.dy : 6
-      const x = Math.round(pt.x)
-      const y = Math.round(pt.y) - lift
-      if (x !== b.x || y !== b.y) {
-        b.x = x
-        b.y = y
-        b.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
-      }
-      if (!b.shown) {
-        b.shown = true
-        b.el.classList.remove('off')
-      }
+      b.vis = true
+      b.px = Math.round(pt.x)
+      b.py = Math.round(pt.y) - lift
     }
+    layoutBubbles()
   }
 
   // ═════════════ 떠오르는 글자 ═════════════

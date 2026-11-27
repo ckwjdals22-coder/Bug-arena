@@ -8,6 +8,9 @@ import './input.css'
 
 const TAP_MAX_MOVE = 9
 const TAP_MAX_MS = 280
+/** 핀치로 볼 조건: 두 번째 손가락이 이 시간 안에, 이 거리 안에 닿는다 */
+const PINCH_GRACE_MS = 250
+const PINCH_NEAR_PX = 170
 const JOY_RADIUS = 56
 const JOY_DEADZONE = 0.14
 const JOY_RUN = 0.86
@@ -86,6 +89,22 @@ export function createInput(canvas: HTMLCanvasElement, uiRoot: HTMLElement): Inp
       startAt: performance.now(),
       moved: 0,
       role: 'mouse',
+    }
+    if (
+      e.pointerType !== 'mouse' &&
+      joy &&
+      joy.moved <= TAP_MAX_MOVE &&
+      performance.now() - joy.startAt < PINCH_GRACE_MS &&
+      Math.hypot(e.clientX - joy.startX, e.clientY - joy.startY) < PINCH_NEAR_PX
+    ) {
+      // 두 손가락이 거의 동시에, 서로 가까이 닿았고 첫 손가락이 아직 움직이지 않았다 = 걷기가 아니라 확대/축소(핀치)다.
+      // 화면 왼쪽 절반에서 시작한 핀치가 캐릭터를 걷게 만들지 않도록, 조이스틱이 되려던 첫 손가락을 시점 조작으로 돌린다.
+      // (양손 엄지로 이동+시점을 동시에 잡는 경우는 두 손가락이 멀리 떨어져 있어 여기에 걸리지 않는다)
+      joy.role = 'look'
+      joy = null
+      joyX = 0
+      joyY = 0
+      joyBase.classList.add('hidden')
     }
     if (e.pointerType === 'mouse') {
       info.role = 'mouse'

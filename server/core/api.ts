@@ -284,6 +284,17 @@ export interface PlayerMemory {
   live: boolean
   /** 접속이 끊긴 뒤 이 시각까지만 기억한다 */
   keepUntil: number
+  /** 마지막으로 서 있던 자리와 따라오던 신도(잠깐 자리를 비웠다 돌아오면 되찾는다) */
+  last?: LastSeat
+}
+
+export interface LastSeat {
+  room: string
+  x: number
+  z: number
+  yaw: number
+  at: number
+  followers: { id: number; key: string; until: number; offered: boolean }[]
 }
 
 export interface RoomOptions {

@@ -69,6 +69,7 @@ import { WORLD, type WorldDef, resolveCollision } from '../../shared/world'
 import type {
   ConnId,
   Grant,
+  LastSeat,
   NpcSimApi,
   NpcSimEvents,
   NpcState,
@@ -149,6 +150,15 @@ const MEMORY_SWEEP_TICKS = 600
 const BLOCK_MEMORY_MS = 6 * 60 * 60_000
 /** 메모 저장소 상한(넘으면 접속 중이 아닌 오래된 것부터 버린다) */
 const MEMORY_MAX = 20_000
+/**
+ * 연결이 '비정상적으로' 끊긴 사람(망 전환, 터널, 잠깐의 끊김)을 방에 그대로 세워 두는 시간.
+ * 이 안에 같은 pid 가 다시 붙으면 같은 번호·같은 자리·같은 상태(배틀, 신도, 쿨타임)로 이어진다.
+ */
+export const RESUME_GRACE_MS = 15_000
+/** 방에서 완전히 나간 뒤에도 서 있던 자리와 따라오던 신도를 기억해 두는 시간(다른 앱에 다녀온 경우) */
+export const REJOIN_MEMORY_MS = 5 * 60_000
+/** 이보다 짧게 머물렀고 신도도 없던 사람의 자리는 기억하지 않는다(스쳐 지나간 접속으로 메모가 쌓이지 않게) */
+const REJOIN_MIN_SESSION_MS = 20_000
 /** 닉네임을 다시 바꿀 수 있기까지의 시간 */
 export const NAME_CHANGE_COOLDOWN_MS = 5000
 /** 한 번에 내보내는 NPC 말풍선 수 상한 */
@@ -255,6 +265,9 @@ function sameLook(a: Look, b: Look): boolean {
 }
 
 /** 연결 하나의 서버 쪽 상태(PlayerState 에 넣기엔 Room 내부 사정인 것들) */
+/** 연결이 떨어진 채 방에 남아 있는 사람의 conn 값(어떤 실제 연결과도 겹치지 않는다 → 보내는 것은 조용히 버려진다) */
+const DETACHED_CONN = -1
+
 interface Session {
   conn: ConnId
   connectedAt: number
@@ -299,6 +312,8 @@ export class Room implements RoomApi {
   private readonly byPid = new Map<string, PlayerState>()
   /** 접속이 끊겨도 잠깐 남는 접속자별 메모(pid → 쿨타임·차단·입막음·이름 고정) */
   private readonly memory: Map<string, PlayerMemory>
+  /** 연결은 끊겼지만 아직 방에 서 있는 사람들(pid → 이 시각까지 기다린다) */
+  private readonly lingering = new Map<string, { p: PlayerState; until: number }>()
   private readonly systems: RoomSystem[] = []
   private readonly routes = new Map<string, RoomSystem[]>()
   private nextId = 1
@@ -427,11 +442,26 @@ export class Room implements RoomApi {
     }
   }
 
-  disconnect(conn: ConnId): void {
+  /**
+   * 연결이 닫혔다. clean = 상대가 스스로 정상 종료했는가(탭 닫기, 나가기, 방 옮기기 → 바로 퇴장).
+   * false(망 끊김, 응답 없음 등)면 잠시 방에 세워 두고 같은 pid 의 재접속을 기다린다.
+   */
+  disconnect(conn: ConnId, clean = true): void {
     const s = this.conns.get(conn)
     if (!s) return
     this.forget(s)
-    if (s.player) this.removePlayer(s.player)
+    const p = s.player
+    if (!p) return
+    if (clean || this.closed) {
+      this.removePlayer(p)
+      return
+    }
+    // 대화는 접는다(시민을 붙잡아 둔 채로 기다리지 않는다). 그 밖의 상태는 그대로 둔다
+    this.endTalk(p, 'cancel')
+    p.conn = DETACHED_CONN
+    if (p.st !== Anim.Stun) p.st = Anim.Idle
+    p.dirty = true
+    this.lingering.set(p.pid, { p, until: this.host.now() + RESUME_GRACE_MS })
   }
 
   tick(): void {
@@ -646,9 +676,19 @@ export class Room implements RoomApi {
       const npc = this.npcs.get(talk.npc)
       if (npc && npc.talker === p.id) this.safeNpc('endListen', () => this.npcs.endListen(npc))
     }
+    const now = this.host.now()
+    // 신도가 흩어지기 전에: 서 있던 자리와 따라오던 신도를 적어 둔다(곧 돌아오면 되찾는다)
+    let seat: LastSeat | undefined
+    try {
+      const followers = this.npcs.followersOf(p.id).map((n) => ({ id: n.id, key: this.npcMemoKey(n), until: n.until, offered: n.offered }))
+      if (followers.length > 0 || now - p.joinedAt >= REJOIN_MIN_SESSION_MS) seat = { room: this.id, x: p.x, z: p.z, yaw: p.yaw, at: now, followers }
+    } catch (err) {
+      this.host.log('error', `[방 ${this.id}] 자리 기억 중 예외`, err)
+    }
     // 훅이 방 상태를 다시 계산할 때 '이미 나간 뒤'의 모습을 보도록 먼저 뺀다
     this.players.delete(p.id)
     if (this.byPid.get(p.pid) === p) this.byPid.delete(p.pid)
+    if (this.lingering.get(p.pid)?.p === p) this.lingering.delete(p.pid)
     this.safeNpc('onPlayerLeave', () => this.npcs.onPlayerLeave(p.id))
     for (const sys of this.systems) {
       if (!sys.onLeave) continue
@@ -659,7 +699,7 @@ export class Room implements RoomApi {
       }
     }
     // 훅이 마지막으로 건드린 쿨타임까지 담기도록 메모는 훅 뒤에 남긴다
-    this.stash(p, this.host.now())
+    this.stash(p, now, seat)
     // leave 는 맨 마지막: 훅이 보낸 소식(배틀 종료 등)이 아직 이름을 아는 상태에서 도착하게
     this.broadcast({ t: 'leave', id: p.id })
   }
@@ -681,7 +721,7 @@ export class Room implements RoomApi {
   }
 
   /** 나갈 때: 아직 유효한 것만 남기고, 기억할 것이 없으면 메모 자체를 지운다 */
-  private stash(p: PlayerState, now: number): void {
+  private stash(p: PlayerState, now: number, seat?: LastSeat): void {
     let mem = this.memory.get(p.pid)
     // 같은 pid 가 다른 방에서 이미 새로 들어왔다면(메모의 주인이 바뀌었다면) 건드리지 않는다
     if (mem && mem.cd !== p.cd) return
@@ -693,7 +733,8 @@ export class Room implements RoomApi {
     mem.mutedUntil = p.mutedUntil
     mem.nameLockUntil = p.nameLockUntil
     mem.lockedName = p.nameLockUntil > now ? p.name : ''
-    let keep = Math.max(p.mutedUntil, p.nameLockUntil, mem.blocked.size > 0 ? now + BLOCK_MEMORY_MS : 0)
+    mem.last = seat
+    let keep = Math.max(p.mutedUntil, p.nameLockUntil, mem.blocked.size > 0 ? now + BLOCK_MEMORY_MS : 0, seat ? now + REJOIN_MEMORY_MS : 0)
     for (const [key, until] of mem.cd) {
       if (until <= now) mem.cd.delete(key)
       else if (until > keep) keep = until
@@ -783,6 +824,13 @@ export class Room implements RoomApi {
       }
       if (this.tickCount % CD_SWEEP_TICKS === 0) {
         for (const [key, until] of p.cd) if (until <= now) p.cd.delete(key)
+      }
+    }
+    if (this.lingering.size > 0) {
+      for (const [pid, l] of this.lingering) {
+        if (now < l.until) continue
+        this.lingering.delete(pid)
+        this.removePlayer(l.p)
       }
     }
     if (this.tickCount % MEMORY_SWEEP_TICKS === 0) this.sweepMemory(now)
@@ -888,26 +936,26 @@ export class Room implements RoomApi {
       if (this.forget(s)) this.host.close(s.conn, CLOSE_FULL, 'full')
       return
     }
-    let carried: Progress | null = null
-    if (old) {
-      // 옛 세션이 메모리에 들고 있던 진행도가 가장 최신이다. 죽은 연결로는 저장본이 전달되지 못했을 수 있으므로
-      // 새 연결이 내민 저장본 대신 그것을 이어받는다.
-      carried = old.prog
-      const oldSession = this.conns.get(old.conn)
-      if (oldSession && oldSession.player === old) this.kickSession(oldSession, 'dup')
-      else this.removePlayer(old)
-    }
     this.host.claimPid(pid, this.id)
+    if (old) {
+      // 같은 사람이 다시 붙었다(망이 바뀌어 새 연결로 왔거나, 잠깐 끊겼다 돌아왔거나, 다른 탭을 열었거나).
+      // 새로 입장시키지 않고 방에 있던 그 사람에게 새 연결을 이어 붙인다 → 번호·자리·배틀·신도·쿨타임이 그대로다.
+      this.resume(s, old, now)
+      return
+    }
 
-    const prog = carried ?? this.restoreProgress(msg.save, pid, now)
-    // 쿨타임·차단·입막음·이름 고정은 재접속해도 이어진다(같은 pid 의 옛 세션은 위에서 이미 정리됐다)
+    const prog = this.restoreProgress(msg.save, pid, now)
+    // 쿨타임·차단·입막음·이름 고정은 재접속해도 이어진다
     const mem = this.recall(pid, now)
     const nick = checkNickname(msg.name)
     // 신고로 이름이 바뀐 동안에는 hello 에 실어 보낸 옛 이름을 받아 주지 않는다
     const locked = mem.nameLockUntil > now && mem.lockedName !== ''
     const name = this.uniqueName(locked ? mem.lockedName : nick.ok ? nick.text : this.randomNickname(), 0)
     const look = sanitizeLook(msg.look, prog.rank, prog.ach)
-    const spawn = this.spawnPoint()
+    // 조금 전까지 이 방에 있었다면 서 있던 자리로 돌아온다(다른 앱에 다녀온 사이 자리 비움으로 나간 경우 등)
+    const seat = mem.last && mem.last.room === this.id && now - mem.last.at < REJOIN_MEMORY_MS ? mem.last : undefined
+    mem.last = undefined
+    const spawn = (seat && this.seatSpot(seat, prog.rank)) || this.spawnPoint()
     const p: PlayerState = {
       id: this.allocId(),
       conn: s.conn,
@@ -947,6 +995,47 @@ export class Room implements RoomApi {
     this.byPid.set(pid, p)
     this.restoreNpcMemo(p, now)
 
+    if (!this.sendWelcome(s, p, now)) return
+
+    for (const sys of this.systems) {
+      if (!sys.onJoin) continue
+      try {
+        sys.onJoin(p)
+      } catch (err) {
+        this.hookError(sys, 'onJoin', err)
+      }
+    }
+    if (this.players.get(p.id) !== p) return
+    // onJoin 이 공개 정보를 바꿨더라도 최종 상태가 실리도록 join 은 훅 뒤에 만든다
+    this.broadcast({ t: 'join', p: this.playerPublic(p) }, p)
+    if (seat) this.restoreFollowers(p, seat, now)
+  }
+
+  /** 방에 남아 있던 사람에게 새 연결을 이어 붙인다(재접속·새 탭). 다른 사람들에게는 아무 일도 없었던 것처럼 보인다 */
+  private resume(s: Session, p: PlayerState, now: number): void {
+    const oldSession = this.conns.get(p.conn)
+    if (oldSession && oldSession !== s && oldSession.player === p && this.forget(oldSession)) {
+      // 옛 연결이 아직 살아 있다(다른 탭이거나, 서버가 아직 끊긴 줄 모르는 죽은 연결): 안내하고 닫는다. 사람은 남긴다
+      if (p.saveDirty) this.sendSave(oldSession, p, now)
+      this.host.send(oldSession.conn, KICK_JSON.dup)
+      this.host.close(oldSession.conn, CLOSE_KICK, 'dup')
+    }
+    this.lingering.delete(p.pid)
+    // 열려 있던 대화는 접는다(새 화면은 대화 창 없이 시작한다). 옛 연결로 나가는 안내는 버려진다
+    this.endTalk(p, 'cancel')
+    p.conn = s.conn
+    s.player = p
+    this.pendingCount = Math.max(0, this.pendingCount - 1)
+    s.budget = (RUN_SPEED * SPEED_TOLERANCE * MOVE_BURST_MS) / 1000
+    s.budgetAt = now
+    p.lastMsgAt = now
+    p.lastMoveAt = now
+    p.dirty = true
+    this.sendWelcome(s, p, now)
+  }
+
+  /** welcome 을 만들어 보낸다. 훅이 그 사람을 내보냈다면 false */
+  private sendWelcome(s: Session, p: PlayerState, now: number): boolean {
     const others: PlayerPublic[] = []
     for (const o of this.players.values()) if (o !== p) others.push(this.playerPublic(o))
     const w: SWelcome = {
@@ -974,24 +1063,41 @@ export class Room implements RoomApi {
         this.hookError(sys, 'onWelcome', err)
       }
     }
-    if (this.players.get(p.id) !== p) return
+    if (this.players.get(p.id) !== p) return false
     // 훅이 진행도를 손봤을 수 있으므로(일일 수행 초기화 등) 서명은 훅이 끝난 뒤에 한다
     w.save = this.signedSave(p, now)
     this.host.send(s.conn, JSON.stringify(w))
     p.saveDirty = false
     s.saveAt = now
+    return true
+  }
 
-    for (const sys of this.systems) {
-      if (!sys.onJoin) continue
-      try {
-        sys.onJoin(p)
-      } catch (err) {
-        this.hookError(sys, 'onJoin', err)
-      }
+  /** 기억해 둔 자리가 지금도 설 수 있는 곳이면 그 자리, 아니면 null(평소 시작 위치를 쓴다) */
+  private seatSpot(seat: LastSeat, rank: number): { x: number; z: number; yaw: number } | null {
+    const { x, z, yaw } = seat
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(yaw)) return null
+    const pos = { x, z }
+    resolveCollision(pos, PLAYER_RADIUS, rank >= this.world.hq.minRank, this.world)
+    // 충돌 보정으로 멀리 밀려났다면(그 사이 지형 규칙이 달라진 경우 등) 믿지 않는다
+    if (Math.hypot(pos.x - x, pos.z - z) > 1.5) return null
+    return { x: round2(pos.x), z: round2(pos.z), yaw }
+  }
+
+  /** 나가기 전에 따라오던 신도 가운데 아직 그 자리에 있고 임자가 없는 시민을 다시 따라오게 한다(남은 시간·헌납 여부는 그대로) */
+  private restoreFollowers(p: PlayerState, seat: LastSeat, now: number): void {
+    let room = MAX_ENTOURAGE - this.npcs.followersOf(p.id).length
+    for (const f of seat.followers) {
+      if (room <= 0) break
+      if (f.until <= now + 1000) continue
+      const npc = this.npcs.get(f.id)
+      if (!npc || npc.owner !== 0 || npc.talker !== 0 || this.npcMemoKey(npc) !== f.key) continue
+      if (npc.mode !== 'wander' && npc.mode !== 'pause') continue
+      this.safeNpc('startFollow', () => {
+        this.npcs.startFollow(npc, p.id, f.until, now)
+        npc.offered = f.offered
+      })
+      room--
     }
-    if (this.players.get(p.id) !== p) return
-    // onJoin 이 공개 정보를 바꿨더라도 최종 상태가 실리도록 join 은 훅 뒤에 만든다
-    this.broadcast({ t: 'join', p: this.playerPublic(p) }, p)
   }
 
   private restoreProgress(save: unknown, pid: string, now: number): Progress {

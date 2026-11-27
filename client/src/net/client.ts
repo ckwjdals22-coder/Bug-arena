@@ -33,6 +33,8 @@ import { applyInterp, holdSample, pushSample } from './interp'
 const BACKOFF_MS = [500, 1000, 2000, 4000, 6000, 8000, 8000, 8000, 10000, 10000, 12000]
 /** 한 번도 입장하지 못한 채 이만큼 연달아 실패하면 '서버에 닿지 못함'으로 안내한다(약 4초) */
 const UNREACHABLE_AFTER = 3
+/** 게임 중 이 시간 동안 서버에서 아무것도 오지 않으면 연결이 죽은 것으로 본다(서버는 초당 여러 번 보낸다) */
+const STALE_MS = 10_000
 const CONNECT_TIMEOUT_MS = 9000
 
 function makeView(x: number, z: number, yaw: number, st: number, emote: string | null, seed: number, time: number): EntityView {
@@ -70,6 +72,24 @@ export function createNet(store: Store, bus: Bus): Net {
   /** 서버가 마지막으로 확인해 준 내 이름(이름 변경이 거부되면 이것으로 되돌린다) */
   let confirmedName = ''
   let idleKicked = false
+  /** 마지막으로 서버에서 무언가를 받은 시각(performance.now). 조용히 죽은 연결을 알아채는 데 쓴다 */
+  let lastRecvAt = 0
+  /** 끊기는 순간 하고 있던 것(다시 들어왔을 때 사라졌으면 알려 주기 위해) */
+  let before: { id: number; room: string; battle: boolean; sermon: boolean; talk: boolean; idle: boolean } | null = null
+
+  /** 게임 중 연결이 끊겼다: 그 순간의 상태를 적어 둔다(재접속 뒤 비교용). 이미 적어 뒀으면 그대로 둔다 */
+  function noteInterrupted(idle = false): void {
+    const me = store.me
+    if (before || !me || !store.room) return
+    before = {
+      id: me.id,
+      room: store.room.id,
+      battle: store.battles.some((b) => b.a === me.id || b.b === me.id),
+      sermon: store.sermon !== null,
+      talk: store.talk !== null,
+      idle,
+    }
+  }
 
   function setPhase(phase: Store['phase'], why = ''): void {
     if (store.phase === phase && store.phaseWhy === why) return
@@ -158,6 +178,7 @@ export function createNet(store: Store, bus: Bus): Net {
     }
     sock.onmessage = (ev) => {
       if (ws !== sock) return
+      lastRecvAt = performance.now()
       if (typeof ev.data === 'string') {
         const msg = parseJsonMsg<ServerMsg>(ev.data)
         if (msg) {
@@ -185,8 +206,30 @@ export function createNet(store: Store, bus: Bus): Net {
     }
   }
 
+  /**
+   * 조용히 죽은 연결 알아채기: 휴대폰이 와이파이↔데이터로 넘어가면 소켓이 닫혔다는 신호 없이 그냥 멎는 일이 흔하다.
+   * 게임 중에는 서버가 초당 여러 번 무언가를 보내므로, 한동안 아무것도 안 오면 끊긴 것으로 보고 바로 다시 붙는다.
+   */
+  function checkStale(): void {
+    if (document.hidden || store.phase !== 'playing' || !ws) return
+    if (performance.now() - lastRecvAt < STALE_MS) return
+    const sock = ws
+    ws = null
+    sock.onopen = sock.onmessage = sock.onclose = sock.onerror = null
+    try {
+      // 1000 이 아닌 코드로 닫는다: 혹시 서버에 닿더라도 '정상 퇴장'이 아니라 끊김으로 다뤄져 자리가 유지된다
+      sock.close(4001, 'stale')
+    } catch {
+      /* ignore */
+    }
+    clearTimers()
+    bus.emit('net', { rtt: store.rtt, connected: false })
+    scheduleRetry()
+  }
+
   function scheduleRetry(): void {
     if (intentional) return
+    if (everPlayed) noteInterrupted()
     if (attempts >= BACKOFF_MS.length) {
       setPhase('error', 'net')
       return
@@ -255,11 +298,30 @@ export function createNet(store: Store, bus: Bus): Net {
     everPlayed = true
     clearTimeout(connectTimer)
     clearInterval(pingTimer)
-    pingTimer = setInterval(() => sendRaw({ t: 'ping', c: Date.now() }), PING_INTERVAL_MS)
+    lastRecvAt = performance.now()
+    pingTimer = setInterval(() => {
+      sendRaw({ t: 'ping', c: Date.now() })
+      checkStale()
+    }, PING_INTERVAL_MS)
     sendRaw({ t: 'ping', c: Date.now() })
+    // 끊겼다 돌아온 것이라면: 서버가 같은 번호로 이어 붙여 줬는지, 그사이 사라진 것이 있는지 정리해 둔다
+    const was = before
+    before = null
+    const same = !!was && was.id === w.id && was.room === w.room.id
+    if (same && prev) {
+      // 같은 자리로 이어졌다: 바라보던 방향을 그대로 둔다(화면이 휙 돌지 않게)
+      store.me.yaw = prev.yaw
+    }
     setPhase('playing')
     bus.emit('profile')
     bus.emit('progress', w.me)
+    if (was) {
+      const lost: ('battle' | 'sermon' | 'talk')[] = []
+      if (was.battle && !store.battles.some((b) => b.a === w.id || b.b === w.id)) lost.push('battle')
+      if (was.sermon && store.sermon === null) lost.push('sermon')
+      if (was.talk) lost.push('talk')
+      bus.emit('resumed', { same, lost, idle: was.idle })
+    }
     // 콕 집어 가려던 방(친구 링크의 ?room= 등)이 아닌 곳에 들어왔다면 알려 준다.
     // 그 뒤로는 지금 있는 방을 기준으로 삼는다(재접속 때 조용히 방이 바뀌지 않게).
     const asked = wantRoom
@@ -286,6 +348,7 @@ export function createNet(store: Store, bus: Bus): Net {
       case 'kick':
         if (msg.why === 'shutdown') {
           // 서버 점검/재시작: 내보내진 게 아니라 잠깐 끊기는 것이므로 자동으로 다시 붙는다
+          noteInterrupted()
           setPhase('reconnecting', 'shutdown')
           break
         }
@@ -293,6 +356,7 @@ export function createNet(store: Store, bus: Bus): Net {
         clearTimers()
         // 오래 자리를 비워 끊긴 경우(백그라운드 탭은 타이머가 느려져 응답을 못 보낸다): 돌아오면 자동으로 다시 들어간다
         idleKicked = msg.why === 'idle'
+        if (idleKicked) noteInterrupted(true)
         setPhase('kicked', msg.why)
         if (idleKicked && document.visibilityState === 'visible') rejoinAfterIdle()
         break
@@ -506,6 +570,8 @@ export function createNet(store: Store, bus: Bus): Net {
 
   // 탭이 다시 보이면: 끊겨 있었다면 바로 재접속, 아니면 시계부터 다시 맞춘다
   document.addEventListener('visibilitychange', () => {
+    // 가려져 있던 동안에는 받은 것이 없어도 정상이다 → 돌아온 직후에 '죽은 연결'로 오해하지 않게 시계를 다시 맞춘다
+    if (document.visibilityState === 'visible') lastRecvAt = performance.now()
     if (document.visibilityState === 'visible' && idleKicked) {
       rejoinAfterIdle()
       return
@@ -538,6 +604,7 @@ export function createNet(store: Store, bus: Bus): Net {
     connect(roomId) {
       wantRoom = roomId || 'auto'
       idleKicked = false
+      before = null
       intentional = false
       attempts = 0
       everPlayed = false
