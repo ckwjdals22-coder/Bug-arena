@@ -62,6 +62,7 @@ node tests/e2e/ops.cjs                   # 운영: 종료 신호·강제 종료�
 node tests/e2e/csp.cjs                   # 보안 헤더(CSP) 위반 없이 전 기능이 도는지
 node tests/e2e/crowd.cjs                 # 방이 붐빌 때 시민이 늘고 줄어드는지(약 4분)
 node tests/e2e/resume.cjs                # 가득 찬 방에서 끊겼다 돌아오기(같은 방·같은 번호 / 자리가 넘어갔으면 다른 방 안내)
+node tests/e2e/touch.cjs                 # 터치: 버튼을 눌러 연 시트의 항목이 따라 눌리지 않는지, 핀치 줌과 양손 엄지 구분, 확인 창 Esc
 npm run loadtest -- --url ws://localhost:8787 --rooms 3 --bots 20 --seconds 45
 ```
 

@@ -283,6 +283,8 @@ mountUi(ctx)
 - 서버 이벤트 구독: `ctx.bus.onMsg('invited', fn)`. 서버로 보내기: `ctx.net.send({t:'invite', to})`.
 - 이름표/말풍선은 `ui/overlay.ts` 가 `engine.project()` 로 위치를 잡는 DOM(transform) 방식. 실제 접속자 이름표는 항상, NPC 는 가까울 때만. 화면 밖/멀리 있는 것은 숨긴다. 말풍선 동시 표시 상한.
 - 모바일 우선: 터치 대상 최소 42px, safe-area 반영, 가로/세로 모두 대응, 입력 필드 글자 16px(iOS 확대 방지).
+- **걷는 중에도 눌려야 하는 버튼은 `onPress(el, fn)` 로 단다(`ui/kit.ts`).** 다른 손가락(조이스틱)이 닿아 있는 동안에는 브라우저가 click 을 만들어 주지 않으므로, 터치에서는 손가락을 떼는 순간 `fn` 을 부른다. 브라우저가 뒤이어 보내는 click 은 창 전체의 캡처 리스너 하나가 버린다(0.6초·40px 안). 버리지 않으면 그 누름으로 열린 시트의 항목이 같은 자리에서 함께 눌린다. 키보드·`el.click()` 으로 낸 click(detail 0)과 새 손가락의 누름은 그대로 통과한다.
+- **화면 가운데·위쪽의 큰 알림은 `ui/stage.ts` 에 줄을 세운다.** `stagePlay(순서, 시간, run, { soft, urgent })`: `run(done)` 이 숨기는 함수를 돌려주면 결과 배너·패널·급한 카드에 비켜 줄 수 있다. 재접속 중에는 띄우지 말고 `createStageLater()` 에 맡겼다가 `phase === 'playing'` 에서 `flush()`, 게임을 떠나면 `drop()`. 패널이 열리면 `pauseStage(true)`(kit 이 부른다).
 
 ### 5.6 소리
 `audio/sfx.ts`: `AudioContext` 하나, 첫 입력에서 `unlock()`. 오실레이터/노이즈 합성으로 `SfxName` 전부 구현. 동시 발음 수 제한. 설정에 따라 음소거.
