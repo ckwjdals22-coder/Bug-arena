@@ -6,7 +6,7 @@
 
 | PC | 모바일 | 교주 임명장 |
 |---|---|---|
-| ![PC 화면](docs/img/pc.png) | ![모바일 화면](docs/img/mobile.png) | ![임명장](docs/img/certificate.png) |
+| ![PC 화면](docs/img/pc.jpg) | ![모바일 화면](docs/img/mobile.jpg) | ![임명장](docs/img/certificate.png) |
 
 ## 바로 실행
 
