@@ -424,7 +424,7 @@ enum SeatGender {
   FEMALE
 }
 
-/// 회차 내 좌석 유형별 재고. reserved = 확정 + 결제 대기 홀드 + 대기자 제안 홀드
+/// 회차 내 좌석 유형별 재고. reserved = 확정 + 결제 대기 홀드 + 대기자 제안 홀드 + 재등록 보류(withheld)
 model SlotSeat {
   id            String     @id @default(cuid())
   slotId        String
@@ -433,6 +433,8 @@ model SlotSeat {
   gender        SeatGender @default(ANY)
   capacity      Int
   reserved      Int        @default(0)
+  /// 취소로 비었지만 사업자가 아직 다시 열지 않은 좌석 수(reserved 에 포함되어 있음)
+  withheld      Int        @default(0)
   price         Int
   /// 정가. price 보다 클 때만 할인 표시
   originalPrice Int?
