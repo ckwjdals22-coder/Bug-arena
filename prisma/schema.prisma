@@ -1,0 +1,1013 @@
+// 남는자리 — 데이터 모델
+// 금액은 모두 KRW 정수(원), 시각은 timestamptz(UTC 저장, KST 표시), 수수료율은 bps(1bps = 0.01%).
+// 좌석 재고의 최종 방어선은 DB CHECK 제약(SlotSeat.reserved <= capacity)과 조건부 UPDATE다.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────── 계정 · 인증 ─────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+/// 플랫폼 운영자 권한. null 이면 일반 회원.
+enum AdminRole {
+  SUPER // 전체 권한 + 운영자 계정 관리
+  OPS // 사업자 심사, 상품/공석 운영, 설정
+  CS // 회원·예약 조회, 신고/분쟁 처리, 환불
+  FINANCE // 거래·정산
+}
+
+model User {
+  id                     String     @id @default(cuid())
+  email                  String     @unique
+  passwordHash           String
+  name                   String
+  nickname               String?
+  phone                  String?
+  phoneVerifiedAt        DateTime?
+  gender                 Gender?
+  birthYear              Int?
+  /// 본인인증(외부 연동) 완료 시각. 연동 전에는 null.
+  identityVerifiedAt     DateTime?
+  status                 UserStatus @default(ACTIVE)
+  adminRole              AdminRole?
+  /// 운영자 2단계 인증(TOTP) 비밀키 — AES-256-GCM 암호문
+  totpSecretEnc          String?
+  totpEnabledAt          DateTime?
+  termsAgreedAt          DateTime
+  privacyAgreedAt        DateTime
+  /// 광고성 정보 수신 동의(정보통신망법). null = 미동의
+  marketingConsentAt     DateTime?
+  /// 야간(21~08시) 광고성 알림 수신 별도 동의
+  nightAlertConsentAt    DateTime?
+  /// 알림 채널 설정 { vacancyInApp, vacancySms, bookingSms, reviewInApp ... } — 기본값은 코드에서
+  notificationPrefs      Json?
+  noShowCount            Int        @default(0)
+  lateCancelCount        Int        @default(0)
+  /// 노쇼 누적 등으로 예약이 제한되는 기한
+  bookingRestrictedUntil DateTime?
+  failedLoginCount       Int        @default(0)
+  lockedUntil            DateTime?
+  lastLoginAt            DateTime?
+  suspendedReason        String?
+  withdrawnAt            DateTime?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  sessions           AuthSession[]
+  verificationTokens VerificationToken[]
+  memberships        BusinessMember[]
+  bookings           Booking[]
+  waitlistEntries    WaitlistEntry[]
+  favorites          Favorite[]
+  follows            Follow[]
+  alertRules         AlertRule[]
+  notifications      Notification[]
+  reviews            Review[]
+  reports            Report[]            @relation("reporter")
+  handledReports     Report[]            @relation("reportHandler")
+  crmProfiles        BusinessCustomer[]
+
+  @@index([phone])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AuthSession {
+  id         String    @id @default(cuid())
+  /// 세션 토큰의 SHA-256 해시(원문은 쿠키에만 존재)
+  tokenHash  String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 운영자 콘솔 세션 여부(2단계 인증까지 통과한 세션만 true)
+  isAdmin    Boolean   @default(false)
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+enum VerificationType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+  PHONE_OTP
+}
+
+model VerificationToken {
+  id        String           @id @default(cuid())
+  type      VerificationType
+  userId    String?
+  user      User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 이메일 또는 전화번호
+  target    String
+  tokenHash String           @unique
+  attempts  Int              @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([target, type])
+}
+
+// ───────────────────────── 분류 · 지역 ─────────────────────────
+
+model Category {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  name              String
+  /// lucide 아이콘 이름
+  icon              String
+  description       String?
+  sort              Int      @default(0)
+  isActive          Boolean  @default(true)
+  /// 좌석 유형에 성별 구분을 기본 제안할지(소개팅 등)
+  suggestGenderSeats Boolean @default(false)
+  /// 업종별 기본 수수료율(bps). null 이면 플랫폼 기본값
+  commissionBps     Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  businesses Business[]
+  products   Product[]
+}
+
+/// 동네(상권) 단위 지역. 초기에는 대전만 활성.
+model Area {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  /// 표시 이름 (예: 둔산동)
+  name      String
+  /// 구 (예: 서구)
+  district  String
+  /// 시 (예: 대전)
+  city      String
+  lat       Float?
+  lng       Float?
+  sort      Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  businesses Business[]
+  products   Product[]
+
+  @@index([city, isActive])
+}
+
+// ───────────────────────── 사업자 ─────────────────────────
+
+enum BusinessStatus {
+  PENDING // 심사 대기
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum PlanTier {
+  FREE
+  PRO
+}
+
+model Business {
+  id                 String         @id @default(cuid())
+  /// 공개 주소 /b/{slug}
+  slug               String         @unique
+  name               String
+  categoryId         String
+  category           Category       @relation(fields: [categoryId], references: [id])
+  tagline            String?
+  description        String?
+  phone              String?
+  address            String?
+  addressDetail      String?
+  areaId             String?
+  area               Area?          @relation(fields: [areaId], references: [id])
+  lat                Float?
+  lng                Float?
+  coverImage         String?
+  logoImage          String?
+  instagram          String?
+  kakaoChannel       String?
+  website            String?
+  /// 사업자등록번호(숫자 10자리)
+  businessRegNo      String?
+  representativeName String?
+  /// 통신판매업 신고번호(해당 시)
+  mailOrderRegNo     String?
+  status             BusinessStatus @default(PENDING)
+  reviewedAt         DateTime?
+  reviewedById       String?
+  rejectReason       String?
+  suspendedReason    String?
+  /// 사업자별 수수료율 재정의(bps). null 이면 업종/플랫폼 기본값
+  commissionBps      Int?
+  plan               PlanTier       @default(FREE)
+  // 정산 계좌 — 계좌번호는 AES-256-GCM 암호문으로만 저장
+  bankName           String?
+  bankAccountEnc     String?
+  bankAccountLast4   String?
+  bankHolder         String?
+  // 운영 설정
+  /// 취소 발생 시 좌석을 자동으로 다시 열고 대기자·알림 구독자에게 알릴지
+  autoRelist         Boolean        @default(true)
+  /// 예약 마감 기본값: 시작 N분 전
+  defaultDeadlineMin Int            @default(60)
+  /// 캐시된 집계
+  ratingAvg          Float          @default(0)
+  ratingCount        Int            @default(0)
+  followerCount      Int            @default(0)
+  isDemo             Boolean        @default(false)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  members          BusinessMember[]
+  products         Product[]
+  slots            Slot[]
+  bookings         Booking[]
+  followers        Follow[]
+  customers        BusinessCustomer[]
+  reviews          Review[]
+  settlements      Settlement[]
+  subscription     Subscription?
+  messageTemplates MessageTemplate[]
+  outbox           MessageOutbox[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([areaId])
+}
+
+enum MemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+model BusinessMember {
+  id         String     @id @default(cuid())
+  businessId String
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       MemberRole @default(OWNER)
+  createdAt  DateTime   @default(now())
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+/// 사업자 구독(월 구독료). 자동결제(빌링키)는 PG 연동 후 활성화.
+model Subscription {
+  id                 String             @id @default(cuid())
+  businessId         String             @unique
+  business           Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  plan               PlanTier
+  status             SubscriptionStatus
+  priceMonthly       Int
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean            @default(false)
+  /// 운영자가 수동 부여한 경우의 메모
+  grantedNote        String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+// ───────────────────────── 상품 · 회차 · 좌석 ─────────────────────────
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+/// 결제 방식: 전액 선결제 / 예약금만 선결제 / 현장 결제
+enum PaymentPolicy {
+  PREPAY
+  DEPOSIT
+  ONSITE
+}
+
+model Product {
+  id                String        @id @default(cuid())
+  businessId        String
+  business          Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          Category      @relation(fields: [categoryId], references: [id])
+  title             String
+  summary           String?
+  description       String?
+  /// 업로드 이미지 경로 목록. 비어 있으면 업종별 제너레이티브 커버 사용
+  images            String[]
+  durationMin       Int           @default(120)
+  /// 정가(1인/1타임 기준)
+  basePrice         Int
+  // 장소(비어 있으면 사업자 주소 사용)
+  areaId            String?
+  area              Area?         @relation(fields: [areaId], references: [id])
+  placeName         String?
+  address           String?
+  lat               Float?
+  lng               Float?
+  // 참가 조건
+  minAge            Int?
+  maxAge            Int?
+  /// 본인인증 완료 회원만 예약 가능(연동 전에는 안내만)
+  requiresIdentity  Boolean       @default(false)
+  /// 사업자 승인 후 확정(승인제)
+  requiresApproval  Boolean       @default(false)
+  tags              String[]
+  includes          String?
+  notice            String?
+  paymentPolicy     PaymentPolicy @default(PREPAY)
+  /// DEPOSIT 일 때 1인당 예약금
+  depositAmount     Int?
+  /// 취소·환불 구간 [{ hoursBefore: number, refundRate: number(0~100) }] — 시작까지 남은 시간이 큰 구간부터
+  cancellationTiers Json
+  /// 회차 생성 시 기본 좌석 구성 [{ label, gender: "ANY"|"MALE"|"FEMALE", capacity, price }]
+  seatTemplates     Json
+  status            ProductStatus @default(DRAFT)
+  ratingAvg         Float         @default(0)
+  ratingCount       Int           @default(0)
+  favoriteCount     Int           @default(0)
+  viewCount         Int           @default(0)
+  isDemo            Boolean       @default(false)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  slots     Slot[]
+  bookings  Booking[]
+  favorites Favorite[]
+  reviews   Review[]
+
+  @@index([businessId, status])
+  @@index([categoryId, status])
+  @@index([areaId])
+}
+
+enum SlotStatus {
+  OPEN
+  CLOSED // 사업자가 판매 마감
+  CANCELLED // 회차 자체가 취소됨
+}
+
+/// 공석이 생긴 이유 — 피드의 배지로 노출
+enum VacancyOrigin {
+  REGULAR // 일반 판매
+  CANCELLATION // 취소석
+  NO_SHOW // 노쇼 공석
+  UNSOLD // 미판매 잔여석
+}
+
+/// 회차: 특정 일시에 열리는 한 번의 세션
+model Slot {
+  id                String        @id @default(cuid())
+  productId         String
+  product           Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  businessId        String
+  business          Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  startAt           DateTime
+  endAt             DateTime
+  /// 이 시각 이후에는 예약 불가
+  bookingDeadlineAt DateTime
+  status            SlotStatus    @default(OPEN)
+  origin            VacancyOrigin @default(REGULAR)
+  /// 가장 최근에 공석이 (재)등록된 시각 — 피드 정렬·신규 알림 기준
+  vacancyPostedAt   DateTime      @default(now())
+  /// 사업자 한 줄 메모(고객 노출)
+  note              String?
+  cancelledAt       DateTime?
+  cancelReason      String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  seats    SlotSeat[]
+  bookings Booking[]
+  waitlist WaitlistEntry[]
+
+  @@index([startAt, status])
+  @@index([businessId, startAt])
+  @@index([productId, startAt])
+  @@index([vacancyPostedAt])
+}
+
+enum SeatGender {
+  ANY
+  MALE
+  FEMALE
+}
+
+/// 회차 내 좌석 유형별 재고. reserved = 확정 + 결제 대기 홀드 + 대기자 제안 홀드
+model SlotSeat {
+  id            String     @id @default(cuid())
+  slotId        String
+  slot          Slot       @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  label         String
+  gender        SeatGender @default(ANY)
+  capacity      Int
+  reserved      Int        @default(0)
+  price         Int
+  /// 정가. price 보다 클 때만 할인 표시
+  originalPrice Int?
+  sort          Int        @default(0)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  bookings Booking[]
+  waitlist WaitlistEntry[]
+
+  @@index([slotId])
+}
+
+// ───────────────────────── 예약 · 결제 ─────────────────────────
+
+enum BookingStatus {
+  PENDING_PAYMENT // 좌석 홀드, 결제 대기
+  PENDING_APPROVAL // 승인제 상품: 사업자 승인 대기
+  CONFIRMED
+  COMPLETED // 참석 완료
+  NO_SHOW
+  CANCELLED
+  REJECTED // 사업자 거절
+  EXPIRED // 홀드 시간 초과
+}
+
+enum BookingChannel {
+  MARKETPLACE // 남는자리 탐색을 통한 예약
+  DIRECT // 사업자 전용 예약 링크(/b/slug)를 통한 예약
+  WAITLIST // 대기 → 자리 제안 수락
+  MANUAL // 사업자가 직접 입력(전화·현장·외부 채널)
+}
+
+enum PaymentMethod {
+  ONLINE
+  ONSITE
+  FREE
+}
+
+enum PaymentState {
+  UNPAID
+  PAID
+  PARTIALLY_REFUNDED
+  REFUNDED
+}
+
+enum ActorType {
+  CUSTOMER
+  SELLER
+  ADMIN
+  SYSTEM
+}
+
+model Booking {
+  id                String         @id @default(cuid())
+  /// 고객에게 보이는 예약번호 (예: NJ-7K3M9Q)
+  code              String         @unique
+  userId            String?
+  user              User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  businessId        String
+  business          Business       @relation(fields: [businessId], references: [id])
+  productId         String
+  product           Product        @relation(fields: [productId], references: [id])
+  slotId            String
+  slot              Slot           @relation(fields: [slotId], references: [id])
+  slotSeatId        String
+  slotSeat          SlotSeat       @relation(fields: [slotSeatId], references: [id])
+  quantity          Int
+  unitPrice         Int
+  totalAmount       Int
+  /// 지금 온라인으로 결제할 금액(전액 또는 예약금)
+  payNowAmount      Int
+  /// 현장에서 결제할 잔액
+  payOnsiteAmount   Int            @default(0)
+  status            BookingStatus
+  channel           BookingChannel @default(MARKETPLACE)
+  paymentMethod     PaymentMethod
+  paymentState      PaymentState   @default(UNPAID)
+  // 연락처 스냅샷
+  guestName         String
+  guestPhone        String
+  requestNote       String?
+  sellerMemo        String?
+  /// 예약 시점의 취소·환불 정책 스냅샷
+  policySnapshot    Json
+  // 수수료 스냅샷(확정 시 계산)
+  isNewCustomer     Boolean        @default(true)
+  commissionBps     Int            @default(0)
+  commissionAmount  Int            @default(0)
+  pgFeeAmount       Int            @default(0)
+  // 취소·환불
+  cancelledBy       ActorType?
+  cancelReason      String?
+  cancelledAt       DateTime?
+  refundRate        Int?
+  refundAmount      Int            @default(0)
+  // 진행 시각
+  holdExpiresAt     DateTime?
+  confirmedAt       DateTime?
+  checkedInAt       DateTime?
+  completedAt       DateTime?
+  noShowAt          DateTime?
+  /// 체크인 QR 에 담기는 비밀 토큰
+  checkinToken      String         @unique
+  /// 중복 제출 방지 키(사용자별 유일)
+  idempotencyKey    String?
+  reminderSentAt    DateTime?
+  reviewRequestedAt DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  payments       Payment[]
+  refunds        Refund[]
+  review         Review?
+  settlementItem SettlementItem?
+  waitlistEntry  WaitlistEntry?
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([businessId, status])
+  @@index([slotId, status])
+  @@index([status, holdExpiresAt])
+  @@index([guestPhone])
+}
+
+enum PaymentProvider {
+  MOCK // 개발·시연용 테스트 결제(실제 청구 없음)
+  TOSS // 토스페이먼츠
+}
+
+enum PaymentStatus {
+  READY
+  PAID
+  FAILED
+  CANCELLED
+  PARTIAL_CANCELLED
+}
+
+model Payment {
+  id              String          @id @default(cuid())
+  bookingId       String
+  booking         Booking         @relation(fields: [bookingId], references: [id])
+  provider        PaymentProvider
+  /// PG 로 전달하는 주문번호
+  orderId         String          @unique
+  /// PG 가 발급한 결제 키
+  paymentKey      String?         @unique
+  amount          Int
+  cancelledAmount Int             @default(0)
+  status          PaymentStatus   @default(READY)
+  method          String?
+  receiptUrl      String?
+  failCode        String?
+  failMessage     String?
+  approvedAt      DateTime?
+  raw             Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  refunds Refund[]
+
+  @@index([bookingId])
+  @@index([status])
+}
+
+enum RefundStatus {
+  REQUESTED
+  DONE
+  FAILED
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  paymentId     String
+  payment       Payment      @relation(fields: [paymentId], references: [id])
+  bookingId     String
+  booking       Booking      @relation(fields: [bookingId], references: [id])
+  amount        Int
+  reason        String
+  status        RefundStatus @default(REQUESTED)
+  providerRef   String?
+  error         String?
+  requestedBy   ActorType
+  requestedById String?
+  createdAt     DateTime     @default(now())
+  processedAt   DateTime?
+
+  @@index([bookingId])
+  @@index([status])
+}
+
+// ───────────────────────── 대기 · 관심 · 알림 구독 ─────────────────────────
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED // 자리가 나서 제안됨(좌석 홀드 중)
+  CONVERTED // 제안 수락 → 예약 완료
+  EXPIRED // 제안 시간 초과
+  CANCELLED // 고객이 대기 취소
+  CLOSED // 회차 종료/취소로 자동 종료
+}
+
+model WaitlistEntry {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slotId         String
+  slot           Slot           @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  slotSeatId     String
+  slotSeat       SlotSeat       @relation(fields: [slotSeatId], references: [id], onDelete: Cascade)
+  quantity       Int            @default(1)
+  status         WaitlistStatus @default(WAITING)
+  offeredAt      DateTime?
+  offerExpiresAt DateTime?
+  bookingId      String?        @unique
+  booking        Booking?       @relation(fields: [bookingId], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([slotSeatId, status, createdAt])
+  @@index([userId, status])
+  @@index([status, offerExpiresAt])
+}
+
+model Favorite {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, productId])
+  @@index([productId])
+}
+
+/// 사업자 팔로우 — 새 공석이 열리면 알림
+model Follow {
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([userId, businessId])
+  @@index([businessId])
+}
+
+/// 맞춤 빈자리 알림 조건
+model AlertRule {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String?
+  /// 비어 있으면 전체
+  categorySlugs  String[]
+  areaSlugs      String[]
+  keyword        String?
+  maxPrice       Int?
+  /// 0(일)~6(토). 비어 있으면 전체
+  daysOfWeek     Int[]
+  /// 하루 중 시작 시각 범위(분, KST). null 이면 제한 없음
+  timeFromMin    Int?
+  timeToMin      Int?
+  seatGender     SeatGender?
+  isActive       Boolean   @default(true)
+  lastNotifiedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+// ───────────────────────── 알림 · 메시지 ─────────────────────────
+
+/// 앱 내 알림함
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 예: BOOKING_CONFIRMED, WAITLIST_OFFER, VACANCY_ALERT, SELLER_NEW_BOOKING ...
+  type      String
+  title     String
+  body      String
+  linkUrl   String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+enum MessageChannel {
+  SMS
+  ALIMTALK
+  EMAIL
+}
+
+enum MessageStatus {
+  QUEUED
+  SENT
+  SIMULATED // 발송 사업자 미연동 상태에서 기록만 남김
+  FAILED
+  SKIPPED // 수신 미동의·야간 제한 등으로 건너뜀
+}
+
+/// 외부 채널(문자·알림톡·이메일) 발송 대기열 겸 이력
+model MessageOutbox {
+  id                String         @id @default(cuid())
+  userId            String?
+  businessId        String?
+  business          Business?      @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  channel           MessageChannel
+  /// 수신 번호 또는 이메일
+  recipient         String
+  templateKey       String
+  subject           String?
+  body              String
+  /// 광고성 정보 여부(야간 전송 제한·수신동의 확인 대상)
+  isAdvertising     Boolean        @default(false)
+  status            MessageStatus  @default(QUEUED)
+  provider          String?
+  providerMessageId String?
+  error             String?
+  attempts          Int            @default(0)
+  scheduledAt       DateTime       @default(now())
+  sentAt            DateTime?
+  /// 관련 엔티티(중복 발송 방지용 키. 예: "REMINDER_D1:bookingId")
+  dedupeKey         String?        @unique
+  createdAt         DateTime       @default(now())
+
+  @@index([status, scheduledAt])
+  @@index([businessId, createdAt])
+}
+
+/// 사업자 자동 메시지 템플릿(예약 확정·리마인드·후기 요청 등)
+model MessageTemplate {
+  id            String         @id @default(cuid())
+  businessId    String
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  /// BOOKING_CONFIRMED | REMINDER_DAY_BEFORE | REMINDER_HOURS_BEFORE | REVIEW_REQUEST | BOOKING_CANCELLED_BY_SELLER
+  key           String
+  channel       MessageChannel @default(SMS)
+  body          String
+  isEnabled     Boolean        @default(true)
+  /// 리마인드류: 시작 N분 전 발송
+  offsetMinutes Int?
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([businessId, key])
+}
+
+// ───────────────────────── 후기 · 신고 ─────────────────────────
+
+enum ReviewStatus {
+  VISIBLE
+  HIDDEN
+}
+
+/// 참석 완료된 예약에만 작성 가능
+model Review {
+  id              String       @id @default(cuid())
+  bookingId       String       @unique
+  booking         Booking      @relation(fields: [bookingId], references: [id])
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId      String
+  business        Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  rating          Int
+  content         String
+  sellerReply     String?
+  sellerRepliedAt DateTime?
+  status          ReviewStatus @default(VISIBLE)
+  hiddenReason    String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([businessId, status, createdAt])
+  @@index([productId, status, createdAt])
+}
+
+enum ReportTargetType {
+  BUSINESS
+  PRODUCT
+  REVIEW
+  USER
+  BOOKING
+}
+
+enum ReportReason {
+  FALSE_INFO // 허위·과장 정보
+  FAKE_VACANCY // 허위 공석
+  NO_SERVICE // 서비스 미제공
+  REFUND_DISPUTE // 환불 분쟁
+  OFF_PLATFORM // 외부 결제 유도
+  INAPPROPRIATE // 부적절한 내용·행동
+  SAFETY // 안전 문제
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id          String           @id @default(cuid())
+  reporterId  String?
+  reporter    User?            @relation("reporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  targetType  ReportTargetType
+  targetId    String
+  /// 관련 예약(분쟁일 때)
+  bookingId   String?
+  reason      ReportReason
+  detail      String
+  status      ReportStatus     @default(OPEN)
+  resolution  String?
+  handledById String?
+  handledBy   User?            @relation("reportHandler", fields: [handledById], references: [id], onDelete: SetNull)
+  handledAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+}
+
+// ───────────────────────── CRM ─────────────────────────
+
+enum CustomerSource {
+  MARKETPLACE
+  DIRECT
+  MANUAL
+}
+
+/// 사업자별 고객 카드
+model BusinessCustomer {
+  id             String         @id @default(cuid())
+  businessId     String
+  business       Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name           String
+  phone          String
+  source         CustomerSource @default(MARKETPLACE)
+  firstSeenAt    DateTime       @default(now())
+  lastBookingAt  DateTime?
+  lastVisitAt    DateTime?
+  bookingCount   Int            @default(0)
+  completedCount Int            @default(0)
+  cancelCount    Int            @default(0)
+  noShowCount    Int            @default(0)
+  totalSpent     Int            @default(0)
+  tags           String[]
+  memo           String?
+  isBlocked      Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([businessId, phone])
+  @@index([businessId, lastBookingAt])
+  @@index([userId])
+}
+
+// ───────────────────────── 정산 ─────────────────────────
+
+enum SettlementStatus {
+  PENDING // 집계됨, 확인 전
+  CONFIRMED // 금액 확정
+  PAID // 지급 완료
+  HELD // 분쟁 등으로 보류
+}
+
+model Settlement {
+  id               String           @id @default(cuid())
+  businessId       String
+  business         Business         @relation(fields: [businessId], references: [id])
+  periodStart      DateTime
+  periodEnd        DateTime
+  bookingCount     Int
+  /// 온라인 결제 총액(환불 차감 후)
+  onlineGross      Int
+  /// 현장 결제 총액(참고용 — 플랫폼이 수금하지 않음)
+  onsiteGross      Int
+  commissionAmount Int
+  pgFeeAmount      Int
+  /// 사업자 지급액 = onlineGross - commission - pgFee. 음수면 사업자에게 청구
+  netAmount        Int
+  status           SettlementStatus @default(PENDING)
+  memo             String?
+  confirmedAt      DateTime?
+  paidAt           DateTime?
+  paidById         String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  items SettlementItem[]
+
+  @@unique([businessId, periodStart, periodEnd])
+  @@index([status])
+}
+
+model SettlementItem {
+  id               String     @id @default(cuid())
+  settlementId     String
+  settlement       Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  bookingId        String     @unique
+  booking          Booking    @relation(fields: [bookingId], references: [id])
+  onlineAmount     Int
+  onsiteAmount     Int
+  commissionAmount Int
+  pgFeeAmount      Int
+  netAmount        Int
+
+  @@index([settlementId])
+}
+
+// ───────────────────────── 운영 · 보안 ─────────────────────────
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  actorId    String?
+  actorType  ActorType
+  /// 예: business.approve, booking.refund, user.suspend, settings.update, auth.login_failed
+  action     String
+  targetType String?
+  targetId   String?
+  ip         String?
+  userAgent  String?
+  meta       Json?
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+}
+
+/// 고정 윈도 요청 제한 카운터
+model RateLimit {
+  key         String
+  windowStart DateTime
+  count       Int      @default(0)
+
+  @@id([key, windowStart])
+  @@index([windowStart])
+}
+
+/// 플랫폼 설정(수수료율·홀드 시간 등)
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+/// 퍼널·수요 분석용 이벤트
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  /// SLOT_VIEW | BOOKING_START | SEARCH | SHARE | WAITLIST_JOIN ...
+  type       String
+  userId     String?
+  /// 비로그인 방문자 식별용 익명 ID(쿠키)
+  visitorId  String?
+  businessId String?
+  productId  String?
+  slotId     String?
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([businessId, type, createdAt])
+  @@index([type, createdAt])
+}
