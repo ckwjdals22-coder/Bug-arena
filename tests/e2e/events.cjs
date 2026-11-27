@@ -95,7 +95,17 @@ async function record(page) {
     // events.ts 의 구독이 먼저 등록돼 있으므로, 여기서 읽는 DOM 은 그 메시지를 처리한 직후의 모습이다
     g.bus.onMsg('patrol', (m) => {
       const chip = document.querySelector('.ev-chip')
-      window.__ev.push({ ...m, at: performance.now(), chip: chip.classList.contains('hidden') ? '' : chip.className + ' ' + chip.textContent })
+      const ev = { ...m, at: performance.now(), chip: chip.classList.contains('hidden') ? '' : chip.className + ' ' + chip.textContent, flee: null, freeze: null }
+      window.__ev.push(ev)
+      // 버튼·오버레이는 그 순간의 화면을 페이지 안에서 바로 적어 둔다.
+      // (밖에서 나중에 들여다보면, 단속반이 가까울 때는 1~2초 만에 잡혀서 이미 사라진 뒤일 수 있다)
+      setTimeout(() => {
+        ev.flee = !!document.querySelector('.hud-action.primary[aria-label="도망가기"]')
+        const fr = document.querySelector('.ev-freeze')
+        ev.freeze = !!fr && !fr.classList.contains('hidden')
+        // 실패했을 때 원인을 알 수 있게 그 순간의 상태도 남긴다
+        ev.dbg = { talk: !!g.store.talk, phase: g.store.phase, actions: [...document.querySelectorAll('.hud-action')].map((b) => b.getAttribute('aria-label') + (b.classList.contains('primary') ? '*' : '')) }
+      }, 120)
     })
     g.bus.onMsg('duel', (m) => window.__ev.push({ ...m, at: performance.now() }))
     // 실제로 화면에 뜬 자막 스타일 기록
@@ -212,22 +222,26 @@ async function provokePatrol(page, label, tries = 10) {
     // ───────── 1) 발각 → 추격 → 훈방 ─────────
     const alert = await provokePatrol(A.page, 'A')
     check('근처에서 포교하면 alert 가 온다', alert.p === a0.id)
-    const fleeBtn = A.page.locator('.hud-action[aria-label="도망가기"]')
-    // 바쁜 기계에서는 화면 갱신이 늦을 수 있어 고정 대기 대신 나타날 때까지 기다린다
-    await fleeBtn.waitFor({ state: 'visible', timeout: 2500 }).catch(() => {})
     await shot(A.page, '1-alert-pc')
-    check('쫓기는 동안 "도망가기"가 큰 상황 버튼이 된다', (await fleeBtn.count()) === 1 && (await fleeBtn.evaluate((b) => b.classList.contains('primary'))))
     const chase = await waitEvent(A.page, (e) => e.t === 'patrol' && e.ph === 'chase', 3000, 'chase')
-    check('0.8초 뒤 chase', chase.at - alert.at > 500 && chase.at - alert.at < 2000, `${Math.round(chase.at - alert.at)}ms`)
+    // 들킨 순간(호루라기 0.8초)의 화면을 페이지 안에서 기록해 둔 것으로 판정한다.
+    // 추격 시작 시점으로 보면 안 된다: 단속반이 바로 옆에 있으면 추격 0.1초 만에 잡혀 버튼이 이미 사라져 있다.
+    await sleep(200)
+    const alertSeen = (await events(A.page)).find((e) => e.t === 'patrol' && e.ph === 'alert' && e.p === a0.id)
+    check('들키면 "도망가기"가 큰 상황 버튼이 된다', alertSeen.flee === true, alertSeen.flee === true ? '' : JSON.stringify(alertSeen.dbg))
+    // 서버 간격(0.8초)은 단위 테스트가 본다. 여기서는 '경고 뒤에 추격이 온다'만 확인한다
+    // (스크린샷을 찍는 동안 페이지가 멈춰 경고 메시지 처리 시각이 늦게 찍힐 수 있어 아래쪽 한계는 넉넉히 둔다)
+    check('alert 뒤에 chase 가 온다', chase.at - alert.at > 100 && chase.at - alert.at < 2500, `${Math.round(chase.at - alert.at)}ms`)
     check('추격 칩이 뜬다(남은 시간 포함)', /chase.*추격.*초/.test(chase.chip), chase.chip)
     await shot(A.page, '2-chase-pc')
     // 가만히 서 있으면 잡힌다(단속반 6.3 m/s)
     const end1 = await waitEvent(A.page, (e) => e.t === 'patrol' && (e.ph === 'caught' || e.ph === 'lost'), 11000, 'caught/lost')
     if (end1.ph === 'caught') {
       await sleep(250)
-      check('잡히면 훈방 오버레이가 뜬다', await A.page.locator('.ev-freeze').isVisible())
-      await shot(A.page, '3-caught-pc')
+      check('잡히면 훈방 오버레이가 뜬다', (await events(A.page)).find((e) => e.t === 'patrol' && e.ph === 'caught').freeze === true)
+      // 남은 시간을 재는 것이므로 (느린) 스크린샷보다 먼저 읽는다
       const st = await A.page.evaluate(() => ({ stun: window.__doas.store.me.stunUntil - performance.now(), ent: window.__doas.store.me.entourage }))
+      await shot(A.page, '3-caught-pc')
       check('얼어붙음(stunUntil)이 걸린다', st.stun > 1500 && st.stun <= 3100, `${Math.round(st.stun)}ms`)
       const x0 = (await state(A.page)).x
       await A.page.evaluate(() => window.__doas.player.moveTo(window.__doas.store.me.x + 4, window.__doas.store.me.z))
@@ -337,17 +351,35 @@ async function provokePatrol(page, label, tries = 10) {
     check('다른 사람 화면에는 추격 칩이 뜨지 않는다', !(await A.page.locator('.ev-chip.alert, .ev-chip.chase').isVisible()))
     // 호루라기(alert) 0.8초 동안이 도망칠 기회다: 바로 진짜 '도망가기' 버튼을 누르고 반대쪽으로 달린다
     const btn = B.page.locator('.hud-action[aria-label="도망가기"]')
-    await btn.waitFor({ state: 'visible', timeout: 2500 }).catch(() => {})
-    check('모바일: 도망가기 버튼이 보인다', await btn.isVisible())
-    await shot(B.page, '6-alert-mobile')
     // 상황 버튼 줄은 근처 대상이 바뀔 때 다시 그려지며 잠깐 커지는 애니메이션이 있다 → 짧게 여러 번 시도
+    // (스크린샷은 느리므로 누른 뒤에 찍는다. 단속반이 바로 옆이면 1~2초 만에 잡힌다)
     let sprinting = false
     for (let i = 0; i < 8 && !sprinting; i++) {
       await btn.tap({ timeout: 600 }).catch(() => {})
       await sleep(120)
       sprinting = await B.page.evaluate(() => window.__doas.store.me.sprintUntil > performance.now())
     }
-    check('도망가기 버튼을 누르면 스프린트가 시작된다', sprinting)
+    await sleep(150)
+    const seenB = (await events(B.page)).filter((e) => e.t === 'patrol' && e.p === b0.id && (e.ph === 'alert' || e.ph === 'chase'))
+    check('모바일: 도망가기 버튼이 보인다', seenB.some((e) => e.flee === true))
+    await shot(B.page, '6-alert-mobile')
+    const caughtEarly = !sprinting && (await events(B.page)).some((e) => e.t === 'patrol' && e.p === b0.id && e.ph === 'caught')
+    // 실패하면 왜 못 달렸는지(대화 중? 쿨타임? 이미 잡힘?) 같이 적는다
+    const whyNot = sprinting
+      ? ''
+      : JSON.stringify(
+          await B.page.evaluate(() => {
+            const g = window.__doas
+            const me = g.store.me
+            const now = performance.now()
+            const b = document.querySelector('.hud-action[aria-label="도망가기"]')
+            const r = b ? b.getBoundingClientRect() : null
+            const top = r ? document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) : null
+            return { talk: !!g.store.talk, readyIn: Math.round(me.sprintReadyAt - now), stunIn: Math.round(me.stunUntil - now), btn: !!b, disabled: b ? b.disabled : null, cls: b ? b.className : '', covered: top && b && !b.contains(top) ? top.className : '' }
+          }),
+        )
+    if (caughtEarly) skipped.push('모바일: 단속반이 너무 가까워 버튼을 누르기 전에 잡힘 — 스프린트 시작은 이번 실행에서 확인하지 못함')
+    else check('도망가기 버튼을 누르면 스프린트가 시작된다', sprinting, whyNot)
     // 단속반 반대쪽으로 달린다
     await B.page.evaluate(() => {
       const g = window.__doas
@@ -369,8 +401,7 @@ async function provokePatrol(page, label, tries = 10) {
     if (end2.ph === 'lost') {
       check('따돌리면 "따돌렸다" 칩', (await B.page.locator('.ev-chip.lost').isVisible()))
     } else {
-      await B.page.locator('.ev-freeze').waitFor({ state: 'visible', timeout: 2000 }).catch(() => {})
-      check('잡히면 모바일에도 훈방 오버레이', await B.page.locator('.ev-freeze').isVisible())
+      check('잡히면 모바일에도 훈방 오버레이', (await events(B.page)).find((e) => e.t === 'patrol' && e.p === b0.id && e.ph === 'caught').freeze === true)
     }
     await shot(B.page, `8-${end2.ph}-mobile`)
     console.log(`    · 모바일 추격 결과: ${end2.ph}`)

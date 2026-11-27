@@ -127,6 +127,8 @@ export function mountEvents(ctx: AppContext): void {
     switch (m.ph) {
       case 'alert': {
         chased = 'alert'
+        // 대화 창이 열린 채로 들키면("더 들어볼게요"로 대화가 이어지던 중) 도망가기 버튼이 가려진다 → 대화를 접고 도망칠 수 있게 한다
+        if (store.talk) ctx.actions.endTalk()
         flashVignette()
         playSfx(ctx, 'whistle')
         const pos = npcPos(m.n)
