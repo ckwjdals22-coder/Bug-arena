@@ -34,7 +34,7 @@ const emptySim = (): NpcSimApi => ({
   },
 })
 
-function makeLobby(roomCount: number, capacity = 3) {
+function makeLobby(roomCount: number, capacity = 3, maxRooms?: number) {
   let now = 1_700_000_000_000
   let lobby: Lobby
   const closed = new Set<number>()
@@ -52,7 +52,7 @@ function makeLobby(roomCount: number, capacity = 3) {
   lobby = new Lobby((id, name) => {
     made.push(`${id}:${name}`)
     return new Room(host, { id, name, capacity, npcCount: 0, systems: [], seed: 1 }, { createNpcSim: emptySim })
-  }, roomCount)
+  }, roomCount, maxRooms)
   let conn = 0
   /** 방에 실제 접속자를 n 명 넣는다 */
   const fill = (roomId: string, n: number): number[] => {
@@ -78,7 +78,12 @@ function makeLobby(roomCount: number, capacity = 3) {
     }
     return conns
   }
-  return { lobby, made, fill, pend, closed, tick: (ms: number) => void (now += ms) }
+  /** 방에서 연결들을 내보낸다 */
+  const leave = (roomId: string, conns: number[]): void => {
+    const room = lobby.get(roomId)!
+    for (const c of conns) room.disconnect(c)
+  }
+  return { lobby, made, fill, pend, leave, closed, tick: (ms: number) => void (now += ms) }
 }
 
 describe('Lobby', () => {
@@ -173,3 +178,69 @@ describe('Lobby', () => {
     expect(t.lobby.pick('auto')?.id).toBe('1')
   })
 })
+
+describe('방 자동 증설', () => {
+  it('상한을 주지 않으면 방이 늘지 않는다', () => {
+    const t = makeLobby(2, 5)
+    t.fill('1', 5)
+    t.fill('2', 5)
+    expect(t.lobby.pick('auto')).toBeUndefined()
+    expect(t.lobby.size).toBe(2)
+    expect(t.lobby.maxRooms).toBe(2)
+  })
+
+  it('모든 방이 80% 이상 차면 다음 방을 미리 만들고, 기존 방이 다 찬 뒤에 새 방으로 보낸다', () => {
+    const t = makeLobby(2, 5, 4)
+    t.fill('1', 4)
+    t.fill('2', 3) // 2번 방은 60% → 아직 증설하지 않는다
+    expect(t.lobby.pick('auto')?.id).toBe('1')
+    expect(t.lobby.size).toBe(2)
+    t.fill('2', 1) // 둘 다 80%
+    expect(t.lobby.pick('auto')?.id).toBe('1') // 여전히 붐비는 기존 방 먼저
+    expect(t.lobby.size).toBe(3)
+    expect(t.lobby.get('3')?.name).toBe(roomName(3))
+    t.fill('1', 1)
+    t.fill('2', 1)
+    expect(t.lobby.pick('auto')?.id).toBe('3') // 기존 방이 가득 차면 새 방
+    expect(t.lobby.rooms().map((r) => r.id)).toEqual(['1', '2', '3'])
+  })
+
+  it('상한을 넘겨서는 만들지 않는다', () => {
+    const t = makeLobby(1, 2, 2)
+    t.fill('1', 2)
+    expect(t.lobby.pick('auto')?.id).toBe('2')
+    t.fill('2', 2)
+    expect(t.lobby.pick('auto')).toBeUndefined()
+    expect(t.lobby.size).toBe(2)
+  })
+
+  it('늘어난 방이 5분 넘게 비어 있으면 정리하고, 처음부터 있던 방은 남긴다', () => {
+    const t = makeLobby(1, 2, 3)
+    t.fill('1', 2)
+    t.lobby.pick('auto')
+    expect(t.lobby.size).toBe(2)
+    const t0 = 1_000_000
+    expect(t.lobby.sweep(t0)).toEqual([])
+    expect(t.lobby.sweep(t0 + 4 * 60_000)).toEqual([])
+    expect(t.lobby.sweep(t0 + 5 * 60_000 + 1)).toEqual(['2'])
+    expect(t.lobby.size).toBe(1)
+    expect(t.lobby.get('2')).toBeUndefined()
+    expect(t.lobby.sweep(t0 + 60 * 60_000)).toEqual([])
+    // 다시 붐비면 같은 번호로 다시 만든다
+    expect(t.lobby.pick('auto')?.id).toBe('2')
+  })
+
+  it('사람이 들어오면 비어 있던 시간 계산을 처음부터 다시 한다', () => {
+    const t = makeLobby(1, 2, 3)
+    t.fill('1', 2)
+    t.lobby.pick('auto')
+    const t0 = 1_000_000
+    t.lobby.sweep(t0)
+    const conns = t.fill('2', 1)
+    t.lobby.sweep(t0 + 4 * 60_000)
+    t.leave('2', conns)
+    expect(t.lobby.sweep(t0 + 6 * 60_000)).toEqual([]) // 방금 비었으므로 이제부터 5분
+    expect(t.lobby.sweep(t0 + 11 * 60_000 + 1)).toEqual(['2'])
+  })
+})
+

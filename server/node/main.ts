@@ -5,7 +5,7 @@
  * 그래서 같은 코어를 Cloudflare Workers 어댑터에서도 그대로 쓸 수 있다.
  *
  * 실행: `npx tsx server/node/main.ts` 또는 번들(`npm run build:server` → `node dist/server/main.js`).
- * 환경변수: PORT · HOST · ROOMS · ROOM_CAPACITY · NPCS · SAVE_SECRET · CLIENT_DIR · ALLOWED_ORIGINS · DATA_DIR
+ * 환경변수: PORT · HOST · ROOMS · MAX_ROOMS · ROOM_CAPACITY · NPCS · SAVE_SECRET · CLIENT_DIR · ALLOWED_ORIGINS · DATA_DIR
  */
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
@@ -45,6 +45,8 @@ function envInt(name: string, def: number, min: number, max: number): number {
 const PORT = envInt('PORT', 8787, 0, 65535)
 const HOST = process.env.HOST?.trim() || undefined
 const ROOMS = envInt('ROOMS', DEFAULT_ROOM_COUNT, 1, MAX_ROOM_COUNT)
+/** 자동 증설 상한. 기본은 ROOMS 와 같다(= 증설 안 함) */
+const MAX_ROOMS = Math.max(ROOMS, envInt('MAX_ROOMS', ROOMS, 1, MAX_ROOM_COUNT))
 // 스냅샷은 한 번에 255개까지만 실을 수 있으므로 정원/NPC 수에 상한을 둔다
 const CAPACITY = envInt('ROOM_CAPACITY', ROOM_CAPACITY, 1, 100)
 const NPCS = envInt('NPCS', NPCS_PER_ROOM, 0, 200)
@@ -59,7 +61,7 @@ const HEARTBEAT_MS = 20_000
 /** close 프레임에 답이 없을 때 강제로 끊기까지 */
 const CLOSE_GRACE_MS = 2000
 /** 정원 + 입장 대기 여유. 소켓만 열어 두는 공격으로 자원이 끝없이 늘지 않게 한다 */
-const MAX_CONNS = ROOMS * CAPACITY * 2 + 100
+const MAX_CONNS = MAX_ROOMS * CAPACITY * 2 + 100
 const CULT_FLUSH_MS = 30_000
 const MAX_CULTS = 5000
 const ROOM_LIST_CACHE_MS = 250
@@ -337,7 +339,7 @@ const host: RoomHost = {
   cults,
 }
 
-const lobby = new Lobby((id, name) => new Room(host, { id, name, capacity: CAPACITY, npcCount: NPCS }), ROOMS)
+const lobby = new Lobby((id, name) => new Room(host, { id, name, capacity: CAPACITY, npcCount: NPCS }), ROOMS, MAX_ROOMS)
 lobbyRef = lobby
 
 // ───────────────────────── 틱 ─────────────────────────
@@ -361,6 +363,11 @@ function tickAll(): void {
     } catch (err) {
       log('error', `방 ${room.id} 틱 예외`, err)
     }
+  }
+  // 10초에 한 번: 자동으로 늘어났다가 오래 비어 있는 방 정리
+  if (tickSeq % (TICK_HZ * 10) === 0) {
+    const removed = lobby.sweep(Date.now())
+    if (removed.length > 0) log('info', `빈 방 정리: ${removed.join(', ')}`)
   }
   const ms = performance.now() - t0
   tickSamples[tickSampleCount % tickSamples.length] = ms
@@ -605,7 +612,7 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): 
       sendText(res, 405, '허용되지 않는 메서드입니다.\n', { allow: 'GET, OPTIONS', ...CORS })
       return
     }
-    sendJson(res, 200, { rooms: lobby.rooms() }, CORS)
+    sendJson(res, 200, { rooms: lobby.rooms(), policy: { capacity: CAPACITY, rooms: ROOMS, maxRooms: MAX_ROOMS } }, CORS)
     return
   }
   if (method !== 'GET' && method !== 'HEAD') {
@@ -620,6 +627,10 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): 
       conns: conns.size,
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       tickMsP95: Math.round(tickP95() * 1000) / 1000,
+      // 부하 측정용: 프로세스 메모리와 누적 CPU 시간(사용자+시스템)
+      rssMb: Math.round(process.memoryUsage().rss / 104857.6) / 10,
+      heapMb: Math.round(process.memoryUsage().heapUsed / 104857.6) / 10,
+      cpuMs: Math.round((process.cpuUsage().user + process.cpuUsage().system) / 1000),
       tickMsMax: Math.round(tickMax * 1000) / 1000,
     })
     return

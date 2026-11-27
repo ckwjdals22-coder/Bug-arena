@@ -11,19 +11,82 @@ export function roomName(index: number): string {
   return `수상역 ${index}번 출구`
 }
 
+/** 모든 방이 이 비율 이상 차면 다음 방을 미리 만든다(자동 증설이 켜져 있을 때) */
+export const GROW_AT = 0.8
+/** 자동으로 늘어난 방이 이만큼 비어 있으면 정리한다 */
+export const EXTRA_ROOM_IDLE_MS = 5 * 60_000
+
 export class Lobby {
   private readonly list: Room[] = []
   private readonly byId = new Map<string, Room>()
+  /** 처음부터 있던 방 수. 이 방들은 비어도 없애지 않는다 */
+  readonly baseCount: number
+  /** 자동 증설 상한. baseCount 와 같으면 증설하지 않는다 */
+  readonly maxRooms: number
+  /** 증설된 방이 비기 시작한 시각 */
+  private readonly emptySince = new Map<string, number>()
 
-  constructor(makeRoom: (id: string, name: string) => Room, roomCount: number) {
+  /**
+   * roomCount: 처음 만들어 둘 방 수.
+   * maxRooms: 자동 증설 상한(생략하면 증설 없음). 모든 방이 GROW_AT 이상 찼을 때 다음 방을 하나 미리 만든다.
+   */
+  constructor(
+    private readonly makeRoom: (id: string, name: string) => Room,
+    roomCount: number,
+    maxRooms?: number,
+  ) {
     const wanted = Number.isFinite(roomCount) ? Math.floor(roomCount) : 1
     const count = Math.max(1, Math.min(MAX_ROOM_COUNT, wanted))
-    for (let i = 1; i <= count; i++) {
-      const id = String(i)
-      const room = makeRoom(id, roomName(i))
-      this.list.push(room)
-      this.byId.set(id, room)
+    this.baseCount = count
+    const cap = maxRooms !== undefined && Number.isFinite(maxRooms) ? Math.floor(maxRooms) : count
+    this.maxRooms = Math.max(count, Math.min(MAX_ROOM_COUNT, cap))
+    for (let i = 1; i <= count; i++) this.addRoom(i)
+  }
+
+  private addRoom(index: number): Room {
+    const id = String(index)
+    const room = this.makeRoom(id, roomName(index))
+    this.list.push(room)
+    this.list.sort((a, b) => Number(a.id) - Number(b.id))
+    this.byId.set(id, room)
+    return room
+  }
+
+  /** 모든 방이 붐비면 다음 방을 미리 만든다. 만들었으면 그 방을 돌려준다 */
+  private growIfCrowded(): Room | undefined {
+    if (this.list.length >= this.maxRooms) return undefined
+    for (const room of this.list) {
+      if (room.players.size + room.pending < room.capacity * GROW_AT) return undefined
     }
+    let index = this.baseCount + 1
+    while (this.byId.has(String(index))) index++
+    return this.addRoom(index)
+  }
+
+  /**
+   * 자동으로 늘어난 방 가운데 오래 비어 있는 방을 정리한다. 어댑터가 가끔(몇 초~수십 초 간격) 불러 준다.
+   * 정리한 방 id 목록을 돌려준다.
+   */
+  sweep(now: number): string[] {
+    const removed: string[] = []
+    for (const room of [...this.list]) {
+      if (Number(room.id) <= this.baseCount) continue
+      if (room.players.size + room.pending > 0) {
+        this.emptySince.delete(room.id)
+        continue
+      }
+      const since = this.emptySince.get(room.id)
+      if (since === undefined) {
+        this.emptySince.set(room.id, now)
+      } else if (now - since >= EXTRA_ROOM_IDLE_MS) {
+        this.emptySince.delete(room.id)
+        this.byId.delete(room.id)
+        const i = this.list.indexOf(room)
+        if (i >= 0) this.list.splice(i, 1)
+        removed.push(room.id)
+      }
+    }
+    return removed
   }
 
   get size(): number {
@@ -65,6 +128,8 @@ export class Lobby {
       const room = this.byId.get(requested)
       if (room && hasSeat(room)) return room
     }
+    // 자리가 모자라기 전에 다음 방을 준비해 둔다. 새 방은 비어 있으므로 아래 규칙상 기존 방이 다 찬 뒤에야 쓰인다
+    this.growIfCrowded()
     let best: Room | undefined
     let bestPlayers = -1
     for (const room of this.list) {
