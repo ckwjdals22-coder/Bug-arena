@@ -238,14 +238,17 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
       st.bottom = ''
       return
     }
-    const r = win.getBoundingClientRect()
+    // 패널이 '자리 잡은 뒤'의 위치로 잰다(offset* 은 transform 을 무시한다). getBoundingClientRect 로 재면 열리는 연출(panel-in)로
+    // 아직 아래로 밀려 있는 순간의 위치가 잡혀, 연출이 끝난 뒤 토스트가 패널 머리 줄에 걸친 채 남는다
+    const top = win.offsetTop
+    const bottom = top + win.offsetHeight
     const need = Math.max(toastBox.offsetHeight, 40) + 8
     const vh = window.innerHeight
-    if (r.top >= need + 4) {
+    if (top >= need + 4) {
       st.top = 'auto'
-      st.bottom = `${Math.round(vh - r.top + 8)}px`
-    } else if (vh - r.bottom >= need + 4) {
-      st.top = `${Math.round(r.bottom + 8)}px`
+      st.bottom = `${Math.round(vh - top + 8)}px`
+    } else if (vh - bottom >= need + 4) {
+      st.top = `${Math.round(bottom + 8)}px`
       st.bottom = 'auto'
     } else {
       st.top = 'auto'

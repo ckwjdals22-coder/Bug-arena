@@ -67,7 +67,10 @@ const { OUT, sleep, startServer, launch, openPlayer, state, waitState, walkToPla
     await A.page.screenshot({ path: path.join(OUT, 'battle-4-result-pc.png') })
     await B.page.screenshot({ path: path.join(OUT, 'battle-4-result-mobile.png') })
     const endA = await state(A.page)
-    check('결과에 따라 영향력을 받는다', endA.inf > infA, `+${endA.inf - infA}`)
+    // 포교 결과는 확률이라 38초 동안 아무도 합류하지 않는 판도 나온다. 0:0 은 규칙상 무효(영향력 없음)이므로 그 경우는 '그대로'가 맞다
+    const scoreless = !!b && b.sa + b.sb === 0
+    if (scoreless) check('0:0 승부는 무효라 영향력이 그대로다', endA.inf === infA, `+${endA.inf - infA}`)
+    else check('결과에 따라 영향력을 받는다', endA.inf > infA, `+${endA.inf - infA}`)
     const real = errors.filter((e) => !/Failed to load resource|net::ERR_/.test(e))
     check('브라우저 콘솔 오류가 없다', real.length === 0, real.slice(0, 3).join(' | '))
     void b0

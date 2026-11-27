@@ -261,13 +261,50 @@ async function main() {
     await check('PC: 승급하면 토스트의 [임명장 받기]가 임명장 탭을 연다', async () => {
       await A.evaluate(() => window.__doas.bus.emit('rankUp', 1))
       const btn = A.locator('.cert-toast-btn')
-      // 토스트는 승급 카드(4.8초)가 무대에서 내려간 뒤에 뜬다(ui/stage.ts 순서: 승급 카드 → 토스트)
-      await btn.waitFor({ state: 'visible', timeout: 9000 })
+      // 토스트는 승급 카드(4.8초)가 무대에서 내려간 뒤에 뜬다(ui/stage.ts 순서: 승급 카드 → 토스트).
+      // 패널이 열려 있는 동안 기다리던 업적 배너(2.2초)·자막(2.4초)이 있으면 그것들이 먼저 지나간다 → 넉넉히 기다린다
+      await btn.waitFor({ state: 'visible', timeout: 20000 })
       await btn.click()
       await waitCard(A, 'certificate')
       return '임명장 탭 열림'
     })
     await A.keyboard.press('Escape')
+    await check('PC: 승급 토스트는 다른 알림에 밀려도 두 번까지만 뜨고, 그 뒤로는 메뉴에 점이 남는다', async () => {
+      await A.evaluate(() => {
+        window.__certShows = 0
+        new MutationObserver((muts) => {
+          for (const m of muts) for (const n of m.addedNodes) if (n.classList && n.classList.contains('cert-toast')) window.__certShows++
+        }).observe(document.querySelector('.toasts'), { childList: true })
+        window.__doas.bus.emit('rankUp', 2)
+      })
+      const toast = A.locator('.cert-toast')
+      await toast.waitFor({ state: 'visible', timeout: 20000 })
+      // 떠 있는 토스트를 업적 배너가 밀어낸다 → 배너가 지나가면 토스트가 한 번 더 뜬다
+      await A.evaluate(() => window.__doas.bus.emitMsg({ t: 'reward', why: 'ach', ach: ['first_join'], inf: 0 }))
+      await toast.waitFor({ state: 'hidden', timeout: 2000 })
+      await A.waitForFunction(() => window.__certShows === 2, null, { timeout: 6000 })
+      // 또 밀려나면 이번에는 다시 뜨지 않는다(누르려는 순간마다 사라지는 깜빡임 방지)
+      await A.evaluate(() => window.__doas.bus.emitMsg({ t: 'reward', why: 'ach', ach: ['reject10'], inf: 0 }))
+      await toast.waitFor({ state: 'hidden', timeout: 2000 })
+      await sleep(5000)
+      const shows = await A.evaluate(() => window.__certShows)
+      assert(shows === 2, `토스트가 ${shows}번 떴습니다`)
+      assert((await toast.count()) === 0, '토스트가 남아 있습니다')
+      // 놓친 임명장은 메뉴의 점 표시로 찾을 수 있다
+      await A.locator('.hud-menu-btn').click()
+      const item = A.locator('.hud-menu-item', { hasText: '임명장·공유' })
+      await item.waitFor({ state: 'visible', timeout: 3000 })
+      assert((await item.locator('.badge').count()) === 1, '메뉴에 점 표시가 없습니다')
+      await item.click()
+      await waitCard(A, 'certificate')
+      await A.keyboard.press('Escape')
+      await A.locator('.hud-menu-btn').click()
+      await item.waitFor({ state: 'visible', timeout: 3000 })
+      assert((await item.locator('.badge').count()) === 0, '임명장을 본 뒤에도 점 표시가 남아 있습니다')
+      await A.locator('.hud-menu-btn').click()
+      await item.waitFor({ state: 'hidden', timeout: 3000 })
+      return '토스트 2번 → 메뉴 점 → 임명장 탭 → 점 사라짐'
+    })
 
     // ───────── 모바일 ─────────
     const ctxB = await browser.newContext({ ...devices['iPhone 13'], acceptDownloads: true })

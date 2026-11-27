@@ -64,11 +64,14 @@ export function mountAchievements(ctx: AppContext): void {
   // 결과 배너·자막·헌납 카드가 화면 가운데를 쓰는 중이면 지나간 뒤에 띄운다(가장 기쁜 순간이 글자 더미가 되지 않게).
   // 한 번에 여러 업적이 오면 전부 한꺼번에 무대 줄(순서 2)에 세운다: 하나가 끝난 뒤에 다음 것을 세우면
   // 그사이 뒤에 서 있던 승급 카드(순서 3)가 먼저 나가 버려 업적 → 승급 → 업적 으로 뒤섞인다
+  /** 지금 떠 있는 배너(끊겼을 때 무대 자리를 돌려주고, 덜 보였으면 돌아온 뒤 다시 보여 줄 수 있게) */
+  let showing: { def: AchievementDef; at: number; done: () => void } | null = null
   const hideBanner = (): void => {
     window.clearTimeout(hideTimer)
     banner.classList.add('hidden')
+    showing = null
   }
-  const showOne = (def: AchievementDef): (() => void) => {
+  const showOne = (def: AchievementDef, done: () => void): (() => void) => {
     banner.replaceChildren(
       h('span.ach-banner-icon', def.icon),
       h('span.ach-banner-text', h('small', '🏆 업적 달성'), h('b', def.name)),
@@ -81,6 +84,7 @@ export function mountAchievements(ctx: AppContext): void {
     playSfx(ctx, 'ach')
     window.clearTimeout(hideTimer)
     hideTimer = window.setTimeout(hideBanner, BANNER_MS)
+    showing = { def, at: performance.now(), done }
     // 배너가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(stage.ts)
     return hideBanner
   }
@@ -95,11 +99,20 @@ export function mountAchievements(ctx: AppContext): void {
         done()
         return undefined
       }
-      return showOne(def)
+      return showOne(def, done)
     })
   }
   bus.on('phase', (ph) => {
-    if (ph !== 'playing') hideBanner()
+    if (ph !== 'playing') {
+      // 배너가 떠 있는 순간에 끊겼다: 무대 자리를 돌려주고(뒤의 카드들이 각자 맡겨지게), 반도 못 보였으면 돌아온 뒤 다시 보여 준다.
+      // 무대가 아닌 여기서 다시 줄을 세우는 이유: 무대는 이 배너가 아직 떠 있는 줄 알고 있어, 그대로 두면 같은 배너가 두 번 설 수 있다
+      const cur = showing
+      hideBanner()
+      if (cur) {
+        if ((ph === 'reconnecting' || ph === 'connecting') && performance.now() - cur.at < BANNER_MS * 0.6) later.keep(() => playOne(cur.def))
+        cur.done()
+      }
+    }
     if (ph === 'playing') later.flush()
     else if (ph !== 'reconnecting' && ph !== 'connecting') later.drop()
   })

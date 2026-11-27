@@ -187,7 +187,18 @@ export function createInput(canvas: HTMLCanvasElement, uiRoot: HTMLElement): Inp
       const v = classifyPinch(pending.a, pending.b)
       if (v === 'pinch') becomePinch(pending)
       if (v === 'wait') waiting = true
-      else pending = null
+      else {
+        if (v === 'not') {
+          // 양손 엄지로 판명됐다: 기다리는 동안 시점 손가락이 움직인 만큼을 지금 한꺼번에 돌려준다(첫 드래그가 씹히지 않게).
+          // 이 이벤트가 시점 손가락의 것이면 이번 이동분(dx, dy)은 아래에서 평소대로 더해지므로 여기서는 뺀다
+          const look = pending.a.role === 'look' ? pending.a : pending.b.role === 'look' ? pending.b : null
+          if (look && look.moved > TAP_MAX_MOVE) {
+            camYaw -= (look.lastX - look.startX - (look === p ? dx : 0)) * 0.0055
+            camPitch += (look.lastY - look.startY - (look === p ? dy : 0)) * 0.004
+          }
+        }
+        pending = null
+      }
     }
     if (p.role === 'joy') {
       let jx = (e.clientX - p.startX) / JOY_RADIUS

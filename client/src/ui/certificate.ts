@@ -25,6 +25,8 @@ const SNAP_MS = 6000
 /** 승급 토스트가 떠 있는 시간. 무대도 이만큼 잡지만 뒤에 다른 카드가 줄을 서면 비켜 준다(stage.ts soft): 위쪽의 업적 배너·헌납 카드가 토스트에 포개지지 않게 */
 const RANK_TOAST_MS = 7000
 const RANK_TOAST_OUT_MS = 400
+/** 승급 토스트가 다른 알림에 밀려 다시 뜨는 것은 여기까지만(그 뒤로는 메뉴의 점 표시가 대신 알려 준다) */
+const RANK_TOAST_MAX_SHOWS = 2
 const SUMMARY_HINT_MS = 5 * 60 * 1000
 const SHARE_HINT = '이미지를 길게 눌러 저장한 뒤 스토리에 올려 보세요'
 
@@ -50,6 +52,8 @@ export function mountCertificate(ctx: AppContext): void {
   /** 마지막으로 찍어 둔 게임 화면(정사각형) */
   let lastShot: HTMLCanvasElement | null = null
   let pendingTab: CardType = 'certificate'
+  /** 승급해서 새 임명장이 생겼는데 아직 열어 보지 않았는가(메뉴 점 표시) */
+  let certNew = false
 
   bus.on('entered', () => {
     // 재접속·방 이동 때도 entered 가 다시 오지만, "오늘의 결산"은 페이지를 연 뒤 첫 입장부터 센다
@@ -164,19 +168,29 @@ export function mountCertificate(ctx: AppContext): void {
     if (ph === 'playing') later.flush()
     else if (ph !== 'reconnecting' && ph !== 'connecting') later.drop()
   })
-  bus.on('rankUp', (rank) => playRankToast(rank))
+  bus.on('rankUp', (rank) => {
+    certNew = true
+    playRankToast(rank)
+  })
   function playRankToast(rank: number): void {
+    let shows = 0
     // 승급 카드(system 모듈, 무대 순서 3) 바로 뒤에 무대 줄을 서서 띄운다: 헌납 카드·업적 배너와 겹치지 않고, 무엇을 축하하는지 이어진다.
     // 토스트는 7초 동안 떠 있지만 그동안 무대를 붙잡지는 않는다(soft): 뒤에 업적 배너나 플레이어가 직접 부른 헌납 카드가 줄을 서면
     // 곧바로 비켜 주고(같은 윗자리에 포개지지 않게), 덜 보였으면 그 카드들이 지나간 뒤 다시 뜬다.
     // 예전에는 7.4초 내내 무대를 잡아 [헌납 타임]을 눌러도 6~7초 동안 아무 반응이 없었다.
-    // [임명장 받기]를 누르면 바로 돌려준다
+    // [임명장 받기]를 누르면 바로 돌려준다.
+    // 다만 포교를 쉬지 않고 이어 가면 결과 배너·자막이 올 때마다 비켰다가 다시 떠서 토스트가 깜빡거린다(누르려는 순간 사라진다).
+    // 그래서 두 번까지만 뜨고, 그 뒤로는 메뉴(☰)의 '임명장·공유'에 점을 찍어 두는 것으로 대신한다(certNew)
     stagePlay(
       3.5,
       RANK_TOAST_MS + RANK_TOAST_OUT_MS,
       (done) => {
         if (store.phase !== 'playing') {
           later.keep(() => playRankToast(rank))
+          done()
+          return
+        }
+        if (++shows > RANK_TOAST_MAX_SHOWS) {
           done()
           return
         }
@@ -228,8 +242,8 @@ export function mountCertificate(ctx: AppContext): void {
     icon: '📜',
     label: '임명장·공유',
     order: 35,
-    badge: summaryHint,
-    onClick: () => openTab(summaryHint() ? 'summary' : 'certificate'),
+    badge: () => certNew || summaryHint(),
+    onClick: () => openTab(!certNew && summaryHint() ? 'summary' : 'certificate'),
   })
 
   function openTab(type: CardType): void {
@@ -345,6 +359,7 @@ export function mountCertificate(ctx: AppContext): void {
         frame.classList.toggle('square', t === 'meme')
         retakeBtn.classList.toggle('hidden', t !== 'meme')
         if (t === 'summary') summarySeen = true
+        if (t === 'certificate') certNew = false
         caption.textContent = captionFor(t)
         blob = null
         void draw()
