@@ -43,6 +43,7 @@ import { ACHIEVEMENT_BY_ID } from '../../shared/content/achievements'
 import { EMOTE_BY_ID, RANKS, STAT, rankForInfluence } from '../../shared/content/core'
 import { PITCH_LINES } from '../../shared/content/lines'
 import { NICK_ADJ, NICK_NOUN, QUICK_CHATS } from '../../shared/content/misc'
+import { ownsTitle } from '../../shared/content/shop'
 import type { PitchLine } from '../../shared/content/types'
 import {
   CLOSE_BAD,
@@ -1335,7 +1336,8 @@ export class Room implements RoomApi {
     if (msg.tag !== undefined) {
       // 칭호는 '내가 달성한 업적' 중에서만 고를 수 있다. 빈 문자열이면 칭호를 뗀다
       const tag = typeof msg.tag === 'string' && msg.tag.length <= KEY_MAX ? msg.tag : ''
-      const next = tag && p.prog.ach.includes(tag) ? tag : undefined
+      // 달 수 있는 칭호 = 달성한 업적, 또는 가상 매점에서 바꾼 칭호
+      const next = tag && ownsTitle(p.prog, tag) ? tag : undefined
       if (next !== p.prog.tag) {
         if (next) p.prog.tag = next
         else delete p.prog.tag

@@ -1,6 +1,7 @@
 /**
  * 진행도(Progress) 생성/검증/해금 판정. 순수 함수.
  */
+import { ownsTitle } from '../content/shop'
 import { ACCESSORIES, AURAS, FACES, HATS, OUTFITS, OUTFIT_COLORS, SKIN_COLORS, rankForInfluence } from '../content/core'
 import type { CosmeticDef } from '../content/types'
 import { LOOK_LEN, type Look, type Progress } from '../types'
@@ -54,7 +55,7 @@ export function normalizeProgress(raw: unknown, pid: string, now: number): Progr
   p.cultFol = num(r.cultFol, 1e9)
   p.cultInf = num(r.cultInf, 1e9)
   if (r.daily && typeof r.daily === 'object') p.daily = r.daily as Progress['daily']
-  if (typeof r.tag === 'string' && r.tag.length <= 32 && p.ach.includes(r.tag)) p.tag = r.tag
+  if (typeof r.tag === 'string' && r.tag.length <= 32 && ownsTitle(p, r.tag)) p.tag = r.tag
   if (r.heard && typeof r.heard === 'object') {
     p.heard = {}
     for (const [k, v] of Object.entries(r.heard as Record<string, unknown>)) {

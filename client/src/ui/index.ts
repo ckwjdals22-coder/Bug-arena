@@ -14,6 +14,7 @@ import { mountOffering } from './offering'
 import { mountPodium } from './podium'
 import { mountProfile } from './profile'
 import { mountSettings } from './settings'
+import { mountShop } from './shop'
 import { mountSocial } from './social'
 import { mountSystem } from './system'
 import { mountTalk } from './talk'
@@ -33,6 +34,7 @@ export function mountUi(ctx: AppContext): void {
     ['podium', mountPodium],
     ['battle', mountBattle],
     ['offering', mountOffering],
+    ['shop', mountShop],
     ['achievements', mountAchievements],
     ['certificate', mountCertificate],
     ['settings', mountSettings],

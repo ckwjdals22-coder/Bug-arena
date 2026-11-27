@@ -122,6 +122,12 @@ export interface CBattle {
 export interface COffer {
   t: 'offer'
 }
+/** 가상 매점에서 칭호 바꾸기(가상 코인만 쓴다) */
+export interface CBuy {
+  t: 'buy'
+  /** shared/content/shop.ts 의 id */
+  id: string
+}
 /** 라이벌 교주 기싸움에서 선택지 고르기 */
 export interface CDuel {
   t: 'duel'
@@ -161,6 +167,7 @@ export type ClientMsg =
   | CSermon
   | CBattle
   | COffer
+  | CBuy
   | CDuel
   | CDaily
   | CPing
@@ -391,6 +398,15 @@ export interface SOffered {
   items: [number, string][]
   coins: number
 }
+/** 가상 매점 결과. coins = 처리 뒤 남은 가상 코인 */
+export interface SShopRes {
+  t: 'shopRes'
+  ok: boolean
+  id: string
+  coins: number
+  /** 실패 사유: 없는 물건 / 천막에서 멂 / 이미 있음 / 코인 부족 */
+  why?: 'bad' | 'far' | 'owned' | 'poor'
+}
 /** 라이벌 교주 기싸움 */
 export interface SDuel {
   t: 'duel'
@@ -461,6 +477,7 @@ export type ServerMsg =
   | SSermon
   | SBattle
   | SOffered
+  | SShopRes
   | SDuel
   | SPatrol
   | SPos

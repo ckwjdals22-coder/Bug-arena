@@ -8,6 +8,7 @@
  */
 import './achievements.css'
 import { ACHIEVEMENTS, ACHIEVEMENT_BY_ID, DAILY_QUEST_BY_ID } from '../../../shared/content/achievements'
+import { SHOP_ITEMS, ownsTitle, titleNameOf } from '../../../shared/content/shop'
 import { PROPHECIES } from '../../../shared/content/prophecies'
 import type { AchievementDef } from '../../../shared/content/types'
 import type { DailyState, Progress } from '../../../shared/types'
@@ -339,8 +340,8 @@ export function mountAchievements(ctx: AppContext): void {
 
   // ───────── 탭: 칭호 ─────────
   function renderTitle(el: HTMLElement, prog: Progress): void {
-    const cur = prog.tag && prog.ach.includes(prog.tag) ? prog.tag : ''
-    const curDef = cur ? ACHIEVEMENT_BY_ID.get(cur) : undefined
+    const cur = prog.tag && ownsTitle(prog, prog.tag) ? prog.tag : ''
+    const curName = titleNameOf(cur)
     el.append(
       h(
         'div.ach-preview',
@@ -348,7 +349,7 @@ export function mountAchievements(ctx: AppContext): void {
         h(
           'div.ach-preview-tag',
           h('span.ach-preview-name', store.profile.name),
-          h('span.ach-preview-rank', curDef ? `${curDef.name} · ${rankName(prog.rank)}` : rankName(prog.rank)),
+          h('span.ach-preview-rank', curName ? `${curName} · ${rankName(prog.rank)}` : rankName(prog.rank)),
         ),
       ),
     )
@@ -370,7 +371,12 @@ export function mountAchievements(ctx: AppContext): void {
     for (const a of owned) {
       grid.append(h('button.tile.ach-title-tile', { type: 'button', class: cur === a.id ? 'on' : '', dataset: { tag: a.id }, onclick: () => pick(a.id) }, h('span.big', a.icon), a.name))
     }
+    // 가상 매점에서 바꾼 칭호도 여기서 고를 수 있다
+    const bought = SHOP_ITEMS.filter((i) => (prog.items[i.id] ?? 0) > 0)
+    for (const i of bought) {
+      grid.append(h('button.tile.ach-title-tile', { type: 'button', class: cur === i.id ? 'on' : '', dataset: { tag: i.id }, onclick: () => pick(i.id) }, h('span.big', i.icon), i.name))
+    }
     el.append(grid)
-    if (owned.length === 0) el.append(h('p.muted.small.ach-title-empty', '아직 칭호가 없습니다. 업적을 달성하면 이름표에 달 수 있어요.'))
+    if (owned.length + bought.length === 0) el.append(h('p.muted.small.ach-title-empty', '아직 칭호가 없습니다. 업적을 달성하거나 가상 매점에서 바꾸면 이름표에 달 수 있어요.'))
   }
 }

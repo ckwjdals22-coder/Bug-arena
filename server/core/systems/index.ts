@@ -9,6 +9,7 @@ import { createDuelSystem } from './duel'
 import { createOfferingSystem } from './offering'
 import { createPatrolSystem } from './patrol'
 import { createPodiumSystem } from './podium'
+import { createShopSystem } from './shop'
 
 export const DEFAULT_SYSTEMS: readonly RoomSystemFactory[] = [
   createAchievementsSystem,
@@ -16,6 +17,7 @@ export const DEFAULT_SYSTEMS: readonly RoomSystemFactory[] = [
   createPodiumSystem,
   createBattleSystem,
   createOfferingSystem,
+  createShopSystem,
   createDuelSystem,
   createPatrolSystem,
 ]

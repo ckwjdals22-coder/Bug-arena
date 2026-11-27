@@ -19,7 +19,7 @@ import type { Bus } from '../core/bus'
 import { reducedMotion } from '../core/motion'
 import type { BubbleKind, EngineApi, OverlayApi } from '../core/contracts'
 import type { EntityView, MeView, Store } from '../core/store'
-import { ACHIEVEMENT_BY_ID } from '../../../shared/content/achievements'
+import { titleNameOf } from '../../../shared/content/shop'
 import { inkOn, rankName } from './hud'
 import { h, hex } from './kit'
 
@@ -209,7 +209,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     const cult = isMe ? me.prog.cult : (pub?.cult ?? null)
     // 칭호 = 본인이 고른 업적 이름("철벽 앞의 수행자 · 길거리 전도사"). 없는 id 는 무시한다
     const tagId = isMe ? (me.prog.tag ?? '') : (pub?.tag ?? '')
-    const title = tagId ? (ACHIEVEMENT_BY_ID.get(tagId)?.name ?? '') : ''
+    const title = titleNameOf(tagId)
     const sig = `p${isMe ? 1 : 0}|${name}|${rank}|${title}|${cult ? `${cult.id}|${cult.name}|${cult.color}|${cult.emblem}|${cult.title}` : ''}`
     if (sig === tag.sig) return
     tag.sig = sig

@@ -1,0 +1,79 @@
+/* 가상 매점 */
+.shop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.shop-coins {
+  font-size: 16px;
+  font-weight: 800;
+}
+.shop-lead {
+  margin: 6px 0 10px;
+  font-size: 13.5px;
+  word-break: keep-all;
+}
+.shop-far {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 2px dashed var(--ink-soft);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  font-size: 13px;
+  word-break: keep-all;
+}
+.shop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shop-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+}
+.shop-item.has {
+  background: var(--paper-2);
+}
+.shop-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  font-size: 24px;
+}
+.shop-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.shop-name {
+  font-weight: 900;
+  word-break: keep-all;
+}
+.shop-desc {
+  word-break: keep-all;
+}
+/* .btn.sm(34px)보다 우선해서 손가락으로 누르기 좋은 크기를 지킨다 */
+.btn.shop-buy,
+.btn.shop-wear {
+  flex: 0 0 auto;
+  min-width: 92px;
+  min-height: 44px;
+  white-space: nowrap;
+}
+.btn.shop-wear.on {
+  background: var(--ink);
+  color: var(--white);
+  opacity: 1;
+}
+.shop-note {
+  margin: 14px 0 0;
+  word-break: keep-all;
+}
