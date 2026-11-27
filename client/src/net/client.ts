@@ -69,6 +69,8 @@ export function createNet(store: Store, bus: Bus): Net {
   let pingTimer: ReturnType<typeof setInterval> | undefined
   let everPlayed = false
   let lastSnapTime = 0
+  /** 최근 응답 속도 측정값(표시용 통계를 내는 데 쓴다) */
+  const rttSamples: number[] = []
   /** 서버가 마지막으로 확인해 준 내 이름(이름 변경이 거부되면 이것으로 되돌린다) */
   let confirmedName = ''
   let idleKicked = false
@@ -305,6 +307,7 @@ export function createNet(store: Store, bus: Bus): Net {
     attempts = 0
     everPlayed = true
     resumeDenied = false
+    rttSamples.length = 0
     clearTimeout(connectTimer)
     clearInterval(pingTimer)
     lastRecvAt = performance.now()
@@ -517,7 +520,13 @@ export function createNet(store: Store, bus: Bus): Net {
       case 'pong': {
         const now = Date.now()
         const rtt = Math.max(0, now - msg.c)
-        store.rtt = store.rtt ? store.rtt * 0.7 + rtt * 0.3 : rtt
+        // 표시용 응답 속도는 최근 5번의 가운데 값이다. pong 을 처리하는 시점은 화면 그리기에 밀릴 수 있어서
+        // (입장 직후 장면을 만드는 몇 초, 느린 기기의 버벅임) 한 번의 값이 실제 망 지연보다 훨씬 크게 나오곤 한다.
+        // 예전에는 첫 값을 그대로 믿어, 망이 멀쩡해도 입장 후 10여 초 동안 빨간 '느림' 점이 떴다. 값 하나만으로는 판단하지 않는다.
+        rttSamples.push(rtt)
+        if (rttSamples.length > 5) rttSamples.shift()
+        const sorted = [...rttSamples].sort((a, b) => a - b)
+        store.rtt = sorted.length >= 2 ? (sorted[Math.floor((sorted.length - 1) / 2)] ?? 0) : 0
         const offset = msg.s + rtt / 2 - now
         const diff = offset - store.clockOffset
         store.clockOffset = Math.abs(diff) > 400 ? offset : store.clockOffset + diff * 0.2
