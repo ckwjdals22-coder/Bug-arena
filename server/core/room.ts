@@ -1143,7 +1143,8 @@ export class Room implements RoomApi {
 
   /** 나가기 전에 따라오던 신도 가운데 아직 그 자리에 있고 임자가 없는 시민을 다시 따라오게 한다(남은 시간·헌납 여부는 그대로) */
   private restoreFollowers(p: PlayerState, seat: LastSeat, now: number): void {
-    let room = MAX_ENTOURAGE - this.npcs.followersOf(p.id).length
+    // 붐비는 방에서는 정원이 줄어든다(새로 합류할 때와 같은 기준)
+    let room = entourageCap(this.players.size) - this.npcs.followersOf(p.id).length
     for (const f of seat.followers) {
       if (room <= 0) break
       if (f.until <= now + 1000) continue
