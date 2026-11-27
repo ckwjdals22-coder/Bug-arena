@@ -429,6 +429,8 @@ export interface SDuel {
   /** end */
   win?: boolean
   text?: string
+  /** end: 승패 없이 접혔다(라이벌이 사라졌거나, 끊겼다 돌아왔다). 벌칙도 보상도 없다 */
+  void?: true
 }
 /** 단속반 이벤트 */
 export interface SPatrol {

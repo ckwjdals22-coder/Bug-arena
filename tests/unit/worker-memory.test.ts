@@ -84,6 +84,45 @@ describe('접속자 메모 저장(Workers)', () => {
     expect(m.cd.get('battle.ask')).toBe(now + 30_000)
   })
 
+  it('아직 못 내려보낸 진행도(60초 인계)도 함께 남고, 주인이 다르거나 기한이 지난 것은 되살리지 않는다', () => {
+    const host = new FakeHost()
+    const memA = new Map<string, PlayerMemory>()
+    const roomA = makeRoom(host, memA)
+    const id = join(host, roomA, 1, '원래이름')
+    const p = roomA.players.get(id)!
+    // 저장본이 내려가기 전에 받은 보상
+    p.prog.inf = 777
+    p.saveDirty = true
+    roomA.disconnect(1, true)
+    const now = host.now()
+    expect(memA.get(PID)?.prog?.inf).toBe(777)
+    const stored = roundTrip(serializeMemory(memA, now, () => undefined)) as Record<string, { prog?: { inf: number; pid: string }; progUntil?: number }>
+    expect(stored[PID]?.prog?.inf).toBe(777)
+    expect(stored[PID]?.progUntil).toBeGreaterThan(now)
+    // DO 가 내려갔다 깨어난 뒤: 같은 사람이 저장본 없이 들어와도 마지막 진행도를 이어받는다
+    const memB = new Map<string, PlayerMemory>()
+    restoreMemory(memB, stored, now + 5000)
+    expect(memB.get(PID)?.prog?.inf).toBe(777)
+    const hostB = new FakeHost()
+    hostB.t = now + 5000
+    const roomB = makeRoom(hostB, memB)
+    const id2 = join(hostB, roomB, 1, '원래이름')
+    expect(roomB.players.get(id2)!.prog.inf).toBe(777)
+    // 기한이 지났으면 되살리지 않는다
+    const memC = new Map<string, PlayerMemory>()
+    restoreMemory(memC, stored, (stored[PID]?.progUntil ?? 0) + 1)
+    expect(memC.get(PID)?.prog).toBeUndefined()
+    // 다른 pid 의 진행도가 끼어 있으면 버린다
+    const forged = roundTrip(stored) as Record<string, { prog?: { pid: string } }>
+    forged[PID]!.prog!.pid = 'someone-else-pid'
+    const memD = new Map<string, PlayerMemory>()
+    restoreMemory(memD, forged, now + 5000)
+    expect(memD.get(PID)?.prog).toBeUndefined()
+    // 기한이 지난 인계는 저장하지도 않는다
+    const late = serializeMemory(memA, now + 61_000, () => undefined) as Record<string, { prog?: unknown }>
+    expect(late[PID]?.prog).toBeUndefined()
+  })
+
   it('만료된 메모는 저장하지도 되살리지도 않고, 이미 있는 pid 는 덮어쓰지 않는다', () => {
     const now = 1_000_000
     const mem = new Map<string, PlayerMemory>([

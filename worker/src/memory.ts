@@ -10,6 +10,7 @@
  * 이 파일은 Workers 전용 API 를 쓰지 않는다(루트의 vitest 로 단위 테스트한다).
  */
 import type { LastSeat, PlayerMemory } from '../../server/core/api'
+import type { Progress } from '../../shared/types'
 
 /** DO storage 키 */
 export const MEMORY_KEY = 'playerMemory.v1'
@@ -29,6 +30,9 @@ interface StoredMemory {
   lockedName: string
   keepUntil: number
   last?: LastSeat
+  /** 나가는 순간 아직 클라이언트에 못 내려보낸 진행도(60초 인계). DO 가 그사이 내려가도 마지막 보상을 잃지 않게 같이 남긴다 */
+  prog?: Progress
+  progUntil?: number
 }
 
 export type StoredMemoryMap = Record<string, StoredMemory>
@@ -70,6 +74,10 @@ export function serializeMemory(map: Map<string, PlayerMemory>, now: number, liv
     if (keep <= now) continue
     const row: StoredMemory = { cd, blocked: [...mem.blocked], mutedUntil, nameLockUntil, lockedName, keepUntil: keep }
     if (mem.last) row.last = mem.last
+    if (mem.prog && (mem.progUntil ?? 0) > now) {
+      row.prog = mem.prog
+      row.progUntil = mem.progUntil
+    }
     rows.push([pid, row])
   }
   // 오래 남을 것부터: 상한에 걸리면 곧 만료될 메모를 버린다
@@ -123,6 +131,12 @@ export function restoreMemory(map: Map<string, PlayerMemory>, stored: unknown, n
       keepUntil,
     }
     if (r.last && typeof r.last === 'object') mem.last = r.last as LastSeat
+    // 인계할 진행도: 주인이 맞고 아직 기한 안일 때만(코어가 꺼내 쓸 때 normalizeProgress 로 값 범위를 다시 거른다)
+    const progUntil = num(r.progUntil)
+    if (progUntil > now && r.prog && typeof r.prog === 'object' && (r.prog as { pid?: unknown }).pid === pid) {
+      mem.prog = r.prog
+      mem.progUntil = progUntil
+    }
     map.set(pid, mem)
     n++
   }

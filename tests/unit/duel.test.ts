@@ -9,6 +9,7 @@ import {
   FOL_DUEL_WIN,
   INF_DUEL_LOSE,
   INF_DUEL_WIN,
+  DUEL_VOID_DROPPED,
   POACHED_LINE,
   createDuelSystem,
 } from '../../server/core/systems/duel'
@@ -220,8 +221,53 @@ describe('기싸움: 결과', () => {
     const end = t.host.of(a.conn, 'duel').filter((m) => m.ph === 'end')
     expect(end).toHaveLength(1)
     expect(end[0]!.win).toBe(false)
+    expect(end[0]!.void).toBe(true)
     expect(t.sim.called('release:')).toEqual([])
     expect(t.stat(a.id, STAT.rivalWins)).toBe(0)
+  })
+
+  it('끊긴 채 시간이 다 돼도 패배로 치지 않고, 이어 붙으면 벌칙 없이 무효로 접힌다', () => {
+    const t = setup({ systems: [createDuelSystem] })
+    const a = t.join({ pid: 'duel-dropped-aaaa' })
+    follow(t, 6, a.id, t.host.t - 1000)
+    startDuel(t, a, 3)
+    const inf = t.player(a.id).prog.inf
+    // 선택지를 보던 중 망이 끊겼다
+    t.room.disconnect(a.conn, false)
+    t.advance(DUEL_MS + 1500)
+    expect(t.sim.called('release:')).toEqual([])
+    expect(t.room.players.has(a.id)).toBe(true)
+    // 같은 사람이 이어 붙는다: 새 화면은 선택지를 본 적이 없다 → 무효 안내만 받는다
+    const conn = t.nextConn()
+    t.room.connect(conn)
+    t.send(conn, { t: 'hello', v: 1, pid: 'duel-dropped-aaaa', name: '돌아온사람', look: [0, 0, 0, 0, 0, 0, 0], save: null })
+    expect(t.host.of(conn, 'welcome')[0]!.id).toBe(a.id)
+    expect(t.host.of(conn, 'duel')).toEqual([{ t: 'duel', ph: 'end', n: 3, win: false, void: true, text: DUEL_VOID_DROPPED }])
+    expect(t.sim.called('release:')).toEqual([])
+    expect(t.npc(6).owner).toBe(a.id)
+    expect(t.npc(3).talker).toBe(0)
+    expect(t.player(a.id).prog.inf).toBe(inf)
+    // 뒤늦게 답을 보내도 아무 일도 없다
+    t.send(conn, { t: 'duel', c: 0 })
+    expect(t.stat(a.id, STAT.rivalWins)).toBe(0)
+    t.advance(DUEL_MS)
+    expect(t.host.of(conn, 'duel')).toHaveLength(1)
+    expect(t.host.errors()).toEqual([])
+  })
+
+  it('끊긴 채 끝내 돌아오지 않으면 기싸움 기록은 퇴장과 함께 정리된다', () => {
+    const t = setup({ systems: [createDuelSystem] })
+    const a = t.join({ pid: 'duel-dropped-bbbb' })
+    const b = t.join()
+    startDuel(t, a, 3)
+    t.room.disconnect(a.conn, false)
+    for (let i = 0; i < 30; i++) {
+      t.send(b.conn, { t: 'ping', c: 1 })
+      t.advance(1000)
+    }
+    expect(t.room.players.has(a.id)).toBe(false)
+    expect(t.npc(3).talker).toBe(0)
+    expect(t.host.errors()).toEqual([])
   })
 
   it('기싸움 중 나가도 예외 없이 정리된다', () => {

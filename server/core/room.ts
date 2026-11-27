@@ -72,6 +72,7 @@ import { type PitchResult, pickLines, resolvePitch } from '../../shared/rules/pi
 import { newProgress, normalizeProgress, sanitizeLook } from '../../shared/rules/progress'
 import type { FeedKind, Look, PitchOutcome, PlayerPublic, Progress, RoomInfo, SignedSave } from '../../shared/types'
 import { WORLD, type WorldDef, resolveCollision } from '../../shared/world'
+import { DETACHED_CONN } from './api'
 import type {
   ConnId,
   Grant,
@@ -293,9 +294,6 @@ function sameLook(a: Look, b: Look): boolean {
 }
 
 /** 연결 하나의 서버 쪽 상태(PlayerState 에 넣기엔 Room 내부 사정인 것들) */
-/** 연결이 떨어진 채 방에 남아 있는 사람의 conn 값(어떤 실제 연결과도 겹치지 않는다 → 보내는 것은 조용히 버려진다) */
-const DETACHED_CONN = -1
-
 interface Session {
   conn: ConnId
   connectedAt: number
@@ -718,7 +716,13 @@ export class Room implements RoomApi {
     // 신도가 흩어지기 전에: 서 있던 자리와 따라오던 신도를 적어 둔다(곧 돌아오면 되찾는다)
     let seat: LastSeat | undefined
     try {
-      const followers = this.npcs.followersOf(p.id).map((n) => ({ id: n.id, key: this.npcMemoKey(n), until: n.until, offered: n.offered }))
+      // 단속반에게 쫓기는 중처럼 '나갔다 들어오면 빠져나갈 수 있는' 순간에는 신도를 남기지 않는다(자리만 기억)
+      const keep = this.systems.every((sys) => !sys.keepsFollowers || sys.keepsFollowers(p) !== false)
+      const followers = keep
+        ? this.npcs
+            .followersOf(p.id)
+            .map((n) => ({ id: n.id, key: this.npcMemoKey(n), until: n.until, offered: n.offered, since: n.followSince }))
+        : []
       if (followers.length > 0 || now - p.joinedAt >= REJOIN_MIN_SESSION_MS) seat = { room: this.id, x: p.x, z: p.z, yaw: p.yaw, at: now, followers }
     } catch (err) {
       this.host.log('error', `[방 ${this.id}] 자리 기억 중 예외`, err)
@@ -1089,7 +1093,17 @@ export class Room implements RoomApi {
     p.lastMsgAt = now
     p.lastMoveAt = now
     p.dirty = true
-    this.sendWelcome(s, p, now)
+    if (!this.sendWelcome(s, p, now)) return
+    // 새 화면은 끊기기 전의 안내를 모른다: 진행 중이던 일(기싸움·단속 추격 등)을 각 시스템이 다시 알려 주거나 접는다
+    for (const sys of this.systems) {
+      if (!sys.onResume) continue
+      try {
+        sys.onResume(p)
+      } catch (err) {
+        this.hookError(sys, 'onResume', err)
+      }
+      if (this.players.get(p.id) !== p) return
+    }
   }
 
   /** welcome 을 만들어 보낸다. 훅이 그 사람을 내보냈다면 false */
@@ -1154,6 +1168,8 @@ export class Room implements RoomApi {
       this.safeNpc('startFollow', () => {
         this.npcs.startFollow(npc, p.id, f.until, now)
         npc.offered = f.offered
+        // 따라나선 시각도 그대로: 나갔다 들어오는 것으로 의리 기간(빼앗기지 않는 시간)을 새로 받을 수 없다
+        if (typeof f.since === 'number' && f.since > 0 && f.since <= now) npc.followSince = f.since
       })
       room--
     }

@@ -140,7 +140,8 @@ export function mountEvents(ctx: AppContext): void {
       }
       case 'chase':
         chased = 'chase'
-        chaseEndsAt = performance.now() + CHASE_MS
+        // ms: 끊겼다 돌아온 사람에게 다시 알려 줄 때는 남은 추격 시간이 온다
+        chaseEndsAt = performance.now() + (typeof m.ms === 'number' && m.ms > 0 ? Math.min(m.ms, CHASE_MS) : CHASE_MS)
         setChip('chase', '🚨 단속반 추격 중 — 도망가세요!')
         tickChip()
         window.clearInterval(chipTimer)
@@ -247,16 +248,24 @@ export function mountEvents(ctx: AppContext): void {
   function endDuel(m: SDuel): void {
     closeDuel()
     const win = m.win === true
+    // 무효(라이벌이 사라졌거나 끊겼다 돌아왔다): 진 것이 아니므로 패배 화면·효과음·자막을 쓰지 않는다
+    const voided = m.void === true && !win
     banner.className = `ev-duel-result ${win ? 'win' : 'lose'}`
     clear(banner)
     banner.append(
-      h('span.ev-duel-result-icon', win ? '🏆' : '😵'),
+      h('span.ev-duel-result-icon', win ? '🏆' : voided ? '💨' : '😵'),
       h(
         'span.ev-duel-result-text',
-        h('b.ev-duel-result-title', win ? '기싸움 승리! 신도 +2' : '기싸움 패배…'),
+        h('b.ev-duel-result-title', win ? '기싸움 승리! 신도 +2' : voided ? '기싸움 무효' : '기싸움 패배…'),
         h('span.ev-duel-result-sub', m.text ?? ''),
       ),
     )
+    window.clearTimeout(bannerTimer)
+    bannerTimer = window.setTimeout(() => banner.classList.add('hidden'), 3200)
+    if (voided) {
+      playSfx(ctx, 'pop')
+      return
+    }
     playSfx(ctx, win ? 'win' : 'lose')
     if (win) {
       const pos = npcPos(m.n)
@@ -264,8 +273,6 @@ export function mountEvents(ctx: AppContext): void {
     }
     captions.muteFollowerLeft(3000)
     captions.show(win ? 'duelWin' : 'duelLose')
-    window.clearTimeout(bannerTimer)
-    bannerTimer = window.setTimeout(() => banner.classList.add('hidden'), 3200)
   }
 
   bus.onMsg('duel', (m) => {

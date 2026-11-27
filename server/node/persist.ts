@@ -107,7 +107,7 @@ export function acquireDataLock(dir: string, now: () => number = Date.now): Data
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       fs.writeFileSync(file, body, { flag: 'wx', mode: 0o644 })
-      return makeLock(file, me)
+      return makeLock(file, me, body)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
         throw new PersistFatal(`잠금 파일 ${file} 을 만들 수 없습니다 — ${errText(err)}`)
@@ -141,12 +141,42 @@ export function acquireDataLock(dir: string, now: () => number = Date.now): Data
   throw new PersistFatal(`잠금 파일 ${file} 을 차지하지 못했습니다(동시에 다른 서버가 뜨는 중일 수 있습니다)`)
 }
 
-function makeLock(file: string, me: LockInfo): DataLock {
+function makeLock(file: string, me: LockInfo, body: string): DataLock {
   let released = false
+  const mine = (cur: Partial<LockInfo>): boolean => cur.pid === me.pid && cur.host === me.host && cur.startedAt === me.startedAt
   return {
     file,
     refresh() {
       if (released) return
+      let text: string
+      try {
+        text = fs.readFileSync(file, 'utf8')
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        // 잠금 파일이 사라졌다(디스크가 잠깐 빠졌다 돌아왔거나 누가 지웠다): 다시 만든다.
+        // 예전에는 여기서 영영 실패해 디스크가 돌아온 뒤에도 /healthz 가 503 에 머물렀다.
+        // wx: 그 찰나에 다른 서버가 차지했다면 덮어쓰지 않고 실패한다(다음 확인에서 '남의 잠금'으로 드러난다)
+        fs.writeFileSync(file, body, { flag: 'wx', mode: 0o644 })
+        return
+      }
+      let cur: Partial<LockInfo> | null = null
+      try {
+        cur = JSON.parse(text) as Partial<LockInfo>
+      } catch {
+        cur = null
+      }
+      if (cur === null || typeof cur !== 'object') {
+        // 깨진 잠금(쓰다 만 파일): 내 것으로 다시 쓴다
+        fs.writeFileSync(file, body, { mode: 0o644 })
+        return
+      }
+      if (!mine(cur)) {
+        // 내 잠금이 사라진 사이 다른 서버가 이 DATA_DIR 을 차지했다: 남의 잠금을 갱신해 주면 안 된다
+        throw new Error(
+          `DATA_DIR 잠금(${file})을 다른 서버 프로세스가 차지했습니다(pid ${cur.pid ?? '?'}, ${cur.host ?? '?'}). ` +
+            '한 DATA_DIR 에는 서버 하나만 띄우세요',
+        )
+      }
       const t = new Date()
       fs.utimesSync(file, t, t)
     },
@@ -155,7 +185,7 @@ function makeLock(file: string, me: LockInfo): DataLock {
       released = true
       try {
         const cur = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<LockInfo>
-        if (cur.pid === me.pid && cur.host === me.host && cur.startedAt === me.startedAt) fs.unlinkSync(file)
+        if (mine(cur)) fs.unlinkSync(file)
       } catch {
         /* 이미 없다 */
       }

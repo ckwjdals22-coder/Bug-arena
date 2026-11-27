@@ -259,6 +259,94 @@ describe('단속반: 발각과 추격', () => {
     }
   })
 
+  it('쫓기는 중에 나갔다 바로 들어와도 신도를 되찾지 못한다(자리 기억이 탈출구가 되지 않는다)', () => {
+    const hello = (t: T, pid: string) => {
+      const conn = t.nextConn()
+      t.room.connect(conn)
+      t.send(conn, { t: 'hello', v: 1, pid, name: '돌아온사람', look: [0, 0, 0, 0, 0, 0, 0], save: null })
+      return { conn, id: t.host.of(conn, 'welcome')[0]!.id }
+    }
+    // 비교: 쫓기지 않을 때 나갔다 들어오면 신도를 되찾는다
+    {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-aaaaaaaa' })
+      t.room.npcs.startFollow(t.npc(1), a.id, t.host.t + 90_000, t.host.t)
+      t.room.npcs.startFollow(t.npc(2), a.id, t.host.t + 90_000, t.host.t)
+      t.room.disconnect(a.conn)
+      const a2 = hello(t, 'runner-aaaaaaaa')
+      expect(t.room.npcs.followersOf(a2.id)).toHaveLength(2)
+    }
+    for (const wait of [100, PATROL_ALERT_MS + 300]) {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-aaaaaaaa' })
+      t.room.npcs.startFollow(t.npc(1), a.id, t.host.t + 90_000, t.host.t)
+      t.room.npcs.startFollow(t.npc(2), a.id, t.host.t + 90_000, t.host.t)
+      pitchNear(t, a)
+      t.advance(wait)
+      t.room.disconnect(a.conn)
+      const a2 = hello(t, 'runner-aaaaaaaa')
+      expect(t.room.npcs.followersOf(a2.id)).toHaveLength(0)
+      expect(t.host.errors()).toEqual([])
+    }
+  })
+
+  it('쫓기던 중에 끊겼다 이어 붙으면 지금 단계(경고·추격·훈방)를 다시 알려 준다', () => {
+    const reopen = (t: T, pid: string) => {
+      const conn = t.nextConn()
+      t.room.connect(conn)
+      t.send(conn, { t: 'hello', v: 1, pid, name: '돌아온사람', look: [0, 0, 0, 0, 0, 0, 0], save: null })
+      return conn
+    }
+    // 추격 중
+    {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-bbbbbbbb' })
+      pitchNear(t, a)
+      t.advance(PATROL_ALERT_MS + 200)
+      keepAway(t, a.id, 2000)
+      t.room.disconnect(a.conn, false)
+      const conn = reopen(t, 'runner-bbbbbbbb')
+      const got = t.host.of(conn, 'patrol')
+      expect(got).toHaveLength(1)
+      expect(got[0]).toMatchObject({ ph: 'chase', n: patrolOf(t).id, p: a.id })
+      expect(got[0]!.ms).toBeGreaterThan(PATROL_CHASE_MS - 3000)
+      expect(got[0]!.ms).toBeLessThan(PATROL_CHASE_MS - 1500)
+    }
+    // 호루라기 중
+    {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-bbbbbbbb' })
+      pitchNear(t, a)
+      t.room.disconnect(a.conn, false)
+      const conn = reopen(t, 'runner-bbbbbbbb')
+      expect(phases(t, conn)).toEqual(['alert'])
+    }
+    // 끊긴 사이에 잡혔다: 얼어붙은 남은 시간과 함께 알려 준다
+    {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-bbbbbbbb' })
+      pitchNear(t, a)
+      t.room.disconnect(a.conn, false)
+      const p = t.player(a.id)
+      for (let i = 0; i < 80 && p.stunUntil <= t.host.t; i++) t.advance(100)
+      expect(p.stunUntil).toBeGreaterThan(t.host.t)
+      const conn = reopen(t, 'runner-bbbbbbbb')
+      const got = t.host.of(conn, 'patrol')
+      expect(got).toHaveLength(1)
+      expect(got[0]).toMatchObject({ ph: 'caught', p: a.id })
+      expect(got[0]!.ms).toBeGreaterThan(0)
+      expect(got[0]!.ms).toBeLessThanOrEqual(PATROL_STUN_MS)
+    }
+    // 아무 일도 없을 때는 아무것도 보내지 않는다
+    {
+      const t = setup({ systems: [createPatrolSystem] })
+      const a = t.join({ pid: 'runner-bbbbbbbb' })
+      t.room.disconnect(a.conn, false)
+      const conn = reopen(t, 'runner-bbbbbbbb')
+      expect(t.host.of(conn, 'patrol')).toEqual([])
+    }
+  })
+
   it('한 번에 한 명만 쫓고, 추격이 끝난 뒤 90초 동안은 아무도 쫓지 않는다', () => {
     const t = setup({ systems: [createPatrolSystem] })
     const a = t.join()

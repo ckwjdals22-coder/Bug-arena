@@ -231,7 +231,9 @@ export class RoomDO extends DurableObject<Env> {
     this.room?.disconnect(id, clean)
     this.afterEvent()
     if (this.conns.size === 0) {
-      this.stopLoop()
+      // 망이 끊겨 잠깐 서 있는 사람이 남아 있으면 틱을 계속 돌린다: 틱이 멈추면 그 사람의 기다리는 시간이 끝나지 않아
+      // (다음 사람이 올 때까지) 방에 유령으로 남고, 자리 기억·진행도 인계도 적히지 않는다
+      if (!this.someoneInRoom()) this.stopLoop()
       // 아무도 없으면 곧 DO 가 내려갈 수 있다 → 메모를 지금 남긴다
       this.saveMemory(true)
     }
@@ -357,10 +359,15 @@ export class RoomDO extends DurableObject<Env> {
     this.timer = null
   }
 
+  /** 연결이 하나도 없어도 방에 사람이 남아 있는가(끊긴 채 재접속을 기다리는 사람) */
+  private someoneInRoom(): boolean {
+    return (this.room?.players.size ?? 0) > 0
+  }
+
   private readonly onTimer = (): void => {
     this.timer = null
     const room = this.room
-    if (!room || this.conns.size === 0) return
+    if (!room || (this.conns.size === 0 && !this.someoneInRoom())) return
     const now = Date.now()
     let steps = 0
     while (now >= this.nextTickAt && steps < MAX_CATCHUP_TICKS) {
@@ -378,7 +385,11 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (now >= this.nextTickAt) this.nextTickAt = now + TICK_MS
     this.afterEvent()
-    if (this.conns.size === 0) return
+    if (this.conns.size === 0 && !this.someoneInRoom()) {
+      // 기다리던 사람까지 모두 나갔다(자리 기억과 진행도 인계가 방금 메모에 적혔다) → 지금 남기고 멈춘다
+      this.saveMemory(true)
+      return
+    }
     this.timer = setTimeout(this.onTimer, Math.max(1, this.nextTickAt - Date.now()))
   }
 

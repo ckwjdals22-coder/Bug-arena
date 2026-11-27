@@ -219,6 +219,23 @@ describe('자리 기억: 나갔다가 곧 돌아오면 서 있던 자리와 신�
     ).toEqual([1, 2])
   })
 
+  it('되찾은 신도의 따라나선 시각은 그대로다(나갔다 들어오기로 의리 기간을 새로 받지 못한다)', () => {
+    const t = setup()
+    const { a } = settled(t)
+    const since1 = t.npc(1).followSince
+    const since2 = t.npc(2).followSince
+    expect(since1).toBeGreaterThan(0)
+    expect(since2).toBeGreaterThan(since1)
+    t.advance(30_000)
+    t.room.disconnect(a.conn)
+    expect(t.npc(1).owner).toBe(0)
+    t.advance(3000)
+    const a2 = reopen(t, 'away-aaaaaaaaaa')
+    expect(t.npc(1).owner).toBe(a2.id)
+    expect(t.npc(1).followSince).toBe(since1)
+    expect(t.npc(2).followSince).toBe(since2)
+  })
+
   it('그사이 다른 사람이 데려간 시민, 바뀐 시민, 시간이 다 된 신도는 되찾지 않는다', () => {
     const t = setup()
     const { a } = settled(t)

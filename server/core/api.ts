@@ -283,7 +283,20 @@ export interface RoomSystem {
   onStat?(p: PlayerState, stat: string, value: number): void
   /** welcome 메시지를 보내기 직전(상태 채워 넣기) */
   onWelcome?(p: PlayerState, w: SWelcome): void
+  /**
+   * 끊겼던 사람이 같은 자리로 이어 붙은 직후(welcome 을 보낸 뒤). onJoin 은 다시 불리지 않는다.
+   * 새 화면은 끊기기 전에 받은 안내를 모르므로, 진행 중이던 일을 다시 알려 주거나 접는 데 쓴다.
+   */
+  onResume?(p: PlayerState): void
+  /**
+   * 나가는 사람의 '자리 기억'에 따라오던 신도까지 남겨도 되는가(곧 돌아오면 되찾는다).
+   * 하나라도 false 를 돌려주면 자리만 기억하고 신도는 남기지 않는다(예: 단속반에게 쫓기는 중에 나갔다 들어와 빠져나가기).
+   */
+  keepsFollowers?(p: PlayerState): boolean
 }
+
+/** 연결이 끊긴 채 방에 잠깐 서 있는 사람의 conn 값(보내는 메시지는 버려진다) */
+export const DETACHED_CONN = -1
 
 export type RoomSystemFactory = () => RoomSystem
 
@@ -319,7 +332,8 @@ export interface LastSeat {
   z: number
   yaw: number
   at: number
-  followers: { id: number; key: string; until: number; offered: boolean }[]
+  /** since: 따라나선 시각(의리 기간·오래된 순서가 나갔다 들어와도 이어지게). 예전 기록에는 없을 수 있다 */
+  followers: { id: number; key: string; until: number; offered: boolean; since?: number }[]
 }
 
 export interface RoomOptions {

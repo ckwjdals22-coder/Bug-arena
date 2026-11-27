@@ -223,6 +223,38 @@ describe('DATA_DIR 점검과 잠금', () => {
     b.release()
     expect(fs.existsSync(b.file)).toBe(false)
   })
+  it('refresh: 잠금 파일이 사라졌다 돌아와도 스스로 되살리고, 남의 잠금은 갱신하지 않는다', () => {
+    const d = tmpDir()
+    const lock = acquireDataLock(d)
+    const body = fs.readFileSync(lock.file, 'utf8')
+    // 평소: 갱신 시각만 바뀐다
+    const old = new Date(Date.now() - 60_000)
+    fs.utimesSync(lock.file, old, old)
+    lock.refresh()
+    expect(Date.now() - fs.statSync(lock.file).mtimeMs).toBeLessThan(5000)
+    // 디스크가 잠깐 빠졌다 돌아온 상황: 파일이 없다 → 같은 내용으로 다시 만든다(예전에는 영영 실패했다)
+    fs.unlinkSync(lock.file)
+    lock.refresh()
+    expect(fs.readFileSync(lock.file, 'utf8')).toBe(body)
+    lock.refresh()
+    // 깨진 잠금(쓰다 만 파일)도 내 것으로 다시 쓴다
+    fs.writeFileSync(lock.file, '{')
+    lock.refresh()
+    expect(fs.readFileSync(lock.file, 'utf8')).toBe(body)
+    // 그사이 다른 서버가 차지했다면: 계속 실패로 알리고, 그 잠금의 갱신 시각은 건드리지 않는다
+    const info = JSON.parse(body)
+    fs.writeFileSync(lock.file, JSON.stringify({ ...info, pid: process.ppid, startedAt: info.startedAt + 1 }))
+    fs.utimesSync(lock.file, old, old)
+    expect(() => lock.refresh()).toThrow(/다른 서버 프로세스/)
+    expect(() => lock.refresh()).toThrow(/다른 서버 프로세스/)
+    expect(Date.now() - fs.statSync(lock.file).mtimeMs).toBeGreaterThan(30_000)
+    // 풀고 나면 refresh 는 아무것도 하지 않는다
+    fs.unlinkSync(lock.file)
+    lock.release()
+    lock.refresh()
+    expect(fs.existsSync(lock.file)).toBe(false)
+  })
+
   it('죽은 pid·내 pid(컨테이너 재시작)·오래 갱신 안 된 잠금은 남은 것으로 보고 차지한다', () => {
     const d = tmpDir()
     const file = path.join(d, 'server.lock')

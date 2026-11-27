@@ -12,7 +12,7 @@ import { FOLLOW_DURATION_MS, NPC_REJECT_MEMORY_MS, PITCH_COOLDOWN_MS, entourageC
 import { STAT } from '../../../shared/content/core'
 import { DUELS } from '../../../shared/content/misc'
 import type { DuelDef } from '../../../shared/content/types'
-import type { NpcState, PlayerState, RoomApi, RoomSystem } from '../api'
+import { DETACHED_CONN, type NpcState, type PlayerState, type RoomApi, type RoomSystem } from '../api'
 
 /** 고를 시간 */
 export const DUEL_MS = 12_000
@@ -24,6 +24,8 @@ export const INF_DUEL_WIN = 20
 export const FOL_DUEL_WIN = 2
 export const INF_DUEL_LOSE = 3
 export const POACHED_LINE = '저쪽 교주님이 더 그럴듯해서요…'
+export const DUEL_VOID_GONE = '라이벌이 홀연히 사라졌습니다. 기싸움 무효.'
+export const DUEL_VOID_DROPPED = '접속이 잠깐 끊긴 사이 라이벌이 가 버렸습니다. 기싸움 무효.'
 
 const KEY = 'duel'
 const LAST_KEY = 'duelLast'
@@ -56,7 +58,7 @@ export function createDuelSystem(): RoomSystem {
     const present = !!rival && rival.talker === p.id
     p.cd.set('pitch', now + PITCH_COOLDOWN_MS)
     if (!present || !rival) {
-      room.send(p, { t: 'duel', ph: 'end', n: d.n, win: false, text: '라이벌이 홀연히 사라졌습니다. 기싸움 무효.' })
+      room.send(p, { t: 'duel', ph: 'end', n: d.n, win: false, void: true, text: DUEL_VOID_GONE })
       return
     }
     if (win) {
@@ -101,6 +103,18 @@ export function createDuelSystem(): RoomSystem {
     room.send(p, { t: 'duel', ph: 'end', n: rival.id, win: false, text: def.loseText })
   }
 
+  /** 벌칙도 보상도 없이 접는다(끊겼다 돌아온 사람: 선택지를 본 적 없는 화면에서 신도를 잃으면 안 된다) */
+  function cancel(p: PlayerState, d: Duel, text: string): void {
+    delete p.ext[KEY]
+    const rival = room.npcs.get(d.n)
+    if (rival && rival.talker === p.id) {
+      room.npcs.endListen(rival)
+      if (rival.talker === p.id) rival.talker = 0
+    }
+    p.cd.set('pitch', room.now() + PITCH_COOLDOWN_MS)
+    room.send(p, { t: 'duel', ph: 'end', n: d.n, win: false, void: true, text })
+  }
+
   return {
     name: 'duel',
     handles: ['duel'],
@@ -143,8 +157,15 @@ export function createDuelSystem(): RoomSystem {
     onTick(now) {
       for (const p of room.players.values()) {
         const d = duelOf(p)
-        if (d && now > d.until + DUEL_GRACE_MS) finish(p, d, false)
+        if (!d || now <= d.until + DUEL_GRACE_MS) continue
+        // 연결이 끊긴 채 서 있는 사람은 고를 수가 없었다: 시간 초과 패배로 치지 않고 둔다(돌아오면 onResume 이 무효로 접는다)
+        if (p.conn === DETACHED_CONN) continue
+        finish(p, d, false)
       }
+    },
+    onResume(p) {
+      const d = duelOf(p)
+      if (d) cancel(p, d, DUEL_VOID_DROPPED)
     },
     onLeave(p) {
       // 코어가 NPC 쪽 정리(onPlayerLeave)를 이미 했다. 기싸움 기록만 지운다

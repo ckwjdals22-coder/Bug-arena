@@ -321,6 +321,24 @@ export function createPatrolSystem(): RoomSystem {
       room.broadcast({ t: 'patrol', ph: 'alert', n: n.id, p: p.id })
       room.npcSay([[n.id, PATROL_LINES.alert]])
     },
+    keepsFollowers(p) {
+      // 들킨 뒤(호루라기·추격 중)에 나가면 신도는 자리 기억에 남기지 않는다.
+      // 남겨 두면 '나갔다 바로 들어오기'가 도망가기보다 확실한 탈출법이 된다(신도 전원을 그대로 되찾는다).
+      return !(p.id === target && (phase === 'alert' || phase === 'chase'))
+    },
+    onResume(p) {
+      const n = npc
+      if (!n) return
+      const now = room.now()
+      // 끊긴 사이에 벌어진 일을 새 화면에 다시 알려 준다(모르면 도망가기 버튼도, 얼어붙은 이유도 보이지 않는다)
+      if (p.id === target && phase === 'alert') {
+        room.send(p, { t: 'patrol', ph: 'alert', n: n.id, p: p.id })
+      } else if (p.id === target && phase === 'chase') {
+        room.send(p, { t: 'patrol', ph: 'chase', n: n.id, p: p.id, ms: Math.max(0, PATROL_CHASE_MS - (now - chaseStart)) })
+      } else if (p.stunUntil > now) {
+        room.send(p, { t: 'patrol', ph: 'caught', n: n.id, p: p.id, ms: p.stunUntil - now })
+      }
+    },
     onLeave(p) {
       const n = npc
       if (!n || p.id !== target || (phase !== 'alert' && phase !== 'chase')) return
