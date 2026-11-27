@@ -60,7 +60,7 @@ import {
   encodeSnapshot,
   parseJsonMsg,
 } from '../../shared/protocol'
-import { type Rnd, mulberry32, pick } from '../../shared/rng'
+import { hashString, mulberry32, pick, type Rnd } from '../../shared/rng'
 import { checkNickname, cleanText } from '../../shared/rules/moderation'
 import { type PitchResult, pickLines, resolvePitch } from '../../shared/rules/pitch'
 import { newProgress, normalizeProgress, sanitizeLook } from '../../shared/rules/progress'
@@ -702,6 +702,30 @@ export class Room implements RoomApi {
     else mem.keepUntil = keep
   }
 
+  /**
+   * 시민이 "방금 거절했다 / 말 걸다 말았다"를 기억하게 한다. 시민 쪽 기억은 방 안 번호(재접속하면 바뀐다)로 적히므로,
+   * 같은 내용을 접속자 메모(쿨타임 표)에도 남겨 재접속으로 지우고 같은 시민에게 다시 뽑기를 못 하게 한다.
+   */
+  private rememberNpc(p: PlayerState, npc: NpcState, until: number): void {
+    this.npcs.remember(npc, p.id, until)
+    p.cd.set(this.npcMemoKey(npc), until)
+  }
+
+  /** 방 · 자리 번호 · 그 자리에 지금 있는 시민(이름)까지 넣는다: 시민이 교체되면 새 시민에게는 적용되지 않는다 */
+  private npcMemoKey(npc: NpcState): string {
+    return `npc.${this.id}.${npc.id}.${hashString(npc.name)}`
+  }
+
+  /** 다시 들어온 사람의 새 번호로 시민들의 기억을 되살린다 */
+  private restoreNpcMemo(p: PlayerState, now: number): void {
+    const prefix = `npc.${this.id}.`
+    for (const [key, until] of p.cd) {
+      if (until <= now || !key.startsWith(prefix)) continue
+      const npc = this.npcs.get(Number(key.slice(prefix.length).split('.')[0]))
+      if (npc && this.npcMemoKey(npc) === key) this.safeNpc('remember', () => this.npcs.remember(npc, p.id, until))
+    }
+  }
+
   /** 기한이 지난 메모를 버린다. hard = 상한에 닿았을 때: 접속 중이 아닌 오래된 것부터 더 버린다 */
   private sweepMemory(now: number, hard = false): void {
     for (const [pid, mem] of this.memory) {
@@ -921,6 +945,7 @@ export class Room implements RoomApi {
     s.budgetAt = now
     this.players.set(p.id, p)
     this.byPid.set(pid, p)
+    this.restoreNpcMemo(p, now)
 
     const others: PlayerPublic[] = []
     for (const o of this.players.values()) if (o !== p) others.push(this.playerPublic(o))
@@ -1249,7 +1274,7 @@ export class Room implements RoomApi {
       if (why === 'cancel' || why === 'timeout') {
         const until = this.host.now() + TALK_ABANDON_MEMORY_MS
         // 이미 더 오래 기억하고 있다면(방금 거절한 경우) 줄이지 않는다
-        if ((npc.memo.get(p.id) ?? 0) < until) this.safeNpc('remember', () => this.npcs.remember(npc, p.id, until))
+        if ((npc.memo.get(p.id) ?? 0) < until) this.safeNpc('remember', () => this.rememberNpc(p, npc, until))
       }
     }
     this.send(p, { t: 'talkEnd', n: talk.npc, why })
@@ -1427,7 +1452,7 @@ export class Room implements RoomApi {
       if (npc.arch.special === 'animal') this.bump(p, STAT.catJoins)
     } else {
       // no / ignore / flee / (가로채는 시스템이 없는) rival → 거절
-      this.npcs.remember(npc, p.id, now + NPC_REJECT_MEMORY_MS)
+      this.rememberNpc(p, npc, now + NPC_REJECT_MEMORY_MS)
       if (npc.owner !== 0) {
         // 남의 신도를 빼앗으려다 실패: 그 신도는 원래 주인에게 돌아간다(도망/배회로 보내면 주인이 신도를 잃는다)
         this.npcs.endListen(npc)

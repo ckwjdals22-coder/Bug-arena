@@ -9,6 +9,8 @@ import {
   INF_BATTLE_WIN,
   INVITE_COOLDOWN_MS,
   INVITE_GLOBAL_COOLDOWN_MS,
+  NPC_REJECT_MEMORY_MS,
+  PITCH_COOLDOWN_MS,
   PROTOCOL_VERSION,
 } from '../../shared/constants'
 import { STAT } from '../../shared/content/core'
@@ -24,7 +26,7 @@ import {
   REPORT_MIN_SESSION_MS,
   createCultSystem,
 } from '../../server/core/systems/cult'
-import { FakeHost, R_JOIN, TEST_WORLD, setup } from './helpers'
+import { FakeHost, R_JOIN, R_NO, TEST_WORLD, setup } from './helpers'
 
 type T = ReturnType<typeof setup>
 type Who = { conn: number; id: number }
@@ -392,6 +394,50 @@ describe('재접속으로 제재·거절·차단을 지울 수 없다', () => {
     t.send(blocked.conn, { t: 'battle', a: 'req', to: x.id })
     expect(t.host.of(free.conn, 'battle').map((m) => (m.ph === 'no' ? m.why : m.ph))).toEqual(['busy'])
     expect(t.host.of(blocked.conn, 'battle').map((m) => (m.ph === 'no' ? m.why : m.ph))).toEqual(['busy'])
+  })
+})
+
+describe('시민의 거절 기억도 재접속으로 지울 수 없다', () => {
+  it('방금 거절한 시민에게는 다시 들어와도 바로 말을 걸 수 없다(같은 시민 다시 뽑기 방지)', () => {
+    const t = setup()
+    let a: Who = t.join({ pid: 'reroller-aaaaaaa' })
+    t.talk(a, 1)
+    t.pitch(a, 1, R_NO)
+    a = rejoin(t, a, 'reroller-aaaaaaa')
+    t.advance(PITCH_COOLDOWN_MS + 500)
+    t.host.clear()
+    t.talk(a, 1)
+    expect(t.host.of(a.conn, 'talkOk')).toHaveLength(0)
+    expect(t.host.of(a.conn, 'talkNo').at(-1)).toMatchObject({ n: 1, why: 'memo' })
+    // 다른 시민에게는 말을 걸 수 있다
+    t.talk(a, 2)
+    expect(t.host.of(a.conn, 'talkOk')).toHaveLength(1)
+  })
+
+  it('기억 시간이 지나면 다시 말을 걸 수 있고, 그 자리의 시민이 바뀌었으면 적용되지 않는다', () => {
+    const t = setup()
+    let a: Who = t.join({ pid: 'reroller-aaaaaaa' })
+    t.talk(a, 1)
+    t.pitch(a, 1, R_NO)
+    t.advance(PITCH_COOLDOWN_MS + 200)
+    t.talk(a, 2)
+    t.pitch(a, 2, R_NO)
+    // 2번 자리의 시민이 떠나고 새 시민이 왔다
+    t.npc(2).name = '새로 온 시민'
+    t.npc(2).memo.clear()
+    a = rejoin(t, a, 'reroller-aaaaaaa')
+    t.advance(PITCH_COOLDOWN_MS + 500)
+    t.host.clear()
+    t.talk(a, 2)
+    expect(t.host.of(a.conn, 'talkOk')).toHaveLength(1)
+    t.send(a.conn, { t: 'talkEnd' })
+    for (let left = NPC_REJECT_MEMORY_MS; left > 0; left -= 5000) {
+      keepAlive(t, a)
+      t.advance(5000)
+    }
+    t.host.clear()
+    t.talk(a, 1)
+    expect(t.host.of(a.conn, 'talkOk')).toHaveLength(1)
   })
 })
 
