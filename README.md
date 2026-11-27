@@ -59,7 +59,7 @@ npm run loadtest -- --url ws://localhost:8787 --rooms 3 --bots 20 --seconds 45
 
 E2E 는 Playwright(Chromium)가 필요합니다: `npm i -D playwright && npx playwright install chromium`.
 
-`npm run test:e2e` 가 확인하는 것: 별도 절차 없이 입장 · 같은 방에서 서로 보임 · PC 키보드 이동과 모바일 터치 이동이 상대 화면에 반영 · 동작 동기화 · NPC 포교와 신도 증가 · 퇴장 시 사라짐 · 재접속 시 진행도 유지 · 끊김/서버 재시작 후 자동 재연결 · 중복 접속 처리 · 방 목록의 접속자/NPC 구분.
+`npm run test:e2e` 는 실제 입력(PC 키보드·마우스, 모바일 터치)으로 조작하며 다음을 확인합니다: 별도 절차 없이 입장 · 같은 방에서 서로 보임 · PC 키보드 이동과 모바일 터치 이동이 상대 화면에 반영 · 동작 동기화 · NPC 포교와 신도 증가 · 퇴장 시 사라짐 · 재접속 시 진행도 유지 · 끊김/서버 재시작 후 자동 재연결 · 중복 접속 처리 · 방 목록의 접속자/NPC 구분.
 
 ## 구조
 

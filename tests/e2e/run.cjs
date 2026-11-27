@@ -234,12 +234,15 @@ async function main() {
 
     // ── 5. 행동 동기화 ──
     await check('행동(이모트)이 다른 이용자에게 실시간으로 보인다', async () => {
-      await A.evaluate(() => window.__doas.actions.emote('dance'))
+      // PC: 숫자 키 7 = 신비로운 춤 (내부 함수가 아니라 실제 키 입력)
+      await A.keyboard.press('Digit7')
       const b = await waitFor(B, (x) => x.players.some((p) => p.id === a0.id && p.emote === 'dance'), 3000, 'B sees dance')
       void b
-      await B.evaluate(() => window.__doas.actions.emote('wave'))
+      // 모바일: [이모트] 버튼 → 시트에서 '손 흔들기'를 손가락으로 누른다
+      await B.locator('.emotes-tbtn[aria-label="이모트"]').tap()
+      await B.locator('.emotes-tile', { hasText: '손 흔들기' }).tap()
       await waitFor(A, (x) => x.players.some((p) => p.id === b0.id && p.emote === 'wave'), 3000, 'A sees wave')
-      return 'A 춤 → B 화면, B 손 흔들기 → A 화면'
+      return 'A 숫자 키 7(춤) → B 화면, B 이모트 시트에서 손 흔들기 탭 → A 화면'
     })
     await A.screenshot({ path: path.join(OUT, '01-pc-two-players.png') })
     await B.screenshot({ path: path.join(OUT, '02-mobile-two-players.png') })
@@ -257,18 +260,30 @@ async function main() {
           .sort((p, q) => p.d - q.d)[0]
         if (!cand) break
         tried.add(cand.id)
+        // 시민 곁까지는 걸어가고(이동 자체는 3·4번에서 키보드·터치로 검증했다),
+        // 말 걸기와 멘트 고르기는 화면에 보이는 것을 실제로 누른다
         await A.evaluate((id) => {
           const g = window.__doas
           const v = g.store.npcs.get(id)
-          if (v) g.player.moveTo(v.x, v.z, id)
+          if (v) g.player.moveTo(v.x, v.z)
         }, cand.id)
-        let talk = null
+        const talkBtn = A.locator('.hud-action[aria-label="말 걸기"]')
         try {
-          talk = (await waitFor(A, (x) => x.talk !== null, 12000, 'talk open')).talk
+          await talkBtn.waitFor({ state: 'visible', timeout: 12000 })
         } catch {
           continue
         }
+        // PC: E 키 = 큰 상황 버튼(말 걸기)
+        await A.keyboard.press('KeyE')
+        let talk = null
+        try {
+          talk = (await waitFor(A, (x) => x.talk !== null, 4000, 'talk open')).talk
+        } catch {
+          continue
+        }
+        tried.add(talk.npc)
         assert(talk.lines.length >= 2, '멘트 선택지가 부족합니다')
+        assert((await A.locator('.talk-line').count()) === talk.lines.length, '화면의 멘트 버튼 수가 서버가 준 멘트 수와 다릅니다')
         // 최대 2라운드
         for (let round = 0; round < 2; round++) {
           const cur = (await snapshot(A)).talk
@@ -286,7 +301,8 @@ async function main() {
                 setTimeout(() => resolve('timeout'), 6000)
               }),
           )
-          await A.evaluate((l) => window.__doas.actions.pitch(l), cur.lines[0])
+          // 첫 번째 멘트 카드를 마우스로 누른다
+          await A.locator('.talk-line').first().click()
           const o = await res
           outcomes.push(o)
           if (o === 'join' || o === 'king') joined = true
@@ -306,6 +322,51 @@ async function main() {
       return `신도 ${a.fol}명(동행 ${a.entourage}), 영향력 ${a.inf} — 다른 사람 화면에도 따라다니는 신도로 표시`
     })
     await A.screenshot({ path: path.join(OUT, '03-pc-after-pitch.png') })
+
+    await check('모바일: 터치로 [말 걸기]와 멘트를 눌러 포교할 수 있다', async () => {
+      const outcomes = []
+      for (let attempt = 0; attempt < 6 && outcomes.length === 0; attempt++) {
+        const s = await snapshot(B)
+        const cand = s.npcs
+          .filter((n) => n.owner === 0 && n.role === '' && n.model === 0)
+          .map((n) => ({ ...n, d: Math.hypot(n.x - s.x, n.z - s.z) }))
+          .sort((p, q) => p.d - q.d)[attempt % 3]
+        if (!cand) break
+        await B.evaluate((id) => {
+          const g = window.__doas
+          const v = g.store.npcs.get(id)
+          if (v) g.player.moveTo(v.x, v.z)
+        }, cand.id)
+        const talkBtn = B.locator('.hud-action[aria-label="말 걸기"]')
+        try {
+          await talkBtn.waitFor({ state: 'visible', timeout: 12000 })
+          await talkBtn.tap({ timeout: 3000 })
+          await waitFor(B, (x) => x.talk !== null, 4000, 'talk open (mobile)')
+        } catch {
+          continue
+        }
+        const res = B.evaluate(
+          () =>
+            new Promise((resolve) => {
+              const g = window.__doas
+              const off = g.bus.onMsg('pitchRes', (m) => {
+                if (m.p === g.store.me.id) {
+                  off()
+                  resolve(m.o)
+                }
+              })
+              setTimeout(() => resolve('timeout'), 6000)
+            }),
+        )
+        await B.locator('.talk-line').first().tap()
+        const o = await res
+        if (o !== 'timeout') outcomes.push(o)
+        // 대화가 이어지는 결과('더 들어볼게요')면 [그만두기]도 눌러 본다
+        if (o === 'more') await B.locator('.talk-quit').tap({ timeout: 3000 }).catch(() => {})
+      }
+      assert(outcomes.length > 0, '터치로 포교 결과를 받지 못했습니다')
+      return `결과: ${outcomes.join(', ')}`
+    })
 
     // ── 7. 퇴장 ──
     const aBeforeLeave = await snapshot(A)
