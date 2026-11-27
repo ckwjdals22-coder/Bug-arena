@@ -14,6 +14,7 @@ import type { DailyState, Progress } from '../../../shared/types'
 import type { AppContext } from '../core/contracts'
 import { playSfx, rankName } from './hud'
 import { clear, fmt, h } from './kit'
+import { stagePlay } from './stage'
 
 type Tab = 'daily' | 'ach' | 'title'
 const TABS: readonly [Tab, string][] = [
@@ -61,13 +62,22 @@ export function mountAchievements(ctx: AppContext): void {
   const queue: AchievementDef[] = []
   let showing = false
   const showNext = (): void => {
-    const def = queue.shift()
-    if (!def) {
+    if (queue.length === 0) {
       showing = false
       banner.classList.add('hidden')
       return
     }
     showing = true
+    banner.classList.add('hidden')
+    // 결과 배너·자막이 화면 가운데를 쓰는 중이면 지나간 뒤에 띄운다(가장 기쁜 순간이 글자 더미가 되지 않게)
+    stagePlay(2, BANNER_MS, showOne)
+  }
+  const showOne = (): void => {
+    const def = queue.shift()
+    if (!def) {
+      showing = false
+      return
+    }
     banner.replaceChildren(
       h('span.ach-banner-icon', def.icon),
       h('span.ach-banner-text', h('small', '🏆 업적 달성'), h('b', def.name)),

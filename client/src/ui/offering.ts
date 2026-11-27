@@ -14,6 +14,7 @@ import { WORLD } from '../../../shared/world'
 import type { AppContext } from '../core/contracts'
 import { playSfx } from './hud'
 import { clear, fmt, h } from './kit'
+import { stageBusy, stagePlay } from './stage'
 import './offering.css'
 
 const RARITY_NAME = ['', '흔함', '드묾', '희귀', '전설'] as const
@@ -128,10 +129,11 @@ export function mountOffering(ctx: AppContext): void {
     if (m.items.length > 1) ctx.fx.burst('coin', box.x, 0, box.z)
     if (mine) {
       fresh = true
-      showReveal(
-        m.items.map((x) => x[1]),
-        m.coins,
-      )
+      const ids = m.items.map((x) => x[1])
+      // 포교 성공 직후에 신도가 바로 물건을 내민 경우: 결과 배너·자막이 지나간 뒤에 보여 준다(한꺼번에 겹치지 않게).
+      // 헌금함에서 직접 [헌납 타임]을 누른 경우처럼 화면이 비어 있으면 바로 띄운다
+      if (stageBusy()) stagePlay(1.5, 2400, () => showReveal(ids, m.coins))
+      else showReveal(ids, m.coins)
     }
   })
   bus.on('phase', (p) => {

@@ -6,6 +6,7 @@
  *
  * 입자 수는 상한이 있다(high 400 / mid 300 / low 160). 가득 차면 가장 오래된 것부터 덮어쓴다.
  */
+import { reducedMotion } from '../core/motion'
 import type { EngineApi, FxApi, FxKind, QualityTier } from '../core/contracts'
 import { lin } from './chars/geo'
 import type { RGB } from './chars/geo'
@@ -117,9 +118,10 @@ class Fx implements FxApi {
   private range(a: number, b: number): number {
     return a + (b - a) * this.rnd()
   }
-  /** 품질이 낮으면 개수를 줄인다(최소 1개) */
+  /** 품질이 낮으면 개수를 줄인다(최소 1개). 움직임 줄이기 설정에서는 절반만 쓴다 */
   private count(n: number): number {
-    return Math.max(1, Math.round((n * this.limit) / CAP))
+    const k = reducedMotion() ? 0.5 : 1
+    return Math.max(1, Math.round((n * k * this.limit) / CAP))
   }
 
   /** 빈 입자 하나를 기본값으로 만들고 그 번호를 돌려준다 */

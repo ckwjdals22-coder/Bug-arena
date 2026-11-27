@@ -16,6 +16,7 @@ import { NpcModel, type PitchOutcome } from '../../../shared/types'
 import type { AppContext, FxKind, SfxName } from '../core/contracts'
 import type { TalkState } from '../core/store'
 import { isTyping, playSfx } from './hud'
+import { holdStage } from './stage'
 import { clear, h } from './kit'
 
 /** 소재는 개그 분류일 뿐이다(실제 화법 분류가 아니다). 실존 종교 상징은 아이콘으로 쓰지 않는다 */
@@ -305,6 +306,8 @@ export function mountTalk(ctx: AppContext): void {
     resSub.textContent = pick(view.subs).replace('{npc}', npcLabel(npcId).name)
     result.className = 'talk-result ' + view.tone
     placeResult()
+    // 결과 배너가 보이는 동안에는 자막·업적 배너가 그 위에 겹쳐 뜨지 않게 차례를 잡아 둔다
+    holdStage(RESULT_MS - 150)
     clearTimeout(resultTimer)
     resultTimer = window.setTimeout(() => {
       result.classList.add('out')

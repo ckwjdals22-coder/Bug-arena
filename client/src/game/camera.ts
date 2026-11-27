@@ -6,6 +6,7 @@
 import type * as THREE from 'three'
 import { WORLD } from '../../../shared/world'
 import { PROPS } from '../../../shared/world/data'
+import { reducedMotion } from '../core/motion'
 
 const DIST_MIN = 4.5
 const DIST_MAX = 19
@@ -163,7 +164,8 @@ export function createCameraRig(camera: THREE.PerspectiveCamera): CameraRig {
     },
     orbit(dt, time) {
       const p = WORLD.plaza
-      rig.yaw = Math.PI + Math.sin(time * 0.07) * 0.9
+      // 접속 화면의 카메라는 광장 주변을 천천히 돈다. 움직임 줄이기 설정에서는 거의 멈춰 둔다
+      rig.yaw = Math.PI + Math.sin(time * 0.07) * (reducedMotion() ? 0.08 : 0.9)
       const k = 1 - Math.exp(-dt * 2)
       tx += (p.x - tx) * k
       ty += (1.5 - ty) * k
@@ -171,6 +173,8 @@ export function createCameraRig(camera: THREE.PerspectiveCamera): CameraRig {
       place(17, 0.42)
     },
     punch(amount, seconds) {
+      // 움직임 줄이기 설정에서는 화면을 당겼다 놓는 연출을 하지 않는다
+      if (reducedMotion()) return
       punchAmt = amount
       punchLeft = seconds
       punchDur = Math.max(0.01, seconds)

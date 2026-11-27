@@ -16,6 +16,7 @@ import { PITCH_LINES } from '../../../shared/content/lines'
 import { QUICK_CHATS } from '../../../shared/content/misc'
 import { NpcModel } from '../../../shared/types'
 import type { Bus } from '../core/bus'
+import { reducedMotion } from '../core/motion'
 import type { BubbleKind, EngineApi, OverlayApi } from '../core/contracts'
 import type { EntityView, MeView, Store } from '../core/store'
 import { ACHIEVEMENT_BY_ID } from '../../../shared/content/achievements'
@@ -61,6 +62,8 @@ const POP_RISE = 58
 const POP_MS = 1400
 /** 연달아 뜨는 글자 사이 간격(px) */
 const POP_GAP = 34
+/** 연달아 오는 보상 메시지를 모으는 시간 */
+const REWARD_GATHER_MS = 220
 /** 말풍선 한두 줄의 대략적인 높이(px) — 보상 글자를 내 말풍선 위에서 띄우기 위한 어림값 */
 const BUBBLE_H = 58
 
@@ -474,7 +477,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     b.until = performance.now() + (ms && ms > 0 ? ms : clamp(1600 + chars.length * 75, 2200, 5200))
     b.dying = 0
     b.el.classList.remove('out')
-    if (typeof b.body.animate === 'function') {
+    if (typeof b.body.animate === 'function' && !reducedMotion()) {
       b.body.animate(
         [
           { transform: 'scale(0.55)', opacity: 0 },
@@ -752,23 +755,44 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       window.setTimeout(() => bubble(key, text, 2600, isNpcKey(key) ? npcKind(text) : 'say'), 500 + i * 230)
     })
   })
-  bus.onMsg('reward', (m) => {
+  // 보상 글자("신도 +1", "+10 영향력", "🪙 +4").
+  // 한 번의 포교 성공에 보상 메시지가 여러 개 연달아 온다(합류, 연속 보너스, 업적, 즉석 헌납 …).
+  // 오는 족족 띄우면 글자가 네댓 줄 쌓여 HUD 까지 덮으므로, 잠깐 모았다가 종류별로 합쳐 한 줄씩만 띄운다.
+  let accFol = 0
+  let accInf = 0
+  let accCoins = 0
+  let accTimer = 0
+  const flushRewards = (): void => {
+    accTimer = 0
+    const fol = accFol
+    const inf = accInf
+    const coins = accCoins
+    accFol = accInf = accCoins = 0
     const me = store.me
     if (!me) return
     // 내 이름표와 (방금 띄운) 내 말풍선을 가리지 않게 그 위에서 시작한다
     const tag = tags.get(me.id)
     const y = me.y + HEAD_HUMAN
     let lift = (tag && tag.shown ? (tag.lines === 2 ? TAG_H2 : TAG_H1) : 6) + 4
-    if (bubbles.has(me.id)) {
-      // 단, 가로 폰처럼 위쪽이 좁아 HUD 까지 올라가 버릴 때는 말풍선 위를 포기하고 겹쳐서 띄운다.
+    const lines = (fol > 0 ? 1 : 0) + (inf > 0 ? 1 : 0) + (coins > 0 ? 1 : 0)
+    if (engine.project(me.x, y, me.z, pt)) {
       // HUD 아래쪽 위치는 HUD 가 #ui 에 적어 둔 CSS 변수에서 읽는다(레이아웃 계산 없음, 보상이 올 때 한 번)
-      const hudBottom = parseFloat(root.style.getPropertyValue('--hud-bottom')) || 60
-      const fits = engine.project(me.x, y, me.z, pt) && pt.y - lift - BUBBLE_H - POP_RISE - POP_GAP * 2 > hudBottom
-      if (fits) lift += BUBBLE_H
+      const hb = parseFloat(root.style.getPropertyValue('--hud-bottom')) || 60
+      const need = POP_RISE + POP_GAP * lines
+      if (bubbles.has(me.id) && pt.y - lift - BUBBLE_H - need > hb) lift += BUBBLE_H
+      // 그래도 HUD 까지 올라가게 되면(가로 폰처럼 위쪽이 좁을 때) 내려서 띄운다: 이름표와 겹치는 편이 HUD 를 덮는 것보다 낫다
+      lift = Math.max(0, Math.min(lift, pt.y - hb - need - 4))
     }
-    if (m.fol && m.fol > 0) spawnPop(me.x, y, me.z, `신도 +${m.fol}`, 'good', lift)
-    if (m.inf && m.inf > 0) spawnPop(me.x, y, me.z, `+${m.inf} 영향력`, 'info', lift)
-    if (m.coins && m.coins > 0) spawnPop(me.x, y, me.z, `🪙 +${m.coins}`, 'gold', lift)
+    if (fol > 0) spawnPop(me.x, y, me.z, `신도 +${fol}`, 'good', lift)
+    if (inf > 0) spawnPop(me.x, y, me.z, `+${inf} 영향력`, 'info', lift)
+    if (coins > 0) spawnPop(me.x, y, me.z, `🪙 +${coins}`, 'gold', lift)
+  }
+  bus.onMsg('reward', (m) => {
+    if (!store.me) return
+    if (m.fol && m.fol > 0) accFol += m.fol
+    if (m.inf && m.inf > 0) accInf += m.inf
+    if (m.coins && m.coins > 0) accCoins += m.coins
+    if (!accTimer && (accFol > 0 || accInf > 0 || accCoins > 0)) accTimer = window.setTimeout(flushRewards, REWARD_GATHER_MS)
   })
 
   return { update, bubble, pop }

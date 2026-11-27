@@ -14,6 +14,7 @@ import { MAX_ENTOURAGE } from '../../../shared/constants'
 import type { PitchOutcome } from '../../../shared/types'
 import type { AppContext } from '../core/contracts'
 import { h } from './kit'
+import { stagePlay } from './stage'
 import './captions.css'
 
 /** 사건 → 자막까지의 박자 */
@@ -44,6 +45,8 @@ export function mountCaptions(ctx: AppContext): CaptionsApi {
   let beatTimer: number | undefined
   let hideTimer: number | undefined
   let followerMuteUntil = 0
+  /** 무대(stage.ts)에 차례를 걸어 둔 상태인가 */
+  let queued = false
 
   function place(): void {
     // 대화 시트/기싸움 시트가 열려 있으면 그 위(화면 위쪽)로 올린다 — 시트의 버튼을 가리지 않게
@@ -82,15 +85,28 @@ export function mountCaptions(ctx: AppContext): CaptionsApi {
     window.clearTimeout(hideTimer)
     hideTimer = window.setTimeout(() => {
       el.classList.remove('show')
-      // 사라지는 애니메이션이 끝난 뒤 대기 자막
-      hideTimer = window.setTimeout(next, 180)
+      // 사라지는 애니메이션이 끝난 뒤, 기다리던 자막이 있으면 다시 차례를 잡는다(그사이 결과 배너가 떴다면 그 뒤로 간다)
+      hideTimer = window.setTimeout(() => {
+        showing = false
+        if (pending) schedule()
+      }, 180)
     }, ms)
+  }
+
+  /** 무대(stage.ts)에 차례를 건다: 결과 배너 같은 큰 알림이 지나간 뒤에 뜨고, 자막이 떠 있는 동안에는 업적 배너가 기다린다 */
+  function schedule(): void {
+    if (showing || beatTimer !== undefined || queued) return
+    queued = true
+    stagePlay(1, BEAT_MS + SHOW_MAX_MS, () => {
+      queued = false
+      if (!showing && beatTimer === undefined) beatTimer = window.setTimeout(next, BEAT_MS)
+    })
   }
 
   function show(key: CaptionKey, n = 0): void {
     if (store.phase !== 'playing') return
     pending = { key, n }
-    if (!showing && beatTimer === undefined) beatTimer = window.setTimeout(next, BEAT_MS)
+    schedule()
   }
 
   function reset(): void {
