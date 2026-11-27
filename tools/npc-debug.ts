@@ -82,6 +82,7 @@ function makePlayer(id: number, x: number, z: number): PlayerState {
     sprintUntil: 0,
     blocked: new Set(),
     mutedUntil: 0,
+    nameLockUntil: 0,
     saveDirty: false,
     ext: {},
   }

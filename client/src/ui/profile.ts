@@ -50,6 +50,13 @@ export function mountProfile(ctx: AppContext): void {
     onClick: () => ui.openPanel('profile'),
   })
 
+  // 서버가 이름 변경을 받아 주지 않았을 때(너무 자주 바꿈 · 신고로 고정됨 등) 이유를 알려 준다
+  bus.onMsg('err', (m) => {
+    if (m.code !== 'name') return
+    ui.toast(m.msg || '이름을 바꾸지 못했어요.', 'bad', 4000)
+    if (ui.openPanelId === 'profile') ui.openPanel('profile')
+  })
+
   ui.registerPanel({
     id: 'profile',
     title: '내 프로필',
@@ -128,7 +135,6 @@ export function mountProfile(ctx: AppContext): void {
         nameMsg.textContent = '닉네임을 바꿨어요. 이름표에 바로 보여요.'
         nameMsg.classList.remove('bad')
         nameMsg.classList.add('good')
-        ui.toast('닉네임을 바꿨어요!', 'good')
       }
       nameInput.addEventListener('input', validateName)
       nameInput.addEventListener('keydown', (e) => {

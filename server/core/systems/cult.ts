@@ -26,10 +26,28 @@ export const CULT_CREATE_COOLDOWN_MS = 8000
 export const CULTS_LIST_COOLDOWN_MS = 1500
 /** 초대 수락 시 초대한 사람이 받는 영향력 */
 export const RECRUIT_INF = 15
+/** 같은 사람을 다시 영입해도 보상·전적은 하루에 한 번만(가입 → 탈퇴 → 재가입 반복으로 찍어내지 못하게) */
+export const RECRUIT_PAIR_MS = 24 * 60 * 60_000
+/** 영입 보상 상한: RECRUIT_REWARD_WINDOW_MS 동안 RECRUIT_REWARD_SLOTS 번(새 pid 를 계속 만들어 오는 도우미 계정 대비) */
+export const RECRUIT_REWARD_SLOTS = 5
+export const RECRUIT_REWARD_WINDOW_MS = 10 * 60_000
 /** 신고 누적 기준: 닉네임 신고 2명 → 강제 개명, 도배/방해 3명 → 5분 입막음 */
 export const REPORT_NAME_THRESHOLD = 2
 export const REPORT_MUTE_THRESHOLD = 3
 export const MUTE_MS = 5 * 60_000
+/**
+ * 자동 조치에 세는 신고의 자격: 이 방에 REPORT_MIN_SESSION_MS 이상 머물렀고 영향력이 REPORT_MIN_INF 이상인 사람.
+ * (신고자 구분은 클라이언트가 고른 pid 뿐이라, 소켓을 여러 개 열어 막 들어온 계정으로 남을 개명·입막음시키는 것을 어렵게 한다.
+ *  자격이 안 되는 신고도 운영 로그에는 남는다.)
+ */
+export const REPORT_MIN_SESSION_MS = 120_000
+export const REPORT_MIN_INF = 30
+/** 강제 개명 뒤 이름을 다시 바꿀 수 없는 시간 */
+export const NAME_LOCK_MS = 10 * 60_000
+/** 포교 링크(?by=)로 같은 사람이 같은 초대자에게 자동 초대를 받는 간격 */
+export const REF_ONCE_MS = 24 * 60 * 60_000
+/** 포교 링크 소식을 방 전체에 알리는 최소 간격(초대자 한 명당) */
+export const REF_FEED_COOLDOWN_MS = 60_000
 /** 포교 링크로 들어온 사람에게 초대 카드를 보내기까지의 지연(입장 연출이 끝난 뒤 보이게) */
 export const REF_INVITE_DELAY_MS = 2000
 /** 차단당한 초대자가 받는 가짜 거절의 지연 범위 */
@@ -61,6 +79,9 @@ interface RefInvite {
 /** 띄어쓰기·대소문자만 다른 이름은 같은 이름으로 본다(등록부와 같은 기준) */
 const nameKey = (name: string): string => name.toLowerCase().replace(/\s+/g, '')
 const declineKey = (targetPid: string): string => 'cult.dec:' + targetPid
+/** 가입한 사람 쪽에 남기는 표시: 이 초대자의 영입 보상은 이미 한 번 나갔다 */
+const pairKey = (inviterPid: string): string => 'cult.rw:' + inviterPid
+const refKey = (inviterPid: string): string => 'cult.ref:' + inviterPid
 
 export function createCultSystem(): RoomSystem {
   let room: RoomApi
@@ -237,11 +258,28 @@ export function createCultSystem(): RoomSystem {
     room.publish(p, ['cult'])
     room.markSave(p)
     room.send(p, { t: 'cultRes', ok: true })
-    room.bump(p, STAT.joinedCults)
-    room.bump(from, STAT.recruits)
     room.send(from, { t: 'inviteRes', to: p.id, r: 'ok' })
-    room.grant(from, { why: 'recruit', inf: RECRUIT_INF })
+    // 가입 자체는 언제나 성립한다. 다만 같은 두 사람 사이의 보상·전적·소식은 하루에 한 번만.
+    const now = room.now()
+    const pk = pairKey(from.pid)
+    if ((p.cd.get(pk) ?? 0) > now) return
+    p.cd.set(pk, now + RECRUIT_PAIR_MS)
+    room.bump(p, STAT.joinedCults)
     room.feed('cult', from.id, `${p.name}님이 ${from.name}님의 권유로 「${cult.name}」에 들어갔습니다!`)
+    if (!takeRewardSlot(from, now)) return
+    room.bump(from, STAT.recruits)
+    room.grant(from, { why: 'recruit', inf: RECRUIT_INF })
+  }
+
+  /** 영입 보상은 일정 시간에 정해진 횟수까지만(쿨타임 표를 칸으로 쓴다 → 재접속해도 유지) */
+  function takeRewardSlot(from: PlayerState, now: number): boolean {
+    for (let i = 0; i < RECRUIT_REWARD_SLOTS; i++) {
+      const key = 'cult.rws' + String(i)
+      if ((from.cd.get(key) ?? 0) > now) continue
+      from.cd.set(key, now + RECRUIT_REWARD_WINDOW_MS)
+      return true
+    }
+    return false
   }
 
   function decline(from: PlayerState, to: PlayerState): void {
@@ -276,18 +314,23 @@ export function createCultSystem(): RoomSystem {
     room.host.log('warn', 'report', { room: room.id, why, target: target.pid, targetName: target.name, by: p.pid })
     let byTarget = reports.get(why)
     if (!byTarget) reports.set(why, (byTarget = new Map()))
+    // 자동 조치에는 '이 방에서 어느 정도 놀던 사람'의 신고만 센다(막 만든 계정 여러 개로 남을 제재하지 못하게)
+    const now = room.now()
+    if (now - p.joinedAt < REPORT_MIN_SESSION_MS || p.prog.inf < REPORT_MIN_INF) return
     let set = byTarget.get(target.pid)
     if (!set) byTarget.set(target.pid, (set = new Set()))
     set.add(p.pid)
     if (why === 'name' && set.size >= REPORT_NAME_THRESHOLD) {
       byTarget.delete(target.pid)
       target.name = neutralName()
+      // 바로 되돌리지 못하게 한동안 이름을 고정한다(재접속해도 유지)
+      target.nameLockUntil = now + NAME_LOCK_MS
       room.publish(target, ['name'])
       room.markSave(target)
       room.send(target, { t: 'err', code: 'renamed', msg: target.name })
     } else if ((why === 'spam' || why === 'grief') && set.size >= REPORT_MUTE_THRESHOLD) {
       byTarget.delete(target.pid)
-      target.mutedUntil = room.now() + MUTE_MS
+      target.mutedUntil = now + MUTE_MS
       room.send(target, { t: 'err', code: 'muted', msg: String(MUTE_MS) })
     }
   }
@@ -363,9 +406,15 @@ export function createCultSystem(): RoomSystem {
     if (p.prog.cult?.id === cult.id) return
     if (pending.has(p.id) || p.blocked.has(inviter.pid) || inviter.mutedUntil > now) return
     if ((inviter.cd.get(declineKey(p.pid)) ?? 0) > now) return
+    // 같은 사람이 링크로 다시 들어와도 자동 초대는 초대자 한 명당 하루에 한 번만(재접속으로 카드·소식을 되풀이하지 못하게)
+    const rk = refKey(inviter.pid)
+    if ((p.cd.get(rk) ?? 0) > now) return
+    p.cd.set(rk, now + REF_ONCE_MS)
     sendInvite(inviter, p, cult, now)
-    room.bump(inviter, STAT.invites)
-    room.feed('cult', inviter.id, `${p.name}님이 ${inviter.name}님의 포교 링크를 보고 찾아왔습니다!`)
+    // 초대자가 직접 누른 것이 아니므로 '초대 횟수' 전적은 올리지 않는다
+    if (room.cooldown(inviter, 'cult.reffeed', REF_FEED_COOLDOWN_MS) === 0) {
+      room.feed('cult', inviter.id, `${p.name}님이 ${inviter.name}님의 포교 링크를 보고 찾아왔습니다!`)
+    }
   }
 
   return {
@@ -442,8 +491,7 @@ export function createCultSystem(): RoomSystem {
       for (const f of fakes) if (f.toId === p.id && f.from !== p && alive(f.from)) room.send(f.from, { t: 'inviteRes', to: p.id, r: 'expired' })
       fakes = fakes.filter((f) => f.from !== p && f.toId !== p.id)
       refs = refs.filter((r) => r.newcomer !== p)
-      const key = declineKey(p.pid)
-      for (const q of room.players.values()) q.cd.delete(key)
+      // 거절 쿨타임(cult.dec:<pid>)은 지우지 않는다: 거절한 사람이 잠깐 끊겼다 돌아와도 유지돼야 한다(만료되면 방이 청소한다)
     },
   }
 }

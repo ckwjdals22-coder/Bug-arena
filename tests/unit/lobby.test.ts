@@ -244,3 +244,20 @@ describe('방 자동 증설', () => {
   })
 })
 
+describe('인사(hello) 전 연결로 방을 잠글 수 없다', () => {
+  it('hello 를 보내지 않는 연결이 정원보다 많아도 진짜 접속자는 자리를 받는다', () => {
+    const t = makeLobby(3, 20)
+    for (const id of ['1', '2', '3']) t.pend(id, 60)
+    const room = t.lobby.pick('auto')
+    expect(room).toBeDefined()
+    // 실제로 들어가진다(정원은 Room 이 hello 시점에 접속자 수로만 판단한다)
+    expect(t.fill(room!.id, 1)).toHaveLength(1)
+    expect(room!.players.size).toBe(1)
+  })
+  it('그래도 진짜 접속자로 가득 찬 방은 가득 찬 것이다', () => {
+    const t = makeLobby(1, 3)
+    t.fill('1', 3)
+    expect(t.lobby.pick('auto')).toBeUndefined()
+  })
+})
+

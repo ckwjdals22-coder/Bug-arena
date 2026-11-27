@@ -195,13 +195,14 @@ describe('포교 배틀: 진행과 결과', () => {
     expect(t.stat(b.id, STAT.battleWins)).toBe(0)
   })
 
-  it('한쪽이 나가면 남은 사람이 바로 이긴다', () => {
+  it('점수 없이 한쪽이 나가면 무효다(승리·보상 없음, 배틀은 정리된다)', () => {
     const t = setup({ systems: [createBattleSystem] })
     const { a, b } = start(t)
     const infB = t.player(b.id).prog.inf
     t.room.disconnect(a.conn)
-    expect(last(t.host.of(b.conn, 'battle'))).toMatchObject({ ph: 'end', winner: b.id, why: 'left' })
-    expect(t.player(b.id).prog.inf - infB).toBe(INF_BATTLE_WIN)
+    expect(last(t.host.of(b.conn, 'battle'))).toMatchObject({ ph: 'end', winner: 0, why: 'left' })
+    expect(t.player(b.id).prog.inf - infB).toBe(0)
+    expect(t.stat(b.id, STAT.battleWins)).toBe(0)
     expect(t.host.errors()).toEqual([])
   })
 

@@ -64,7 +64,7 @@ import type {
   RoomSystem,
   RoomSystemFactory,
 } from '../../server/core/api'
-import { MAX_HELLO_BYTES, Room } from '../../server/core/room'
+import { MAX_HELLO_BYTES, NAME_CHANGE_COOLDOWN_MS, Room } from '../../server/core/room'
 import { createSigner } from '../../server/core/save'
 
 // ───────────────────────── 가짜 호스트 ─────────────────────────
@@ -1182,7 +1182,7 @@ describe('말풍선 / 프로필 / ping / 방 목록', () => {
     const b = t.join({ name: '붙박이' })
     t.host.clear()
     // 연달아 바꿔도 마지막 상태 하나만 나간다
-    t.send(a.conn, { t: 'profile', name: '중간이름' })
+    t.send(a.conn, { t: 'profile', look: [1, 0, 0, 0, 0, 0, 0] })
     t.send(a.conn, { t: 'profile', name: '새이름', look: [2, 1, 3, 1, 0, 0, 0] })
     expect(t.host.of(b.conn, 'pu')).toHaveLength(0)
     t.advance(100)
@@ -1191,6 +1191,7 @@ describe('말풍선 / 프로필 / ping / 방 목록', () => {
     expect(t.host.of(a.conn, 'pu')).toEqual(pu)
 
     // 겹치는 이름은 숫자가 붙고, 못 쓰는 이름은 err + 본인에게 현재 값 확인
+    t.advance(NAME_CHANGE_COOLDOWN_MS)
     t.host.clear()
     t.send(a.conn, { t: 'profile', name: '붙박이' })
     t.advance(100)

@@ -144,6 +144,13 @@ export class Lobby {
   }
 }
 
+/** 자리 계산에 넣는 '인사(hello) 전 연결'의 최대치 */
+export const PENDING_SEAT_CAP = 4
+
+/**
+ * 인사 전 연결은 조금만 자리로 친다. 전부 치면 hello 를 보내지 않는 소켓 수십 개만으로 모든 방을 '가득 참'으로
+ * 만들 수 있다. 정원은 어차피 Room 이 hello 시점에 다시 확인하므로(넘치면 full 로 돌려보냄) 느슨하게 세도 안전하다.
+ */
 function hasSeat(room: Room): boolean {
-  return room.players.size + room.pending < room.capacity
+  return room.players.size + Math.min(room.pending, PENDING_SEAT_CAP) < room.capacity
 }

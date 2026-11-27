@@ -72,6 +72,7 @@ import type {
   NpcSimApi,
   NpcSimEvents,
   NpcState,
+  PlayerMemory,
   PlayerState,
   RoomApi,
   RoomHost,
@@ -142,6 +143,14 @@ const EMPTY_SNAPSHOT_MS = 1000
 const MAX_TICK_DT = 1
 /** 쿨타임 맵 청소 주기(틱) */
 const CD_SWEEP_TICKS = 300
+/** 접속자별 메모(쿨타임·차단·입막음) 청소 주기 */
+const MEMORY_SWEEP_TICKS = 600
+/** 차단 목록을 접속이 끊긴 뒤에도 기억하는 시간 */
+const BLOCK_MEMORY_MS = 6 * 60 * 60_000
+/** 메모 저장소 상한(넘으면 접속 중이 아닌 오래된 것부터 버린다) */
+const MEMORY_MAX = 20_000
+/** 닉네임을 다시 바꿀 수 있기까지의 시간 */
+export const NAME_CHANGE_COOLDOWN_MS = 5000
 /** 한 번에 내보내는 NPC 말풍선 수 상한 */
 const MAX_SAY_BATCH = 24
 /** onStat → bump → onStat … 로 시스템끼리 물고 물리는 경우의 안전장치 */
@@ -288,6 +297,8 @@ export class Room implements RoomApi {
 
   private readonly conns = new Map<ConnId, Session>()
   private readonly byPid = new Map<string, PlayerState>()
+  /** 접속이 끊겨도 잠깐 남는 접속자별 메모(pid → 쿨타임·차단·입막음·이름 고정) */
+  private readonly memory: Map<string, PlayerMemory>
   private readonly systems: RoomSystem[] = []
   private readonly routes = new Map<string, RoomSystem[]>()
   private nextId = 1
@@ -312,6 +323,7 @@ export class Room implements RoomApi {
     // 시드를 host.random() 에서 한 번만 뽑아 두면 이후 방 안의 모든 난수가 재현 가능해진다
     this.rnd = mulberry32(opts.seed ?? Math.floor(host.random() * 0x100000000))
     this.lastTickAt = host.now()
+    this.memory = opts.memory ?? new Map()
 
     const events: NpcSimEvents = {
       onSpawn: (npc) => this.onNpcSpawn(npc),
@@ -646,8 +658,63 @@ export class Room implements RoomApi {
         this.hookError(sys, 'onLeave', err)
       }
     }
+    // 훅이 마지막으로 건드린 쿨타임까지 담기도록 메모는 훅 뒤에 남긴다
+    this.stash(p, this.host.now())
     // leave 는 맨 마지막: 훅이 보낸 소식(배틀 종료 등)이 아직 이름을 아는 상태에서 도착하게
     this.broadcast({ t: 'leave', id: p.id })
+  }
+
+  // ═════════════════ 접속자별 메모(재접속으로 지울 수 없는 것) ═════════════════
+
+  /** 들어올 때: 예전 메모가 있으면 이어받고, 없으면 새로 만든다 */
+  private recall(pid: string, now: number): PlayerMemory {
+    let mem = this.memory.get(pid)
+    if (mem && !mem.live && mem.keepUntil <= now) mem = undefined
+    if (!mem) {
+      if (this.memory.size >= MEMORY_MAX) this.sweepMemory(now, true)
+      mem = { cd: new Map(), blocked: new Set(), mutedUntil: 0, nameLockUntil: 0, lockedName: '', live: true, keepUntil: 0 }
+      this.memory.delete(pid)
+      this.memory.set(pid, mem)
+    }
+    mem.live = true
+    return mem
+  }
+
+  /** 나갈 때: 아직 유효한 것만 남기고, 기억할 것이 없으면 메모 자체를 지운다 */
+  private stash(p: PlayerState, now: number): void {
+    let mem = this.memory.get(p.pid)
+    // 같은 pid 가 다른 방에서 이미 새로 들어왔다면(메모의 주인이 바뀌었다면) 건드리지 않는다
+    if (mem && mem.cd !== p.cd) return
+    if (!mem) {
+      mem = { cd: p.cd, blocked: p.blocked, mutedUntil: 0, nameLockUntil: 0, lockedName: '', live: false, keepUntil: 0 }
+      this.memory.set(p.pid, mem)
+    }
+    mem.live = false
+    mem.mutedUntil = p.mutedUntil
+    mem.nameLockUntil = p.nameLockUntil
+    mem.lockedName = p.nameLockUntil > now ? p.name : ''
+    let keep = Math.max(p.mutedUntil, p.nameLockUntil, mem.blocked.size > 0 ? now + BLOCK_MEMORY_MS : 0)
+    for (const [key, until] of mem.cd) {
+      if (until <= now) mem.cd.delete(key)
+      else if (until > keep) keep = until
+    }
+    if (keep <= now) this.memory.delete(p.pid)
+    else mem.keepUntil = keep
+  }
+
+  /** 기한이 지난 메모를 버린다. hard = 상한에 닿았을 때: 접속 중이 아닌 오래된 것부터 더 버린다 */
+  private sweepMemory(now: number, hard = false): void {
+    for (const [pid, mem] of this.memory) {
+      if (!mem.live && mem.keepUntil <= now) this.memory.delete(pid)
+    }
+    if (!hard) return
+    let over = this.memory.size - Math.floor(MEMORY_MAX * 0.9)
+    if (over <= 0) return
+    for (const [pid, mem] of this.memory) {
+      if (mem.live) continue
+      this.memory.delete(pid)
+      if (--over <= 0) break
+    }
   }
 
   private tickSessions(now: number): void {
@@ -694,6 +761,7 @@ export class Room implements RoomApi {
         for (const [key, until] of p.cd) if (until <= now) p.cd.delete(key)
       }
     }
+    if (this.tickCount % MEMORY_SWEEP_TICKS === 0) this.sweepMemory(now)
     if (expired) {
       for (const s of expired) {
         if (this.forget(s)) this.host.close(s.conn, CLOSE_BAD, 'hello timeout')
@@ -808,8 +876,12 @@ export class Room implements RoomApi {
     this.host.claimPid(pid, this.id)
 
     const prog = carried ?? this.restoreProgress(msg.save, pid, now)
+    // 쿨타임·차단·입막음·이름 고정은 재접속해도 이어진다(같은 pid 의 옛 세션은 위에서 이미 정리됐다)
+    const mem = this.recall(pid, now)
     const nick = checkNickname(msg.name)
-    const name = this.uniqueName(nick.ok ? nick.text : this.randomNickname(), 0)
+    // 신고로 이름이 바뀐 동안에는 hello 에 실어 보낸 옛 이름을 받아 주지 않는다
+    const locked = mem.nameLockUntil > now && mem.lockedName !== ''
+    const name = this.uniqueName(locked ? mem.lockedName : nick.ok ? nick.text : this.randomNickname(), 0)
     const look = sanitizeLook(msg.look, prog.rank, prog.ach)
     const spawn = this.spawnPoint()
     const p: PlayerState = {
@@ -829,13 +901,14 @@ export class Room implements RoomApi {
       lastMsgAt: now,
       lastMoveAt: now,
       talk: null,
-      cd: new Map(),
+      cd: mem.cd,
       buff: 0,
       buffUntil: 0,
       stunUntil: 0,
       sprintUntil: 0,
-      blocked: new Set(),
-      mutedUntil: 0,
+      blocked: mem.blocked,
+      mutedUntil: mem.mutedUntil,
+      nameLockUntil: mem.nameLockUntil,
       saveDirty: false,
       ext: {},
     }
@@ -1101,15 +1174,24 @@ export class Room implements RoomApi {
 
   private onProfile(s: Session, p: PlayerState, msg: InMsg): void {
     if (msg.name !== undefined) {
+      const now = this.host.now()
       const check = checkNickname(msg.name)
-      if (check.ok) {
+      if (!check.ok) {
+        this.send(p, { t: 'err', code: 'name', msg: '사용할 수 없는 이름이에요.' })
+      } else if (check.text === p.name) {
+        /* 그대로다 — 할 일 없음 */
+      } else if (p.nameLockUntil > now) {
+        // 신고로 바뀐 이름은 한동안 되돌릴 수 없다(바로 되돌리면 신고가 무의미해진다)
+        this.send(p, { t: 'err', code: 'name', msg: '신고로 바뀐 이름은 잠시 동안 바꿀 수 없어요.' })
+      } else if (this.cdLeft(p, 'name', now) > 0) {
+        this.send(p, { t: 'err', code: 'name', msg: '이름은 잠시 뒤에 다시 바꿀 수 있어요.' })
+      } else {
         const name = this.uniqueName(check.text, p.id)
         if (name !== p.name) {
           p.name = name
           s.pubMask |= PUB_NAME
+          p.cd.set('name', now + NAME_CHANGE_COOLDOWN_MS)
         }
-      } else {
-        this.send(p, { t: 'err', code: 'name', msg: '사용할 수 없는 이름이에요.' })
       }
     }
     if (msg.look !== undefined) {

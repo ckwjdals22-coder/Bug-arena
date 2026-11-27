@@ -361,7 +361,7 @@ export function mountSocial(ctx: AppContext): void {
 
   bus.onMsg('err', (m) => {
     if (m.code === 'renamed') {
-      ui.toast(`닉네임 신고가 여러 번 들어와 이름이 「${m.msg ?? store.profile.name}」(으)로 바뀌었어요. 프로필에서 다른 이름으로 바꿀 수 있어요.`, 'bad', 6000)
+      ui.toast(`닉네임 신고가 여러 번 들어와 이름이 「${m.msg ?? store.profile.name}」(으)로 바뀌었어요. 10분 뒤부터 프로필에서 다른 이름으로 바꿀 수 있어요.`, 'bad', 6000)
     } else if (m.code === 'muted') {
       ui.toast('신고가 여러 번 들어와 5분 동안 말풍선과 초대를 쉬어 갑니다. 잠시 산책하고 와요!', 'bad', 6000)
     }

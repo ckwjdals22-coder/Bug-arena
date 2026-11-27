@@ -97,6 +97,8 @@ export interface PlayerState {
   blocked: Set<string>
   /** 신고 누적 등으로 말풍선/초대/배틀 신청이 막히는 만료 시각(0 = 없음) */
   mutedUntil: number
+  /** 신고로 강제 개명된 뒤 이름을 바꿀 수 없는 만료 시각(0 = 없음) */
+  nameLockUntil: number
   /** 저장본 재서명/전송이 필요한가 */
   saveDirty: boolean
   /** 기능 시스템이 자유롭게 쓰는 칸(키는 시스템 이름으로 시작) */
@@ -266,11 +268,31 @@ export interface RoomSystem {
 
 export type RoomSystemFactory = () => RoomSystem
 
+/**
+ * 접속이 끊긴 뒤에도 잠깐 기억해 두는 접속자별 메모.
+ * 재접속(또는 같은 pid 로 새 탭 열기)으로 쿨타임·차단·입막음·이름 고정을 지우지 못하게 한다.
+ * 진행도가 아니라 '제재와 예의'에 관한 짧은 기억이며, 서버 메모리에만 있고 저장하지 않는다.
+ */
+export interface PlayerMemory {
+  cd: Map<string, number>
+  blocked: Set<string>
+  mutedUntil: number
+  nameLockUntil: number
+  /** 이름 고정 중에 써야 하는 이름 */
+  lockedName: string
+  /** 지금 접속 중인가 */
+  live: boolean
+  /** 접속이 끊긴 뒤 이 시각까지만 기억한다 */
+  keepUntil: number
+}
+
 export interface RoomOptions {
   id: string
   name: string
   capacity?: number
   npcCount?: number
+  /** 접속자별 메모 저장소. 여러 방이 같은 것을 쓰면 방을 옮겨도 기억이 따라간다(없으면 방마다 따로) */
+  memory?: Map<string, PlayerMemory>
   /** 테스트용 난수 시드 */
   seed?: number
   world?: WorldDef

@@ -54,23 +54,31 @@ export function createBattleSystem(): RoomSystem {
     const pa = room.players.get(b.a)
     const pb = room.players.get(b.b)
     let winner = 0
-    if (why === 'left') winner = leftId === b.a ? b.b : b.a
-    else if (b.sa !== b.sb) winner = b.sa > b.sb ? b.a : b.b
+    // 상대가 나갔을 때: 남은 사람이 실제로 앞서 있었을 때만 승리다.
+    // 그렇지 않으면 무효(보상·전적 없음) — '수락하고 바로 나가 주기'로 승리를 찍어낼 수 없게.
+    let voided = false
+    if (why === 'left') {
+      const stayIsA = leftId !== b.a
+      if (stayIsA ? b.sa > b.sb : b.sb > b.sa) winner = stayIsA ? b.a : b.b
+      else voided = true
+    } else if (b.sa !== b.sb) winner = b.sa > b.sb ? b.a : b.b
     const tie = Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2)
     for (const [p, id] of [
       [pa, b.a],
       [pb, b.b],
     ] as const) {
       if (!p) continue
+      setCool(p, now)
+      if (voided) continue
       room.bump(p, STAT.battles)
       if (winner === id) room.bump(p, STAT.battleWins)
       room.grant(p, { why: 'battle', inf: winner === 0 ? tie : winner === id ? INF_BATTLE_WIN : INF_BATTLE_LOSE })
-      setCool(p, now)
     }
     room.broadcast({ t: 'battle', ph: 'end', b, winner, ...(why === 'left' ? { why: 'left' as const } : {}) })
     const na = pa?.name ?? '상대'
     const nb = pb?.name ?? '상대'
-    if (winner === 0) room.feed('battle', 0, `${na} vs ${nb} — ${b.sa}:${b.sb} 무승부! 둘 다 말은 많았습니다.`)
+    if (voided) room.feed('battle', 0, `포교 배틀 무효 — 한 분이 자리를 떴습니다. (${b.sa}:${b.sb})`)
+    else if (winner === 0) room.feed('battle', 0, `${na} vs ${nb} — ${b.sa}:${b.sb} 무승부! 둘 다 말은 많았습니다.`)
     else {
       const w = winner === b.a ? na : nb
       room.feed('battle', winner, `포교 배틀 종료 — ${w} 승리! (${b.sa}:${b.sb})`)
@@ -85,13 +93,14 @@ export function createBattleSystem(): RoomSystem {
     if (coolLeft(p, now) > 0) return no('cool')
     if (battleOf(p.id) || hasPending(p.id)) return no('busy')
     if (Math.hypot(target.x - p.x, target.z - p.z) > PLAYER_INTERACT_RANGE + 1) return no('far')
+    // '바쁨'은 누구에게나 똑같이 먼저 알린다(차단 여부에 따라 응답이 달라지면 차단 사실이 드러난다)
+    if (battleOf(target.id) || hasPending(target.id)) return no('busy')
     if (target.blocked.has(p.pid)) {
       // 차단당한 사실은 알려 주지 않는다: 2~4초 뒤 평범한 거절처럼 보인다
       p.cd.set('battle', now + 4000)
       fakeDeclines.push({ to: p.id, at: now + 2000 + Math.floor(room.rnd() * 2000) })
       return
     }
-    if (battleOf(target.id) || hasPending(target.id)) return no('busy')
     const until = now + INVITE_TTL_MS
     pending.set(target.id, { from: p.id, to: target.id, until })
     room.send(target, { t: 'battle', ph: 'inv', from: p.id, until })
@@ -185,7 +194,11 @@ export function createBattleSystem(): RoomSystem {
       }
       for (let i = fakeDeclines.length - 1; i >= 0; i--) if (fakeDeclines[i]!.to === p.id) fakeDeclines.splice(i, 1)
       const b = battleOf(p.id)
-      if (b) finish(b, 'left', p.id)
+      if (b) {
+        // 나간 사람에게도 쿨타임을 남긴다(쿨타임 표는 재접속해도 이어진다)
+        setCool(p, room.now())
+        finish(b, 'left', p.id)
+      }
     },
     onWelcome(_p, w) {
       w.battles = battles.map((b) => ({ ...b }))

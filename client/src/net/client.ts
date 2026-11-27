@@ -65,6 +65,8 @@ export function createNet(store: Store, bus: Bus): Net {
   let pingTimer: ReturnType<typeof setInterval> | undefined
   let everPlayed = false
   let lastSnapTime = 0
+  /** 서버가 마지막으로 확인해 준 내 이름(이름 변경이 거부되면 이것으로 되돌린다) */
+  let confirmedName = ''
   let idleKicked = false
 
   function setPhase(phase: Store['phase'], why = ''): void {
@@ -224,6 +226,7 @@ export function createNet(store: Store, bus: Bus): Net {
     store.room = { ...w.room }
     const p = store.profile
     p.name = w.name
+    confirmedName = w.name
     p.look = w.look
     p.save = w.save
     p.lastRoom = w.room.id
@@ -296,9 +299,21 @@ export function createNet(store: Store, bus: Bus): Net {
           emitPopulation()
         }
         break
+      case 'err': {
+        // 이름 변경이 거부됐다(쿨타임·신고로 인한 고정 등): 미리 바꿔 둔 화면의 이름을 서버 기준으로 되돌린다
+        if (msg.code === 'name' && confirmedName && store.profile.name !== confirmedName) {
+          store.profile.name = confirmedName
+          saveProfile(store.profile)
+          bus.emit('profile')
+        }
+        break
+      }
       case 'pu': {
         if (me && msg.id === me.id) {
-          if (msg.name !== undefined) store.profile.name = msg.name
+          if (msg.name !== undefined) {
+            store.profile.name = msg.name
+            confirmedName = msg.name
+          }
           if (msg.look !== undefined) store.profile.look = msg.look
           if (msg.cult !== undefined) me.prog.cult = msg.cult
           if (msg.rank !== undefined) me.prog.rank = msg.rank

@@ -7,7 +7,14 @@ import { INVITE_COOLDOWN_MS, INVITE_GLOBAL_COOLDOWN_MS, INVITE_TTL_MS, PROTOCOL_
 import { CULT_MEMBER_TITLE, STAT } from '../../shared/content/core'
 import type { CultScore } from '../../shared/types'
 import type { CultRegistry } from '../../server/core/api'
-import { CULT_CREATE_COOLDOWN_MS, MUTE_MS, RECRUIT_INF, createCultSystem } from '../../server/core/systems/cult'
+import {
+  CULT_CREATE_COOLDOWN_MS,
+  MUTE_MS,
+  RECRUIT_INF,
+  REPORT_MIN_INF,
+  REPORT_MIN_SESSION_MS,
+  createCultSystem,
+} from '../../server/core/systems/cult'
 import { LOOK0, setup } from './helpers'
 
 type T = ReturnType<typeof setup>
@@ -32,6 +39,15 @@ function memRegistry(): CultRegistry & { map: Map<string, CultScore> } {
     get: (id) => map.get(id),
     top: (n) => [...map.values()].sort((a, b) => b.inf - a.inf).slice(0, n),
     remove: (id) => void map.delete(id),
+  }
+}
+
+/** 자동 조치에 세는 신고 자격(방에 머문 시간 + 영향력)을 갖춘 사람으로 만든다 */
+function seasoned(t: { player: ReturnType<typeof setup>['player']; host: { t: number } }, ...who: { id: number }[]): void {
+  for (const w of who) {
+    const p = t.player(w.id)
+    p.prog.inf = Math.max(p.prog.inf, REPORT_MIN_INF)
+    p.joinedAt = t.host.t - REPORT_MIN_SESSION_MS
   }
 }
 
@@ -378,6 +394,7 @@ describe('신고', () => {
     const bad = t.join({ name: '수상한이름' })
     const r1 = t.join()
     const r2 = t.join()
+    seasoned(t, r1, r2)
     t.send(r1.conn, { t: 'report', id: bad.id, why: 'name' })
     t.wait(REPORT_COOLDOWN_MS, [bad.conn, r1.conn, r2.conn])
     t.send(r1.conn, { t: 'report', id: bad.id, why: 'name' })
@@ -394,6 +411,7 @@ describe('신고', () => {
     const t = make()
     const bad = t.join()
     const rs = [t.join(), t.join(), t.join()]
+    seasoned(t, ...rs)
     t.send(rs[0]!.conn, { t: 'report', id: bad.id, why: 'spam' })
     t.send(rs[0]!.conn, { t: 'report', id: bad.id, why: 'grief' }) // 쿨타임
     t.send(rs[1]!.conn, { t: 'report', id: bad.id, why: 'nope' })

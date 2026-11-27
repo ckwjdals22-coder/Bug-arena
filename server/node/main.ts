@@ -5,7 +5,7 @@
  * 그래서 같은 코어를 Cloudflare Workers 어댑터에서도 그대로 쓸 수 있다.
  *
  * 실행: `npx tsx server/node/main.ts` 또는 번들(`npm run build:server` → `node dist/server/main.js`).
- * 환경변수: PORT · HOST · ROOMS · MAX_ROOMS · ROOM_CAPACITY · NPCS · SAVE_SECRET · CLIENT_DIR · ALLOWED_ORIGINS · DATA_DIR
+ * 환경변수: PORT · HOST · ROOMS · MAX_ROOMS · ROOM_CAPACITY · NPCS · MAX_PRE_HELLO · MAX_CONNS_PER_IP · TRUST_PROXY · SAVE_SECRET · CLIENT_DIR · ALLOWED_ORIGINS · DATA_DIR
  */
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
@@ -24,7 +24,7 @@ import {
 } from '../../shared/constants'
 import { CLOSE_FULL, type ServerMsg } from '../../shared/protocol'
 import type { CultScore, RoomInfo } from '../../shared/types'
-import type { CultRegistry, RoomHost } from '../core/api'
+import type { CultRegistry, PlayerMemory, RoomHost } from '../core/api'
 import { Lobby } from '../core/lobby'
 import { MAX_HELLO_BYTES, Room } from '../core/room'
 import { createSigner } from '../core/save'
@@ -62,6 +62,14 @@ const HEARTBEAT_MS = 20_000
 const CLOSE_GRACE_MS = 2000
 /** 정원 + 입장 대기 여유. 소켓만 열어 두는 공격으로 자원이 끝없이 늘지 않게 한다 */
 const MAX_CONNS = MAX_ROOMS * CAPACITY * 2 + 100
+/**
+ * hello 를 아직 보내지 않은 연결의 전체 상한. 넘치면 새 연결을 막는 대신 '가장 오래 인사하지 않은 연결'을 끊는다
+ * → 연결만 열어 두고 버티는 공격은 뒤에 오는 정상 접속에 밀려난다(정상 클라이언트는 수십 ms 안에 hello 를 보낸다).
+ */
+const MAX_PRE_HELLO = Math.max(32, envInt('MAX_PRE_HELLO', 64, 8, 10_000))
+/** IP 하나당 동시 연결 상한(0 = 끔). 프록시 뒤에서는 TRUST_PROXY(프록시 단계 수)를 같이 줘야 진짜 주소를 본다 */
+const MAX_CONNS_PER_IP = envInt('MAX_CONNS_PER_IP', 0, 0, 100_000)
+const TRUST_PROXY = envInt('TRUST_PROXY', 0, 0, 8)
 const CULT_FLUSH_MS = 30_000
 const MAX_CULTS = 5000
 const ROOM_LIST_CACHE_MS = 250
@@ -262,9 +270,27 @@ interface Conn {
   room: Room
   /** 마지막 하트비트 이후 살아 있다는 신호(pong 또는 메시지)가 있었는가 */
   alive: boolean
+  /** 접속 주소(IP당 상한 계산용) */
+  ip: string
 }
 
 const conns = new Map<number, Conn>()
+/** hello 가 아직 처리되지 않은 연결(삽입 순서 = 오래된 순) */
+const preHello = new Set<number>()
+const connsPerIp = new Map<string, number>()
+
+function clientIp(req: http.IncomingMessage): string {
+  if (TRUST_PROXY > 0) {
+    const xff = String(req.headers['x-forwarded-for'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    // 오른쪽에서 TRUST_PROXY 번째가 '우리가 믿는 프록시가 본 상대 주소'다(왼쪽 값은 상대가 꾸며 낼 수 있다)
+    const ip = xff[xff.length - TRUST_PROXY]
+    if (ip) return ip
+  }
+  return req.socket.remoteAddress ?? 'unknown'
+}
 let nextConnId = 1
 let shuttingDown = false
 const startedAt = Date.now()
@@ -310,6 +336,8 @@ const host: RoomHost = {
     if (!c) return
     const ws = c.ws
     if (ws.readyState !== ws.OPEN) return
+    // Room 이 welcome 을 보냈다 = 인사를 마친 정상 접속
+    if (preHello.size > 0 && typeof data === 'string' && data.startsWith('{"t":"welcome"')) preHello.delete(connId)
     if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
       // 스냅샷은 '변한 것만' 보내는 방식이라 중간 하나를 건너뛰면 그 클라이언트 화면이 영영 어긋난다.
       // 그래서 건너뛰지 않고 끊는다 — 클라이언트는 자동 재접속으로 전체 상태를 새로 받는다.
@@ -339,7 +367,9 @@ const host: RoomHost = {
   cults,
 }
 
-const lobby = new Lobby((id, name) => new Room(host, { id, name, capacity: CAPACITY, npcCount: NPCS }), ROOMS, MAX_ROOMS)
+// 쿨타임·차단·입막음·이름 고정은 방을 옮겨도 따라가야 하므로 모든 방이 같은 메모 저장소를 쓴다
+const playerMemory = new Map<string, PlayerMemory>()
+const lobby = new Lobby((id, name) => new Room(host, { id, name, capacity: CAPACITY, npcCount: NPCS, memory: playerMemory }), ROOMS, MAX_ROOMS)
 lobbyRef = lobby
 
 // ───────────────────────── 틱 ─────────────────────────
@@ -680,10 +710,18 @@ function toBuffer(data: RawData): Buffer {
   return data
 }
 
-function attach(ws: WebSocket, room: Room): void {
+function attach(ws: WebSocket, room: Room, ip: string): void {
   const id = nextConnId++
-  const c: Conn = { id, ws, room, alive: true }
+  const c: Conn = { id, ws, room, alive: true, ip }
   conns.set(id, c)
+  connsPerIp.set(ip, (connsPerIp.get(ip) ?? 0) + 1)
+  // 인사 전 연결이 너무 많으면 가장 오래 버틴 것부터 끊는다
+  preHello.add(id)
+  while (preHello.size > MAX_PRE_HELLO) {
+    const oldest = preHello.values().next().value as number
+    preHello.delete(oldest)
+    conns.get(oldest)?.ws.terminate()
+  }
   ws.on('message', (data: RawData, isBinary: boolean) => {
     c.alive = true
     const buf = toBuffer(data)
@@ -695,6 +733,10 @@ function attach(ws: WebSocket, room: Room): void {
   ws.on('close', () => {
     // 표에서 먼저 지운다: 퇴장 처리 중 이 연결로 보내려는 것이 조용히 버려지게
     conns.delete(id)
+    preHello.delete(id)
+    const left = (connsPerIp.get(ip) ?? 1) - 1
+    if (left > 0) connsPerIp.set(ip, left)
+    else connsPerIp.delete(ip)
     room.disconnect(id)
   })
   ws.on('error', (err: Error) => {
@@ -726,6 +768,11 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
     rejectUpgrade(socket, 503, 'Service Unavailable')
     return
   }
+  const ip = clientIp(req)
+  if (MAX_CONNS_PER_IP > 0 && (connsPerIp.get(ip) ?? 0) >= MAX_CONNS_PER_IP) {
+    rejectUpgrade(socket, 429, 'Too Many Requests')
+    return
+  }
   const requested = url.searchParams.get('room')
   wss.handleUpgrade(req, socket, head, (ws) => {
     const room = lobby.pick(requested)
@@ -737,7 +784,7 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
       closeSocket(ws, CLOSE_FULL, 'full')
       return
     }
-    attach(ws, room)
+    attach(ws, room, ip)
   })
 })
 

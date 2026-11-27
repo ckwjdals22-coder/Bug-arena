@@ -146,23 +146,27 @@ export function mountBattle(ctx: AppContext): void {
     const their = mineIsA ? b.sb : b.sa
     const won = winner === me.id
     const tie = winner === 0
+    // 상대가 나갔는데 내가 앞서 있지 않았다면 서버가 승부를 무효로 처리한다(보상·전적 없음)
+    const voided = left && tie
     const inf = tie ? Math.round((INF_BATTLE_WIN + INF_BATTLE_LOSE) / 2) : won ? INF_BATTLE_WIN : INF_BATTLE_LOSE
     clear(result)
     result.className = 'battle-result ' + (tie ? 'tie' : won ? 'win' : 'lose')
     result.append(
-      h('div.battle-result-title', tie ? '🤝 무승부' : won ? '🏆 승리!' : '😵 패배'),
+      h('div.battle-result-title', voided ? '🚪 무효' : tie ? '🤝 무승부' : won ? '🏆 승리!' : '😵 패배'),
       h('div.battle-result-score', `${my} : ${their}`),
       h(
         'div.battle-result-text',
-        left && won
-          ? '상대가 자리를 떴습니다. 부전승도 승리입니다.'
-          : tie
-            ? '둘 다 말은 많았습니다.'
-            : won
-              ? '오늘 이 거리의 포교왕은 당신입니다.'
-              : '괜찮아요. 거절도 수집이 됩니다.',
+        voided
+          ? '상대가 자리를 떠서 없던 승부가 됐습니다.'
+          : left && won
+            ? '상대가 자리를 떴습니다. 앞서고 있었으니 승리입니다.'
+            : tie
+              ? '둘 다 말은 많았습니다.'
+              : won
+                ? '오늘 이 거리의 포교왕은 당신입니다.'
+                : '괜찮아요. 거절도 수집이 됩니다.',
       ),
-      h('div.battle-result-inf', `✨ 영향력 +${inf}`),
+      ...(voided ? [] : [h('div.battle-result-inf', `✨ 영향력 +${inf}`)]),
     )
     playSfx(ctx, tie ? 'pop' : won ? 'win' : 'lose')
     if (!tie) ctx.actions.emote(won ? 'cheer' : 'bow')
