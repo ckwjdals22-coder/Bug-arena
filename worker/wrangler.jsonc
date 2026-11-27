@@ -9,7 +9,7 @@
 
 	// 정적 클라이언트(npm run build:client → dist/client). 경로는 이 설정 파일 기준.
 	// 에셋과 일치하는 요청은 Worker 를 거치지 않고 무료로 서빙되고, 에셋에 없는 경로만 Worker 의 fetch() 로 온다.
-	// 클라이언트를 다른 곳(파운더리 등)에 따로 올린다면 이 블록을 통째로 지워도 된다(docs/DEPLOY-CLOUDFLARE.md).
+	// 클라이언트를 다른 곳에 따로 올린다면 이 블록을 통째로 지워도 된다(docs/DEPLOY-CLOUDFLARE.md).
 	"assets": {
 		"directory": "../dist/client",
 		"binding": "ASSETS",

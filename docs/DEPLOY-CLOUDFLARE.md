@@ -128,7 +128,7 @@ npm run deploy
 
 ### 화면(클라이언트)을 다른 곳에 따로 올린 경우
 
-게임 화면을 파운더리·GitHub Pages 같은 정적 호스팅에 올리고, Cloudflare 는 실시간 서버로만 쓸 수 있습니다.
+게임 화면을 GitHub Pages 같은 정적 호스팅에 올리고, Cloudflare 는 실시간 서버로만 쓸 수 있습니다.
 
 1. 빌드된 `dist/client/config.js`(원본은 `client/public/config.js`)를 열어 서버 주소를 적습니다:
    ```js

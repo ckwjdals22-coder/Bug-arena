@@ -1,4 +1,4 @@
-# 07. 어디에 올릴 것인가 — 호스팅 선택지와 "파운더리"의 정체
+# 07. 어디에 올릴 것인가 — 호스팅 선택지
 
 - 조사일: 2026-11-26
 - 대상: "도를 아십니까? — 교주 시뮬레이터"의 Node 실시간 서버(프로세스 하나가 정적 파일 + `/api/rooms` + `/ws` 를 같이 서빙)와 정적 클라이언트를 어디에 올릴지
@@ -22,8 +22,7 @@
 
 ## 0. 한눈에 보는 결론
 
-1. **"파운더리"가 무엇인지 특정하지 못했다.** 한국어·영어로 여러 번 검색했지만 "AI로 웹게임을 만들고 자체 서버에 올리는 '파운더리'"라는 제품은 나오지 않았다. 이름이 같은 후보는 넷이고(Microsoft Foundry, Palantir Foundry, Cloud Foundry, Foundry VTT), **공개 웹게임의 방 서버를 그대로 올릴 수 있는 것은 Cloud Foundry뿐**이다. 사용자에게 한 줄로 물어야 한다(§1.4). [문서][검색요약]
-2. **어떤 답이 와도 되도록 이미 설계돼 있다.** 클라이언트는 `client/public/config.js`의 `server` 한 줄로 외부 서버를 가리키고, 서버는 Node 프로세스 하나다. "파운더리"가 정적 호스팅만 되면 클라이언트만 올리고 서버는 아래 추천지에 둔다.
+2. **어디에 올리든 구조는 같다.** 서버는 Node 프로세스 하나(정적 파일 + `/api/rooms` + `/ws`)이고, 클라이언트를 따로 올리고 싶으면 `client/public/config.js`의 `server` 한 줄로 실시간 서버를 가리키면 된다.
 3. **가장 쉬운 곳: Render(싱가포르).** GitHub 저장소 연결 → 빌드/시작 명령 두 줄 → 끝. 카드 없이 무료로 시작한다. 무료 인스턴스는 15분 동안 들어오는 트래픽이 없으면 잠들고, 깨어나는 데 약 1분 걸린다. WebSocket 최대 연결 시간 제한은 없다. [문서]
 4. **한국에서 가장 빠른 곳: 서울 VPS.** Vultr 서울 `vc2-1c-1gb` 월 $5(1 vCPU, 1GB, 전송량 1TB 포함) 또는 AWS Lightsail 서울 월 $5(512MB, 1TB 포함) / $7(1GB, 2TB). 서울 안에서는 왕복 1.5ms, 도쿄는 35ms, 싱가포르는 67ms, 미국 서부는 126ms다. [API][문서][데이터]
 5. **쉽고 가까운 절충안: Fly.io 도쿄(`nrt`).** 카드를 등록하면 매달 $5어치가 무료다. Dockerfile과 CLI가 필요하다. [문서]
@@ -36,70 +35,7 @@
 
 ---
 
-## 1. Part A — "파운더리"는 무엇인가
-
-### 1.1 원문
-
-> 파운더리 자체 서버에서 WebSocket과 방별 상태 관리가 가능하다면 해당 기능을 이용하세요
-
-이 문장이 전제하는 것은 "파운더리"가 (a) 게임을 올릴 **호스팅 기능이 있는 플랫폼**이고 (b) 그 서버가 WebSocket과 상태 유지를 지원할 수도, 안 할 수도 있다는 것이다. 한국어에서 반도체 위탁생산과 Microsoft/Palantir 제품은 보통 "파운**드**리"로 적는다. "파운**더**리"는 흔한 다른 표기이므로 철자만으로 후보를 좁힐 수 없다.
-
-### 1.2 검색한 것과 결과
-
-다음 검색에서 **해당하는 제품이 나오지 않았다.** [검색요약]
-
-- "파운더리 AI 앱 빌더 웹게임 만들기 배포 서버"
-- "파운더리 AI 웹앱 빌더 호스팅 바이브코딩 플랫폼 2026"
-- "파운더리 바이브코딩 게임 만들기 Foundry 자체 서버 멀티플레이"
-- "Foundry AI app builder hosting WebSocket server vibe coding deploy game 2026"
-- "Foundry AI game builder platform multiplayer web game built-in server rooms publish"
-- "Foundry vibe coding platform multiplayer game deploy/publish new startup 2026"
-- "Claude Code Foundry hosting web app deploy (Anthropic/OpenAI/Google)"
-- 확장 검색 1회("파운더리 OR 파운드리, AI로 웹게임 만들고 배포하는 플랫폼, 자체 서버, WebSocket")
-
-검색에 걸린 "AI로 게임을 만들고 서버까지 띄워 주는" 서비스는 Google AI Studio(실시간 멀티플레이 지원 보도), Manus, Hostinger AI Builder, SEELE, Rosebud, Lovable 등이었고 이름이 Foundry인 것은 없었다. SEELE에 "Foundry Custom Game Builder"라는 페이지가 있지만 "Foundry 풍 게임을 참고해 원형을 만든다"는 랜딩 페이지이고 호스팅 플랫폼이 아니다. [검색요약]
-
-### 1.3 이름이 같은 후보
-
-| 후보 | 무엇인가 | 정적 호스팅 | 서버 코드 | WebSocket | 상시 프로세스 | 공개 게임 서버로 |
-|---|---|---|---|---|---|---|
-| **Microsoft Foundry** (옛 Azure AI Foundry) | AI 모델·에이전트 플랫폼 | 해당 기능 못 찾음 | "호스티드 에이전트"(컨테이너). **Python, C#만** | `invocations_ws` 프로토콜 있음. Entra ID 인증 필요 | 세션별 샌드박스. 유휴 2~240분(기본 15분) 뒤 내려감 | **부적합** |
-| **Palantir Foundry** | 기업용 데이터 플랫폼 | 있음. 파일 1,000개·20MB, **보는 사람이 Foundry 로그인 필요** | 컴퓨트 모듈(컨테이너) | WebSocket 리스너(베타, Palantir 지원팀에 신청). Foundry 토큰 인증 | 컴퓨트 모듈 | **부적합** |
-| **Cloud Foundry** (SAP BTP 등) | 오픈소스 PaaS (`cf push`) | 가능(staticfile 빌드팩) | Node 빌드팩 | 지원(Gorouter). 앞단 로드밸런서 설정에 달림 | 가능 | **가능** |
-| **Foundry VTT** | TRPG용 가상 테이블탑(직접 호스팅하는 Node 앱) | — | 자체 앱 전용 | 자체 앱 전용 | — | 호스팅 플랫폼 아님 |
-| Foundry (이더리움 개발 도구 forge/anvil) | 스마트 컨트랙트 툴체인 | — | — | — | — | 무관 |
-
-근거:
-
-- **Microsoft Foundry.** 공식 문서(2026-11-24 수정본)의 문장들: 호스티드 에이전트는 "Agent Service에서 실행되는 컨테이너화된 에이전트 애플리케이션"이고, "Hosted agents support **Python** and **C#**", 엔드포인트는 Entra ID로 인증하며, 세션마다 VM으로 격리된 샌드박스가 뜨고 유휴 타임아웃(2~240분, 기본 15분)이 지나면 컴퓨트를 내린다. WebSocket 프로토콜(`invocations_ws`)의 용도는 "실시간 음성 에이전트"다. 리전 목록에 Korea Central이 있다. [문서] → Node 서버를 올릴 수 없고, 인증 없는 브라우저 접속을 받는 구조가 아니다.
-- **Palantir Foundry.** 웹 호스팅 문서: "only supports hosting static assets and does not support running a server", 파일 최대 1,000개, 총 20MB, 보는 사람에게 Foundry 로그인 권한이 필요. [문서] WebSocket 리스너 문서: 베타이며 "may not be available on your enrollment", 주 용도는 실시간 음성·전화(Twilio 등), "Foundry cannot guarantee high availability for WebSocket listener connections". [문서] → 인스타그램에서 누구나 눌러 들어오는 게임에는 쓸 수 없다.
-- **Cloud Foundry.** 관리자 문서에 WebSocket 지원 설정이 있다. 앞단 로드밸런서가 업그레이드 요청을 라우터로 그대로 넘기도록 설정돼 있어야 하고, AWS ELB처럼 그게 안 되면 TCP 모드나 별도 포트(기본 8443)를 쓴다. [문서] 유휴 타임아웃은 이 문서에 없다(확인 못함). 사용자의 회사가 Cloud Foundry 기반 플랫폼(SAP BTP 등)을 쓴다면 `cf push`로 Node 서버를 인스턴스 1개로 올리면 된다. [추정]
-- **Foundry VTT.** Node로 직접 호스팅하는 TRPG 도구다. Railway에 v14 템플릿이 있다. [검색요약] "자체 서버"라는 표현과 겉으로는 맞지만, 다른 게임을 올리는 플랫폼이 아니다.
-
-### 1.4 판단과 권고
-
-- **단정하지 않는다.** 가장 그럴듯한 해석은 "사용자가 쓰는(또는 쓰려는) 어떤 제작·배포 도구의 이름"이고, 그것이 위 후보 중 하나인지, 사내 플랫폼 이름인지, 다른 제품을 잘못 부른 것인지 알 수 없다.
-- 저장소의 `client/public/config.js` 주석에는 이미 "정적 호스팅(파운더리 등)에 클라이언트만 올리고 실시간 서버를 따로 둘 때"라고 적혀 있다. 이 가정(파운더리 = 정적 호스팅만 될 수도 있는 곳)이 가장 안전하다.
-- **사용자에게 물을 한 줄:** "말씀하신 '파운더리'의 주소(또는 회사명)를 알려 주세요. 그곳이 (1) 정적 파일만 올릴 수 있는지, (2) Node 프로세스를 계속 켜 둘 수 있는지 확인하겠습니다."
-- **답에 따른 분기:**
-
-| 답 | 할 일 |
-|---|---|
-| 정적 파일만 된다 | `dist/client`만 올리고 `config.js`의 `server`에 외부 서버 주소(§2.6 추천지)를 적는다. §3의 세 가지를 지킨다 |
-| Node 프로세스가 계속 돈다(컨테이너, `cf push` 등) | `npm run build` 후 `node dist/server/main.js`. 인스턴스 1개 고정, `PORT`와 `SAVE_SECRET` 주입, WebSocket 유휴·최대 연결 시간을 문서에서 확인 |
-| 요청마다 뜨는 함수만 된다(서버리스) | 방 서버를 올릴 수 없다. 정적 파일만 올리고 서버는 외부에 둔다 |
-| Cloudflare 계열이다 | `worker/` 어댑터(06 문서) |
-| 답이 없다 | Render에 서버+클라이언트를 한 번에 올려 주소를 먼저 준다(§2.7) |
-
-### 1.5 이 절에서 확인 못한 것
-
-- 사용자가 가리킨 "파운더리"의 실체.
-- Microsoft Foundry에서 일반 웹앱(Azure App Service 등)으로 내보내는 경로의 현재 상태. Azure App Service가 WebSocket을 지원한다는 것은 일반 지식이고 이번에 다시 확인하지 않았다.
-- Cloud Foundry 배포판별 WebSocket 유휴 타임아웃.
-
----
-
-## 2. Part B — Node WebSocket 서버를 어디에 둘 것인가
+## 2. Node WebSocket 서버를 어디에 둘 것인가
 
 ### 2.1 우리 서버가 호스팅에 요구하는 것
 
@@ -507,11 +443,11 @@ Node 버전(2026-11-26, nodejs.org 배포 목록과 릴리스 일정) [데이터
 
 ---
 
-## 3. Part C — 정적 클라이언트를 따로 올릴 때
+## 3. 정적 클라이언트를 따로 올릴 때
 
 ### 3.1 언제 따로 올리나
 
-- "파운더리"가 정적 파일만 받는 경우.
+- 이미 쓰고 있는 정적 호스팅(회사 홈페이지, GitHub Pages 등)에 게임 화면을 붙이고 싶은 경우.
 - 방문자가 몰릴 때 정적 파일 전송을 서버 전송량에서 빼고 싶은 경우(§2.3).
 - 서버를 옮겨도 사용자가 아는 주소(`https://game…`)를 그대로 두고 싶은 경우.
 
@@ -654,7 +590,7 @@ http.on('upgrade', (req, socket, head) => {
 
 **지금 할 것**
 
-1. **사용자에게 "파운더리"의 주소를 묻는다**(§1.4의 한 줄). 답을 기다리는 동안 Render 무료에 올려 공유 가능한 주소를 먼저 만든다.
+1. **Render 무료에 먼저 올려 공유 가능한 주소를 만든다.** 반응이 오면 서울 VPS 로 옮긴다.
 2. **`SAVE_SECRET`을 환경변수로 고정한다.** 값이 없으면 서버가 `DATA_DIR/secret`에 만들어 쓰는데, PaaS의 임시 디스크에서는 쓰기가 성공해 경고가 안 뜨고, 다음 재시작 때 새 키가 만들어져 전 사용자의 진행도 서명이 깨진다. `NODE_ENV=production`인데 `SAVE_SECRET`이 없으면 시작할 때 경고를 찍는다.
 3. **인스턴스 1개를 설정에 못 박는다.** Render `numInstances: 1`, Fly `--ha=false` + `fly scale count 1`, Cloud Run `--max-instances=1`.
 4. **Node 버전을 고정한다.** `.node-version`에 `24.22.3`. `engines`는 `>=22 <27`처럼 상한을 둔다(06 문서에 따르면 `wrangler` 4.168.0도 Node 22.12 이상을 요구한다).
@@ -685,7 +621,6 @@ http.on('upgrade', (req, socket, head) => {
 
 | 항목 | 상태 |
 |---|---|
-| 사용자가 말한 "파운더리"의 실체 | 검색으로 특정 실패. 사용자 확인 필요 |
 | 실제 배포 | 어느 플랫폼에도 계정이 없어 배포해 보지 못함. 절차는 문서 근거 |
 | Dockerfile, `fly.toml`, `gcloud` 명령, systemd·Caddy 설정 | 작성만 하고 실행하지 못함(Docker 데몬 없음) |
 | Fly.io 도쿄 머신 단가, `idle_timeout` 기본값, 열린 WebSocket이 자동 정지를 막는지 | 문서에 수치·명시 없음 |
@@ -709,13 +644,7 @@ http.on('upgrade', (req, socket, head) => {
 
 ## 6. 출처 (직접 읽은 것)
 
-Part A
-- https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents
-- https://palantir.com/docs/foundry/developer-console/deploy-custom-application-on-foundry/
-- https://palantir.com/docs/foundry/data-connection/listeners-websocket/
-- https://docs.cloudfoundry.org/adminguide/supporting-websockets.html
-
-Part B
+서버 호스팅
 - Render: https://render.com/pricing · https://render.com/docs/free · https://render.com/docs/websocket · https://render.com/docs/regions · https://render.com/docs/node-version · https://render.com/docs/environment-variables · https://render.com/docs/blueprint-spec
 - Railway: https://railway.com/pricing · https://docs.railway.com/reference/pricing/plans · https://docs.railway.com/reference/regions · https://docs.railway.com/networking/public-networking/specs-and-limits · https://docs.railway.com/reference/app-sleeping · https://docs.railway.com/reference/railpack
 - Fly.io: https://docs.fly.io/about/pricing · https://docs.fly.io/about/free-plan · https://docs.fly.io/reference/regions · https://docs.fly.io/launch/autostop-autostart · https://docs.fly.io/reference/fly-proxy-autostop-autostart · https://docs.fly.io/reference/configuration
@@ -733,7 +662,7 @@ Part B
 - Node: https://raw.githubusercontent.com/nodejs/Release/main/schedule.json · https://nodejs.org/dist/index.json
 - Caddy: https://caddyserver.com/docs/install
 
-Part C
+정적 호스팅·브라우저 동작
 - https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/ · https://developers.cloudflare.com/workers/platform/limits/ · https://developers.cloudflare.com/workers/static-assets/migration-guides/migrate-from-pages/ · https://developers.cloudflare.com/pages/platform/limits/
 - https://developers.cloudflare.com/network/websockets/ · https://developers.cloudflare.com/fundamentals/reference/connection-limits/
 - https://developers.cloudflare.com/durable-objects/platform/pricing/ · https://developers.cloudflare.com/durable-objects/reference/data-location/
@@ -742,4 +671,4 @@ Part C
 - https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
 - https://developer.mozilla.org/en-US/docs/Web/Security/Mixed_content
 
-로컬 실험 파일(임시 폴더, 저장소 밖): `/tmp/claude-0/-home-user-Bug-arena/5d9aed2a-d9b6-565c-8ef8-6ff87e511c45/scratchpad/research-hosting-foundry/exp/` 의 `server.mjs`, `test.mjs`, `mixed.mjs`
+로컬 실험(교차 출처 접속, https 페이지의 `ws://` 차단)은 저장소 밖 임시 폴더에서 돌렸고 파일은 남기지 않았다.
