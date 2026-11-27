@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { adminCookieName, userCookieName, VISITOR_COOKIE } from "@/lib/cookies";
+import { adminCookieName, REF_COOKIE, REF_COOKIE_MAX_AGE, userCookieName, VISITOR_COOKIE } from "@/lib/cookies";
 
 /**
  * 모든 요청 앞단에서 실행된다.
@@ -23,9 +23,9 @@ function buildCsp(nonce: string): string {
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
     `style-src 'self' 'unsafe-inline'`,
-    `img-src 'self' blob: data: ${storageOrigin}`.trim(),
+    `img-src 'self' blob: data: https://*.tosspayments.com https://*.toss.im ${storageOrigin}`.trim(),
     `font-src 'self' data:`,
-    `connect-src 'self' https://*.tosspayments.com${isDev ? " ws: wss:" : ""}`,
+    `connect-src 'self' https://*.tosspayments.com https://*.toss.im${isDev ? " ws: wss:" : ""}`,
     `frame-src 'self' https://*.tosspayments.com https://*.toss.im`,
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
@@ -98,7 +98,8 @@ export function proxy(request: NextRequest) {
   const needsUser =
     pathname.startsWith("/my") ||
     pathname.startsWith("/book/") ||
-    (pathname.startsWith("/seller") && !pathname.startsWith("/seller/intro"));
+    pathname === "/seller" ||
+    pathname.startsWith("/seller/");
   if (needsUser && !hasUser) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
@@ -134,6 +135,26 @@ export function proxy(request: NextRequest) {
       path: "/",
       maxAge: 60 * 60 * 24 * 365,
     });
+  }
+
+  // 사업자 자체 링크 유입 기억: ?via=slug 는 언제나, /b/slug 는 사이트 밖에서 바로 들어온 경우에만.
+  // (남는자리 안에서 호스트 이름을 눌러 이동한 방문까지 자체 링크로 치지 않기 위함)
+  if (request.method === "GET") {
+    const viaParam = request.nextUrl.searchParams.get("via");
+    const fetchSite = request.headers.get("sec-fetch-site");
+    const fromOutside = fetchSite === "cross-site" || fetchSite === "none";
+    const isDocument = request.headers.get("sec-fetch-dest") === "document";
+    const hostSlug = pathname.startsWith("/b/") && isDocument && fromOutside ? pathname.split("/")[2] : null;
+    const ref = viaParam ?? hostSlug;
+    if (ref && /^[a-z0-9][a-z0-9-]{1,59}$/.test(ref) && request.cookies.get(REF_COOKIE)?.value !== ref) {
+      res.cookies.set(REF_COOKIE, ref, {
+        httpOnly: true,
+        secure: isHttps,
+        sameSite: "lax",
+        path: "/",
+        maxAge: REF_COOKIE_MAX_AGE,
+      });
+    }
   }
   return applySecurityHeaders(res, csp);
 }
