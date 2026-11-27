@@ -49,8 +49,11 @@
   line-height: 18px;
 }
 .overlay-cult {
+  display: flex;
+  gap: 4px;
   height: 19px;
-  max-width: 220px;
+  /* overlay.ts 의 CULT_TAG_MAX 와 같은 값 */
+  max-width: 240px;
   padding: 0 8px;
   overflow: hidden;
   border: 1.5px solid var(--ink);
@@ -58,7 +61,15 @@
   font-size: 11px;
   font-weight: 800;
   line-height: 16px;
+}
+/* 교단 이름이 길면 이름이 줄어들고, 칭호는 항상 끝까지 보인다 */
+.overlay-cult-name {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.overlay-cult-title {
+  flex: none;
 }
 .overlay-name {
   max-width: 150px;
@@ -230,7 +241,7 @@
     max-width: 120px;
   }
   .overlay-cult {
-    max-width: 170px;
+    max-width: 200px;
     font-size: 10.5px;
   }
   .overlay-bubble-body {

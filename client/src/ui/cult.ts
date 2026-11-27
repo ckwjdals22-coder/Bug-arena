@@ -62,7 +62,10 @@ export function textCheckMessage(c: TextCheck, what: '이름' | '칭호'): strin
     case 'bad':
       return '그 단어는 쓸 수 없어요. 조금 더 순한 말로 지어 볼까요?'
     case 'real':
-      return '실존 단체처럼 보이는 이름은 쓸 수 없어요. 전부 허구여야 하거든요.'
+      // 무엇 때문인지 알려 준다(띄어쓰기를 무시하고 보기 때문에 뜻밖의 낱말이 걸릴 수 있다)
+      return c.hit
+        ? `'${c.hit}'처럼 실존 종교·단체·인물로 보일 수 있는 말은 쓸 수 없어요. 전부 허구여야 하거든요.`
+        : '실존 단체처럼 보이는 이름은 쓸 수 없어요. 전부 허구여야 하거든요.'
   }
 }
 
@@ -80,7 +83,8 @@ export function cultTagEl(cult: Pick<CultRef, 'name' | 'color' | 'emblem' | 'tit
   const el = h('div.overlay-cult.cult-tagline')
   el.style.background = hex(color)
   el.style.color = inkOn(color)
-  el.textContent = `${CULT_EMBLEMS[cult.emblem] ?? '🚩'} ${cult.name} · ${cult.title}`
+  // 이름표와 같은 구조: 이름이 길면 이름이 줄어들고 칭호는 끝까지 보인다
+  el.append(h('span.overlay-cult-name', `${CULT_EMBLEMS[cult.emblem] ?? '🚩'} ${cult.name}`), h('span.overlay-cult-title', `· ${cult.title}`))
   return el
 }
 

@@ -7,6 +7,7 @@ import {
   checkNickname,
   checkTitle,
   cleanText,
+  findRealGroup,
   hasBadWord,
   looksLikeContact,
   looksLikeRealGroup,
@@ -70,11 +71,11 @@ describe('실존 단체·인물 차단(교단 이름/칭호)', () => {
   })
 
   it('사유를 구분해 돌려준다', () => {
-    expect(checkCultName('신천지')).toEqual({ ok: false, why: 'real' })
+    expect(checkCultName('신천지')).toEqual({ ok: false, why: 'real', hit: '신천지' })
     expect(checkCultName('시발교')).toEqual({ ok: false, why: 'bad' })
     expect(checkCultName('')).toEqual({ ok: false, why: 'empty' })
     expect(checkCultName('교')).toEqual({ ok: false, why: 'short' })
-    expect(checkTitle('교황')).toEqual({ ok: false, why: 'real' })
+    expect(checkTitle('교황')).toEqual({ ok: false, why: 'real', hit: '교황' })
     expect(checkTitle('명예 과장')).toEqual({ ok: true, text: '명예 과장' })
   })
 })
@@ -126,3 +127,47 @@ describe('성능', () => {
     expect(performance.now() - t0).toBeLessThan(1500)
   })
 })
+
+describe('실존 단체 필터의 오탐(띄어쓰기를 지우며 생기는 우연한 겹침)', () => {
+  it('무해한 칭호·교단 이름은 통과한다', () => {
+    const fine = [
+      '명예수석부장',
+      '명예 수석 과장',
+      '노예수준신도',
+      '무예수련생',
+      '학교회장',
+      '고교 회식 담당',
+      '나치킨먹을래',
+      '하나치과옆',
+      '보스님',
+      '버스님',
+      '에이스님',
+      '스포덕후',
+      '예수금관리',
+    ]
+    for (const t of fine) {
+      expect(checkTitle(t), t).toMatchObject({ ok: true })
+      expect(checkCultName(t), t).toMatchObject({ ok: true })
+    }
+  })
+
+  it('그래도 실존 종교·단체·인물을 가리키는 말은 막고, 무엇이 걸렸는지 알려 준다', () => {
+    const cases: [string, string][] = [
+      ['명예수님', '예수'],
+      ['예수', '예수'],
+      ['우리 교회', '교회'],
+      ['학교회', '교회'],
+      ['큰스님', '스님'],
+      ['주지스님', '스님'],
+      ['나치', '나치'],
+      ['나치당', '나치'],
+      ['포덕천하', '포덕'],
+      ['통일교', '통일교'],
+    ]
+    for (const [text, hit] of cases) {
+      expect(checkTitle(text), text).toEqual({ ok: false, why: 'real', hit })
+      expect(findRealGroup(text), text).toBe(hit)
+    }
+  })
+})
+

@@ -34,6 +34,8 @@ const PLAYER_FAR = 40
 const NPC_FADE_FROM = 7.2
 const NPC_NEAR = 9
 const MAX_NPC_TAGS = 10
+/** 교단 줄의 최대 폭(px) — overlay.css 의 .overlay-cult max-width 와 같은 값 */
+const CULT_TAG_MAX = 240
 /** 폰처럼 좁은 화면은 이름표끼리 겹치기 쉽다 → 더 가까운 것만 */
 const MAX_NPC_TAGS_NARROW = 6
 const NARROW_PX = 560
@@ -43,6 +45,16 @@ const PICK_MS = 100
 /** 이름표 높이(px) — CSS 의 고정 높이와 맞춘 값. 말풍선을 이름표 위에 얹을 때 쓴다(레이아웃을 읽지 않기 위해) */
 const TAG_H1 = 27
 const TAG_H2 = 48
+/** NPC 이름표 높이(px) */
+const TAG_HN = 26
+/** 겹친 이름표를 위로 쌓는 최대 단수 */
+const STACK_MAX = 3
+/** 글자 폭 어림(px): 한글·한자·가나·이모지는 넓게, 나머지는 좁게 */
+function textWidth(text: string, px: number): number {
+  let w = 0
+  for (const ch of text) w += (ch.codePointAt(0) ?? 0) > 0x2e7f ? px : px * 0.58
+  return w
+}
 const POP_RISE = 58
 const POP_MS = 1400
 /** 연달아 뜨는 글자 사이 간격(px) */
@@ -64,6 +76,17 @@ interface Tag {
   op: number
   z: number
   shown: boolean
+  /** 이번 프레임에 화면에 있어야 하는가(투영 결과) + 투영된 위치·투명도 */
+  vis: boolean
+  px: number
+  py: number
+  opq: number
+  /** 어림한 폭(px). 겹침 계산용 — 레이아웃을 읽지 않으려고 글자 수로 어림한다 */
+  w: number
+  /** 겹침을 피해 위로 밀어 올린 양(px, 0 이하) */
+  dy: number
+  /** 다른 이름표에 가려져 잠시 숨긴 NPC 이름표인가 */
+  culled: boolean
 }
 
 interface Bubble {
@@ -131,7 +154,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       const main = h('div.overlay-main')
       const el = h('div.overlay-tag.off', cult, main)
       layer.append(el)
-      tag = { key: 0, npc: false, head: HEAD_HUMAN, el, cult, main, sig: '', lines: 1, x: NaN, y: NaN, op: -1, z: -1, shown: false }
+      tag = { key: 0, npc: false, head: HEAD_HUMAN, el, cult, main, sig: '', lines: 1, x: NaN, y: NaN, op: -1, z: -1, shown: false, vis: false, px: 0, py: 0, opq: 0, w: 80, dy: 0, culled: false }
     }
     tag.key = key
     tag.npc = isNpcKey(key)
@@ -139,8 +162,12 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     tag.sig = ''
     tag.x = NaN
     tag.y = NaN
+    tag.vis = false
+    tag.dy = 0
+    tag.culled = false
     tags.set(key, tag)
     tagList.push(tag)
+    orderDirty = true
     return tag
   }
 
@@ -156,6 +183,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     const i = tagList.indexOf(tag)
     if (i >= 0) tagList.splice(i, 1)
     tag.key = 0
+    orderDirty = true
     freeTags.push(tag)
   }
 
@@ -177,11 +205,16 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       const color = CULT_COLORS[cult.color] ?? 0x7b5cff
       tag.cult.style.background = hex(color)
       tag.cult.style.color = inkOn(color)
-      // 교단 이름·칭호는 다른 사람이 지은 글자다 → textContent 로만 넣는다
-      tag.cult.textContent = `${CULT_EMBLEMS[cult.emblem] ?? '🚩'} ${cult.name} · ${cult.title}`
+      // 교단 이름·칭호는 다른 사람이 지은 글자다 → 글자로만 넣는다(h 는 textContent 를 쓴다).
+      // 이름이 길면 이름 쪽이 줄어들고 칭호는 언제나 다 보인다
+      tag.cult.replaceChildren(h('span.overlay-cult-name', `${CULT_EMBLEMS[cult.emblem] ?? '🚩'} ${cult.name}`), h('span.overlay-cult-title', `· ${cult.title}`))
     }
     tag.cult.classList.toggle('hidden', !cult)
-    tag.main.replaceChildren(...(isMe ? [h('span.overlay-me', '나')] : []), h('span.overlay-name', name), h('span.overlay-rank', title ? `${title} · ${rankName(rank)}` : rankName(rank)))
+    const rankText = title ? `${title} · ${rankName(rank)}` : rankName(rank)
+    tag.main.replaceChildren(...(isMe ? [h('span.overlay-me', '나')] : []), h('span.overlay-name', name), h('span.overlay-rank', rankText))
+    const mainW = Math.min(150, textWidth(name, 12.5)) + textWidth(rankText, 10.5) + 27 + (isMe ? 24 : 0)
+    const cultW = cult ? Math.min(CULT_TAG_MAX, textWidth(cult.name, 11) + textWidth(cult.title, 11) + 46) : 0
+    tag.w = Math.max(mainW, cultW)
   }
 
   function fillNpcTag(tag: Tag, me: MeView): void {
@@ -199,6 +232,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     // 신도가 된 NPC 는 누구를 따르는지 보여 준다. 그 밖에는 언제나 'NPC' 표시
     const badge = owner ? (owner === me.id ? '내 신도' : `${ownerName}의 신도`) : 'NPC'
     tag.main.replaceChildren(h('span.overlay-name', pub.name), h('span.overlay-npc', badge))
+    tag.w = Math.min(150, textWidth(pub.name, 11.5)) + textWidth(badge, 9.5) + 30
   }
 
   // 가까운 NPC 고르기용 작업 배열(매번 새로 만들지 않는다)
@@ -266,7 +300,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
   function placeTag(tag: Tag, me: MeView): void {
     const e = entity(tag.key)
     if (!e) {
-      hideTag(tag)
+      tag.vis = false
       return
     }
     const dx = e.x - me.x
@@ -276,25 +310,92 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     if (tag.npc) op = d >= NPC_NEAR ? 0 : d <= NPC_FADE_FROM ? 1 : (NPC_NEAR - d) / (NPC_NEAR - NPC_FADE_FROM)
     else op = d >= PLAYER_FAR ? 0 : d <= PLAYER_FADE_FROM ? 1 : 1 - ((d - PLAYER_FADE_FROM) / (PLAYER_FAR - PLAYER_FADE_FROM)) * 0.6
     if (op < 0.05 || !engine.project(e.x, e.y + tag.head, e.z, pt)) {
-      hideTag(tag)
+      tag.vis = false
       return
     }
     // 정수 px 로 맞춘다: 소수 위치의 글자는 흐릿하게 그려진다
-    const x = Math.round(pt.x)
-    const y = Math.round(pt.y)
-    if (x !== tag.x || y !== tag.y) {
-      tag.x = x
-      tag.y = y
-      tag.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
+    tag.vis = true
+    tag.px = Math.round(pt.x)
+    tag.py = Math.round(pt.y)
+    tag.opq = Math.round(op * 20) / 20
+  }
+
+  // ───────── 겹침 정리 ─────────
+  // 우선순위: 나 → 다른 접속자(id 순) → NPC(지금 말을 걸 수 있는 시민 먼저, 그다음 id 순).
+  //  · 접속자 이름표가 앞선 이름표와 겹치면 그 위로 쌓아 올린다(최대 STACK_MAX 단).
+  //  · NPC 이름표가 앞선 이름표와 겹치면 잠시 숨긴다(광장에 몰려 있을 때 글자 더미가 되지 않게).
+  // 순서를 거리로 정하지 않는 것은 걸어 다닐 때 이름표가 위아래로 자리바꿈하며 깜빡이지 않게 하기 위해서다.
+  let order: Tag[] = []
+  let orderDirty = true
+  let orderNear = 0
+  /** 이미 자리 잡은 이름표의 상자들 [x0, y0, x1, y1, …] */
+  const placed: number[] = []
+
+  function sortOrder(me: MeView): void {
+    orderDirty = false
+    orderNear = store.near.npc
+    const nearKey = orderNear ? npcKey(orderNear) : 0
+    const rank = (t: Tag): number => (t.key === me.id ? 0 : !t.npc ? 1 : t.key === nearKey ? 2 : 3)
+    order = tagList.slice().sort((a, b) => rank(a) - rank(b) || a.key - b.key)
+  }
+
+  /** 겹치는 상자가 있으면 그중 가장 높이 있는 것의 윗변 y, 없으면 NaN. pad 만큼 넉넉히 본다 */
+  function hitTop(x0: number, y0: number, x1: number, y1: number, pad: number): number {
+    let top = NaN
+    for (let i = 0; i < placed.length; i += 4) {
+      // 폭은 어림값이라 가로로 살짝(4px) 겹치는 것은 봐준다
+      if (x1 - 4 + pad <= placed[i]! || x0 + 4 - pad >= placed[i + 2]! || y1 + pad <= placed[i + 1]! || y0 - pad >= placed[i + 3]!) continue
+      const t = placed[i + 1]!
+      if (!(top <= t)) top = t
     }
-    const q = Math.round(op * 20) / 20
-    if (q !== tag.op) {
-      tag.op = q
-      tag.el.style.opacity = String(q)
-    }
-    if (!tag.shown) {
-      tag.shown = true
-      tag.el.classList.remove('off')
+    return top
+  }
+
+  function layoutTags(me: MeView): void {
+    if (orderDirty || orderNear !== store.near.npc) sortOrder(me)
+    placed.length = 0
+    for (let i = 0; i < order.length; i++) {
+      const tag = order[i]!
+      if (!tag.vis) {
+        tag.culled = false
+        hideTag(tag)
+        continue
+      }
+      const hgt = tag.npc ? TAG_HN : tag.lines === 2 ? TAG_H2 : TAG_H1
+      const hw = tag.w / 2
+      const x = tag.px
+      let dy = 0
+      if (tag.npc) {
+        // 한 번 숨긴 것은 틈이 넉넉히 생겨야 다시 보인다(경계에서 깜빡이지 않게)
+        const hit = hitTop(x - hw, tag.py - hgt, x + hw, tag.py, tag.culled ? 8 : 0)
+        tag.culled = hit === hit
+        if (tag.culled) {
+          hideTag(tag)
+          continue
+        }
+      } else if (tag.key !== me.id) {
+        for (let k = 0; k < STACK_MAX; k++) {
+          const top = hitTop(x - hw, tag.py + dy - hgt, x + hw, tag.py + dy, 0)
+          if (top !== top) break
+          dy = top - 1 - tag.py
+        }
+      }
+      tag.dy = dy
+      const y = tag.py + dy
+      placed.push(x - hw, y - hgt, x + hw, y)
+      if (x !== tag.x || y !== tag.y) {
+        tag.x = x
+        tag.y = y
+        tag.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
+      }
+      if (tag.opq !== tag.op) {
+        tag.op = tag.opq
+        tag.el.style.opacity = String(tag.opq)
+      }
+      if (!tag.shown) {
+        tag.shown = true
+        tag.el.classList.remove('off')
+      }
     }
   }
 
@@ -404,7 +505,8 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
         continue
       }
       const tag = tags.get(b.key)
-      const lift = tag && tag.shown ? (tag.lines === 2 ? TAG_H2 : TAG_H1) : 6
+      // 이름표가 겹침을 피해 위로 올라가 있으면 말풍선도 그만큼 따라 올라간다
+      const lift = tag && tag.shown ? (tag.lines === 2 ? TAG_H2 : TAG_H1) - tag.dy : 6
       const x = Math.round(pt.x)
       const y = Math.round(pt.y) - lift
       if (x !== b.x || y !== b.y) {
@@ -537,6 +639,7 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
       pickVisible(me)
     }
     for (let i = 0; i < tagList.length; i++) placeTag(tagList[i]!, me)
+    layoutTags(me)
     updateBubbles(now)
     updatePops(now)
   }

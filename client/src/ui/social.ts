@@ -83,8 +83,8 @@ export function mountSocial(ctx: AppContext): void {
         onClick: () => invite(id),
       })
     }
-    // 버튼에 상대 이름을 붙여 누구에게 하는 행동인지 보이게 한다
-    out.push({ id: 'social.more', label: shortName(target.pub.name), icon: '👤', onClick: () => openSheet(id) })
+    // 무엇을 하는 버튼인지 동사로 적는다(이름만 적혀 있으면 눌러도 되는지 알 수 없다). 누구인지는 열리는 시트 머리에 나온다
+    out.push({ id: 'social.more', label: '인사·더보기', icon: '👤', onClick: () => openSheet(id) })
     return out
   })
 

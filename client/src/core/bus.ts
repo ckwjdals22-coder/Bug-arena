@@ -12,6 +12,8 @@ export interface BusEvents {
   phase: Phase
   /** 방 입장 완료(welcome 처리 후, store 가 채워진 상태) */
   entered: void
+  /** 가려던 방이 가득 차서 서버가 다른 방으로 안내했다(from = 가려던 방 id, to = 들어온 방 id) */
+  redirected: { from: string; to: string }
   /** 다른 플레이어 입장/퇴장/공개 정보 변경 (store 반영 후) */
   playerJoin: number
   playerLeave: number

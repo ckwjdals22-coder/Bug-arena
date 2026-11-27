@@ -91,9 +91,14 @@ export function mountTutorial(ctx: AppContext): void {
     if (step === 'done' || !store.me || m.p !== store.me.id || m.o === 'more') return
     clearTimeout(lingerTimer)
     if (m.o === 'join' || m.o === 'king') {
-      show('🎉 신도가 따라옵니다! 단상 📜 과 헌금함 🎁 에도 데려가 보세요')
+      // 결과 배너·업적 카드가 한꺼번에 뜨는 순간에는 잠깐 비켜 있다가, 그것들이 지나간 뒤에 다음 안내를 띄운다
+      hint.classList.add('hidden')
       step = 'talk' // 표시만 유지하고 곧 끝낸다
-      lingerTimer = setTimeout(finish, 6000)
+      lingerTimer = setTimeout(() => {
+        if (step === 'done' || store.phase !== 'playing') return
+        show('🎉 신도가 따라옵니다! 단상 📜 과 헌금함 🎁 에도 데려가 보세요')
+        lingerTimer = setTimeout(finish, 6000)
+      }, 2800)
     } else if (++fails >= 3) {
       show('😌 괜찮아요, 거절도 수집됩니다. 다른 시민에게도 말을 걸어 보세요')
       lingerTimer = setTimeout(finish, 6000)
@@ -129,13 +134,14 @@ export function mountTutorial(ctx: AppContext): void {
       let visible = false
       if (playing && me && shown < 4) {
         const d = Math.hypot(pin.x - me.x, pin.z - me.z)
-        if (d > 8 && d < 60 && engine.project(pin.x, 3.2, pin.z, scr)) {
+        const locked = pin.locked?.() ?? false
+        // 잠긴 곳의 표지는 문 앞까지 가도 남겨 둔다(왜 못 들어가는지 그 자리에서 보이게)
+        if (d > (locked ? 1.2 : 8) && d < 60 && engine.project(pin.x, 3.2, pin.z, scr)) {
           visible = true
           shown++
           const fade = d > 40 ? Math.max(0.25, 1 - (d - 40) / 20) : 0.9
           pin.el.style.transform = `translate3d(${Math.round(scr.x)}px, ${Math.round(scr.y)}px, 0) translate(-50%, -100%)`
           pin.el.style.opacity = String(fade)
-          const locked = pin.locked?.() ?? false
           const label = pin.el.lastElementChild as HTMLElement
           const text = locked ? `🔒 ${hqRank}부터` : pin.label
           if (label.textContent !== text) label.textContent = text
@@ -145,11 +151,26 @@ export function mountTutorial(ctx: AppContext): void {
     }
   }
 
+  // ═════════ 교단 건물 문 앞: 직급이 모자라면 이유를 알려 준다 ═════════
+  let gateToastAt = 0
+  function checkHqGate(): void {
+    const me = store.me
+    if (!me || store.phase !== 'playing' || me.prog.rank >= WORLD.hq.minRank) return
+    const door = WORLD.hq.door
+    if (Math.hypot(me.x - door.x, me.z - door.z) > door.r + 0.6) return
+    const now = performance.now()
+    if (now - gateToastAt < 9000) return
+    gateToastAt = now
+    const need = RANKS[WORLD.hq.minRank]
+    ui.toast(`🔒 교단 건물은 ${hqRank}(영향력 ${need?.inf ?? 0})부터 들어갈 수 있어요. 지금은 ${RANKS[me.prog.rank]?.name ?? ''}.`, 'info', 4200)
+  }
+
   // ═════════ 프레임 루프(가벼움: 표지 5개 + 이동 거리 확인) ═════════
   function frame(): void {
     requestAnimationFrame(frame)
     if (document.hidden) return
     updatePins()
+    checkHqGate()
     const me = store.me
     if (step === 'move' && me && store.phase === 'playing' && Math.hypot(me.x - startX, me.z - startZ) > 3) {
       step = 'talk'

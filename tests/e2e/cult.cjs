@@ -146,7 +146,8 @@ async function main() {
       await openCultPanel(A)
       await A.locator('.cult-name-input').fill('통일교 친목회')
       const msg = await A.locator('.cult-msg').first().textContent()
-      assert(msg.includes('실존 단체'), `안내 문구: ${msg}`)
+      // 무엇 때문에 막혔는지(걸린 낱말)까지 알려 줘야 한다
+      assert(msg.includes('실존') && msg.includes('통일교'), `안내 문구: ${msg}`)
       assert(await A.locator('.cult-submit').isDisabled(), '막힌 이름인데 버튼이 켜져 있음')
       await A.locator('.cult-dice').click()
       const suggested = await A.locator('.cult-name-input').inputValue()

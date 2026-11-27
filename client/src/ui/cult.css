@@ -17,7 +17,8 @@
 .cult-form .label {
   margin-top: 6px;
 }
-.cult-dice {
+/* .btn.sm(34px)보다 우선해야 손가락으로 누르기 좋은 크기가 된다 */
+.btn.cult-dice {
   flex: 0 0 auto;
   min-height: 44px;
 }
@@ -271,12 +272,9 @@
   padding: 18px 0;
 }
 @media (max-width: 380px) {
+  /* 좁은 폰에서도 색 단추는 42px 를 지킨다(간격만 줄인다) */
   .cult-swatches {
-    grid-template-columns: repeat(6, 38px);
-    gap: 6px;
-  }
-  .cult-swatches .swatch {
-    width: 38px;
-    height: 38px;
+    grid-template-columns: repeat(6, 42px);
+    gap: 5px;
   }
 }

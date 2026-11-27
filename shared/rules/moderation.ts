@@ -12,7 +12,8 @@
  */
 import { CULT_NAME_MAX, CULT_NAME_MIN, NAME_MAX, NAME_MIN, TITLE_MAX } from '../constants'
 
-export type TextCheck = { ok: true; text: string } | { ok: false; why: 'empty' | 'short' | 'long' | 'bad' | 'real' }
+/** why 가 'real' 일 때 hit 은 걸린 낱말(화면에서 무엇 때문인지 알려 주기 위해) */
+export type TextCheck = { ok: true; text: string } | { ok: false; why: 'empty' | 'short' | 'long' | 'bad' | 'real'; hit?: string }
 
 const INVISIBLE = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]/g
 const JAMO_RUN = /[\u3130-\u318f]+/g
@@ -157,8 +158,33 @@ const REAL_POLITICS: readonly string[] = [
   '이승만', '박정희', '전두환', '노태우', '김영삼', '김대중', '노무현', '이명박', '박근혜', '문재인', '윤석열', '이재명',
   '김일성', '김정일', '김정은', '트럼프', '바이든', '푸틴', '시진핑', '히틀러', '나치', '탈레반', '알카에다', '하마스', 'isis', 'nazi', 'kkk', 'trump',
 ]
-/** 실존 단체명을 품고 있지만 무해한 낱말 */
-const SAFE_REAL: readonly string[] = ['마법사']
+/**
+ * 실존 단체명과 글자가 우연히 겹칠 뿐인 무해한 표현. 판정 전에 걷어 낸다.
+ * (띄어쓰기를 지우고 비교하기 때문에 '명예 수석'의 '예수', '학교 회장'의 '교회' 같은 겹침이 생긴다.)
+ */
+const SAFE_REAL: readonly (string | RegExp)[] = [
+  '마법사',
+  // …예 + 수… : 명예수석, 노예수준, 공예수업, 무예수련 (단, '…예수님/예수교'처럼 뒤가 호칭이면 걷어 내지 않는다)
+  /(명|노|기|공|서|도|무|곡|연|문|학|원)예수(?=[가-힣])(?!님|교|쟁|께|여|야)/g,
+  '예수금',
+  // 학교/고교 + 회… : 학교회장, 학교회의, 고교회식
+  /(학|고)교회(?=장|의|식|계|비|관|견)/g,
+  // 나 + 치킨/치과/치즈 …
+  /나치(?=킨|과|즈|료|약|아)/g,
+  // 외래어 + 님 : 보스님, 버스님, 에이스님 (큰스님·주지스님 같은 말은 여기 없다)
+  /(보|버|가|예|미|뉴|주|쥬|소|코|포|토|박|믹|댄|키|찬|센|렉|맥|폭|에이|베이|케이|페이|레이|서비|보너|마우|하우|클래|스트레|프린세|루카|토마|클로|지니어|바이러|캠퍼|오피|포커|코러|보이|초이|나이|아이|스페이|유니버|피닉|알렉)스님/g,
+  // 덕후 계열: 스포덕후, 대포덕후
+  /포덕(?=후|질|력)/g,
+  '통일교육',
+  'thisis',
+  'crisis',
+  'christmas',
+  'christopher',
+  'christine',
+  'christina',
+  'trumpet',
+  'churchill',
+]
 
 const squeeze = (w: string): string => w.replace(/(.)\1+/g, '$1')
 const BAD_EN_SQUEEZED: readonly string[] = BAD_EN.map(squeeze)
@@ -168,9 +194,15 @@ const SAFE_KO_JAMO: readonly string[] = SAFE_KO.map(toJamo)
 const STAFF_KO_FLAT: readonly string[] = STAFF_KO
 const REAL_ALL: readonly string[] = [...REAL_RELIGION, ...REAL_POLITICS]
 
-function stripAll(s: string, words: readonly string[]): string {
+function stripAll(s: string, words: readonly (string | RegExp)[]): string {
   let out = s
-  for (const w of words) if (out.includes(w)) out = out.split(w).join(' ')
+  for (const w of words) {
+    if (typeof w === 'string') {
+      if (out.includes(w)) out = out.split(w).join(' ')
+    } else {
+      out = out.replace(w, ' ')
+    }
+  }
   return out
 }
 
@@ -207,10 +239,15 @@ export function hasBadWord(text: string): boolean {
   return false
 }
 
-export function looksLikeRealGroup(text: string): boolean {
+/** 실존 종교·단체·인물로 보이는 낱말이 들어 있으면 그 낱말, 없으면 null */
+export function findRealGroup(text: string): string | null {
   const flat = stripAll(views(text).flat, SAFE_REAL)
-  for (const w of REAL_ALL) if (flat.includes(w)) return true
-  return false
+  for (const w of REAL_ALL) if (flat.includes(w)) return w
+  return null
+}
+
+export function looksLikeRealGroup(text: string): boolean {
+  return findRealGroup(text) !== null
 }
 
 /** 전화번호·URL·메신저 아이디처럼 보이는가(개인 연락처가 이름표에 떠다니지 않게) */
@@ -251,7 +288,8 @@ export function checkCultName(input: unknown): TextCheck {
   if (Array.from(text).length < CULT_NAME_MIN) return { ok: false, why: 'short' }
   if (!hasRealLetters(text)) return { ok: false, why: 'bad' }
   if (hasBadWord(text) || looksLikeContact(text)) return { ok: false, why: 'bad' }
-  if (looksLikeRealGroup(text)) return { ok: false, why: 'real' }
+  const real = findRealGroup(text)
+  if (real !== null) return { ok: false, why: 'real', hit: real }
   return { ok: true, text }
 }
 
@@ -260,6 +298,7 @@ export function checkTitle(input: unknown): TextCheck {
   if (!text) return { ok: false, why: 'empty' }
   if (!hasRealLetters(text)) return { ok: false, why: 'bad' }
   if (hasBadWord(text) || looksLikeContact(text)) return { ok: false, why: 'bad' }
-  if (looksLikeRealGroup(text)) return { ok: false, why: 'real' }
+  const real = findRealGroup(text)
+  if (real !== null) return { ok: false, why: 'real', hit: real }
   return { ok: true, text }
 }

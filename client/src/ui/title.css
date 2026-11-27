@@ -172,6 +172,16 @@
   visibility: hidden;
   animation: title-slow-in 0.3s ease-out var(--title-slow-delay, 10s) both;
 }
+/* 서버에 닿지 못하는 것이 확실할 때는 10초를 기다리지 않고 바로 보인다 */
+.title-slow.now {
+  max-height: 140px;
+  opacity: 1;
+  visibility: visible;
+  animation: none;
+}
+.title-slow-text {
+  word-break: keep-all;
+}
 .title-slow .btn {
   min-height: 42px;
   margin: 2px 0 5px;

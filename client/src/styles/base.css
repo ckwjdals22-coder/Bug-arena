@@ -56,6 +56,9 @@ body {
   -webkit-text-size-adjust: 100%;
   user-select: none;
   -webkit-user-select: none;
+  /* 한글은 낱말 중간에서 줄이 바뀌지 않게 한다('보세/요' 방지). 띄어쓰기 없는 긴 낱말만 넘칠 때 끊는다 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
   touch-action: none;
 }
 
@@ -406,6 +409,7 @@ button {
 }
 .tab {
   flex: 0 0 auto;
+  min-height: 42px;
   padding: 6px 14px;
   border: var(--border);
   border-radius: 999px;

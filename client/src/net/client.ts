@@ -31,6 +31,8 @@ import { applyInterp, holdSample, pushSample } from './interp'
 
 // 합계 약 70초: 서버 재배포(보통 수십 초) 동안은 버틴다
 const BACKOFF_MS = [500, 1000, 2000, 4000, 6000, 8000, 8000, 8000, 10000, 10000, 12000]
+/** 한 번도 입장하지 못한 채 이만큼 연달아 실패하면 '서버에 닿지 못함'으로 안내한다(약 4초) */
+const UNREACHABLE_AFTER = 3
 const CONNECT_TIMEOUT_MS = 9000
 
 function makeView(x: number, z: number, yaw: number, st: number, emote: string | null, seed: number, time: number): EntityView {
@@ -189,7 +191,9 @@ export function createNet(store: Store, bus: Bus): Net {
       setPhase('error', 'net')
       return
     }
-    setPhase(everPlayed ? 'reconnecting' : 'connecting')
+    // 첫 접속부터 몇 번 연달아 실패했다면 '붐빈다'가 아니라 '서버에 닿지 못한다'고 말해 줘야 한다.
+    // (다시 시도는 계속한다 — 잠들어 있던 서버가 깨어나면 저절로 들어간다)
+    setPhase(everPlayed ? 'reconnecting' : 'connecting', !everPlayed && attempts >= UNREACHABLE_AFTER ? 'unreachable' : '')
     const base = BACKOFF_MS[attempts] ?? 8000
     attempts++
     const delay = base * (0.7 + Math.random() * 0.6)
@@ -256,6 +260,11 @@ export function createNet(store: Store, bus: Bus): Net {
     setPhase('playing')
     bus.emit('profile')
     bus.emit('progress', w.me)
+    // 콕 집어 가려던 방(친구 링크의 ?room= 등)이 아닌 곳에 들어왔다면 알려 준다.
+    // 그 뒤로는 지금 있는 방을 기준으로 삼는다(재접속 때 조용히 방이 바뀌지 않게).
+    const asked = wantRoom
+    wantRoom = w.room.id
+    if (asked !== 'auto' && asked !== w.room.id) bus.emit('redirected', { from: asked, to: w.room.id })
     bus.emit('entered')
     bus.emit('net', { rtt: store.rtt, connected: true })
     emitPopulation()

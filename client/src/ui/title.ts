@@ -25,9 +25,10 @@ export function mountTitle(ctx: AppContext): void {
   }
 
   // 10초가 지나면 CSS 애니메이션만으로 나타난다(JS 타이머가 밀려도 뜬다). 지연 시간은 --title-slow-delay 로 조절
+  const slowText = h('span.title-slow-text', '출구가 조금 붐비나 봐요.')
   const slow = h(
     'div.title-slow',
-    h('span.title-slow-text', '출구가 조금 붐비나 봐요.'),
+    slowText,
     h(
       'button.btn.primary.sm',
       {
@@ -154,6 +155,10 @@ export function mountTitle(ctx: AppContext): void {
   function apply(): void {
     const phase = store.phase
     if (phase !== 'title') leftTitle = true
+    // 연달아 실패 중이면 기다리게 두지 않고 바로 사정을 알린다(인기가 많아 줄 선 것으로 오해하지 않게)
+    const unreachable = phase === 'connecting' && store.phaseWhy === 'unreachable'
+    slowText.textContent = unreachable ? '서버에 연결하지 못하고 있어요. 인터넷 연결을 확인해 주세요. 계속 다시 시도하는 중이에요.' : '출구가 조금 붐비나 봐요.'
+    slow.classList.toggle('now', unreachable)
     if (phase === 'connecting') show('loading')
     else if (phase === 'title') {
       if (leftTitle) show('resting')

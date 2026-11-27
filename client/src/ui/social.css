@@ -161,9 +161,9 @@
   min-height: 46px;
   padding: 6px 8px;
 }
-.invite-block {
+.btn.invite-block {
   align-self: center;
-  min-height: 42px;
+  min-height: 44px;
 }
 
 @keyframes invite-in {

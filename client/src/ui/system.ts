@@ -272,6 +272,12 @@ export function mountSystem(ctx: AppContext): void {
     enteredAt = performance.now()
     resetNames()
   })
+  // 가려던 방이 가득 차 다른 방으로 왔을 때: 친구 링크로 왔다면 친구가 여기 없다는 뜻이므로 꼭 알려 준다
+  bus.on('redirected', ({ from }) => {
+    const here = store.room?.name ?? '다른 방'
+    const wanted = store.rooms.find((r) => r.id === from)?.name ?? `${from}번 출구`
+    window.setTimeout(() => ctx.ui.toast(`🚧 가려던 ${wanted}에 자리가 없어서 「${here}」에 들어왔어요. 방 목록에서 자리가 나면 옮길 수 있어요.`, 'info', 6500), 900)
+  })
   bus.on('playerUpdate', (id) => void remember(id))
   bus.on('playerJoin', (id) => {
     const name = remember(id)

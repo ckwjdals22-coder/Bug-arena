@@ -43,6 +43,9 @@ npm start              # http://localhost:8787
 | `DATA_DIR` | `.data` | 서명 키(`secret`)와 교단 기록(`cults.json`)이 저장되는 폴더 |
 | `CLIENT_DIR` | `dist/client` | 서버가 내줄 클라이언트 파일 위치. 클라이언트를 따로 올리면 없어도 됩니다 |
 | `ALLOWED_ORIGINS` | (전부 허용) | WebSocket 접속을 허용할 출처, 쉼표로 구분. 예: `https://game.example.com` |
+| `MAX_PRE_HELLO` | 64 | 접속만 하고 입장 인사를 보내지 않은 연결의 최대 수. 넘으면 가장 오래된 것부터 끊는다(빈 연결로 방을 '가득 참'으로 만드는 것 방지) |
+| `MAX_CONNS_PER_IP` | 0 (끔) | 한 IP 가 동시에 열 수 있는 연결 수. 학교·회사처럼 여러 사람이 한 IP 를 쓰는 곳이 있으니 켠다면 넉넉하게(예: 30) |
+| `TRUST_PROXY` | 0 | 서버 앞에 있는 리버스 프록시의 단계 수. 1 이상이면 `X-Forwarded-For` 에서 그만큼 거슬러 올라간 주소를 접속자 IP 로 본다. **프록시가 없는데 켜면 IP 를 속일 수 있으니** 실제 구성과 맞게만 설정 |
 
 재배포할 때마다 디스크가 비워지는 호스팅에서는 `SAVE_SECRET` 을 환경변수로 **반드시** 고정하세요. 교단 순위 기록(`cults.json`)은 영구 디스크가 있어야 남습니다.
 
