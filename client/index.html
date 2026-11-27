@@ -8,13 +8,75 @@
     <meta name="theme-color" content="#ffd23f" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta property="og:title" content="도를 아십니까? — 교주 시뮬레이터" />
-    <meta property="og:description" content="인상이 참 좋으시네요. 잠깐 시간 있으세요? (전부 허구인 풍자 게임입니다)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="도를 아십니까? (모르셔도 됩니다)" />
+    <meta property="og:description" content="길에서 말 걸고 라면교 교주 되는 게임. 가입 없음, 전부 허구." />
+    <meta property="og:image" content="/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🙏</text></svg>" />
     <!-- 실시간 서버 주소 등 런타임 설정(빌드 없이 수정 가능). docs/DEPLOY.md 참고 -->
     <script src="/config.js"></script>
+    <style>
+      /* 스크립트가 뜨기 전에 보이는 첫 화면(자바스크립트 없이도 '다시 시도'가 뜬다) */
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: linear-gradient(#8fd0f2, #ffe2c4);
+        color: #241b35;
+        font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+        text-align: center;
+      }
+      #boot b {
+        font-size: 30px;
+      }
+      #boot i {
+        width: 44px;
+        height: 44px;
+        border: 5px solid #241b35;
+        border-top-color: #ffd23f;
+        border-radius: 50%;
+        animation: boot-spin 0.9s linear infinite;
+      }
+      #boot a {
+        opacity: 0;
+        color: #241b35;
+        font-weight: 800;
+        animation: boot-late 0.4s 12s forwards;
+      }
+      #boot small {
+        position: absolute;
+        bottom: 18px;
+        left: 16px;
+        right: 16px;
+        font-size: 11.5px;
+        opacity: 0.75;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes boot-late {
+        to {
+          opacity: 1;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="boot">
+      <b>도를 아십니까?</b>
+      <span>4번 출구로 나가는 중…</span>
+      <i></i>
+      <a href="">오래 걸리나요? 다시 시도</a>
+      <small>이 게임의 모든 교단·인물·교리는 허구이며 풍자 코미디입니다.</small>
+    </div>
     <canvas id="game" tabindex="0" aria-label="게임 화면"></canvas>
     <div id="ui"></div>
     <noscript>이 게임은 자바스크립트가 필요합니다.</noscript>

@@ -135,6 +135,8 @@ const actions: Actions = {
 
 const ctx: AppContext = { store, bus, net, engine, chars, fx, overlay, sfx, input, actions, ui }
 mountUi(ctx)
+// 스크립트 로딩 전용 첫 화면을 걷어 낸다(이후 안내는 UI 모듈의 부팅 카드가 맡는다)
+document.getElementById('boot')?.remove()
 
 // ───────── 소리: 첫 입력에서 오디오를 깨우고 설정을 반영 ─────────
 function applySettings(): void {
