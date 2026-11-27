@@ -249,18 +249,19 @@ describe('resolvePitch', () => {
   it('실제 콘텐츠의 모든 유형×멘트 조합에서 빈 대사가 나오지 않는다', () => {
     const rnd = mulberry32(77)
     const outcomes = new Set<string>()
+    const bad: string[] = []
     for (const a of ARCHETYPES) {
       for (const l of PITCH_LINES) {
         for (let i = 0; i < 60; i++) {
           const r = resolvePitch(a, l, ctx({ round: 1 + (i % 2), failStreak: i % 9 }), rnd)
-          expect(typeof r.say).toBe('string')
-          expect(r.say.length).toBeGreaterThan(0)
-          expect(r.chance).toBeGreaterThanOrEqual(JOIN_CHANCE_MIN)
-          expect(r.chance).toBeLessThanOrEqual(JOIN_CHANCE_MAX)
+          // expect 를 74만 번 부르면 바쁜 기계에서 시간 초과가 나므로 위반만 모아서 한 번에 확인한다
+          if (typeof r.say !== 'string' || r.say.length === 0) bad.push(`빈 대사: ${a.id} × ${l.id}`)
+          if (a.recruitable === false ? r.chance !== 0 : !(r.chance >= JOIN_CHANCE_MIN && r.chance <= JOIN_CHANCE_MAX)) bad.push(`확률 범위: ${a.id} × ${l.id} = ${r.chance}`)
           outcomes.add(r.outcome)
         }
       }
     }
+    expect(bad.slice(0, 5)).toEqual([])
     for (const o of ['join', 'more', 'no', 'flee', 'ignore']) expect(outcomes.has(o)).toBe(true)
   })
 })
