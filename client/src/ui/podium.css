@@ -1,0 +1,357 @@
+/* 단상: 계시 자막 · 설교 배너 · 구호 자막 · 응답 버튼 · 결과 카드 (접두사 podium-) */
+
+.podium {
+  pointer-events: none;
+}
+
+/* ── 오늘의 계시: 예능 자막 ── */
+.podium-caption {
+  position: fixed;
+  top: max(calc(18vh + var(--safe-t)), calc(var(--hud-bottom, 60px) + 54px));
+  left: 50%;
+  z-index: 14;
+  width: max-content;
+  max-width: min(92vw, 640px);
+  padding: 10px 20px 12px;
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  background: var(--yellow);
+  box-shadow: 0 5px 0 var(--ink);
+  text-align: center;
+  transform: translateX(-50%) rotate(-1.5deg);
+  pointer-events: none;
+}
+.podium-caption.show {
+  animation: podium-slam 0.34s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.podium-caption.out {
+  opacity: 0;
+  transform: translateX(-50%) rotate(-1.5deg) translateY(-10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.podium-caption-label {
+  display: inline-block;
+  margin-top: -24px;
+  padding: 2px 12px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--purple);
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 900;
+  transform: rotate(2deg);
+}
+.podium-caption-text {
+  margin-top: 6px;
+  font-size: clamp(19px, 4.6vw, 30px);
+  font-weight: 900;
+  line-height: 1.25;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.podium-caption-who {
+  margin-top: 4px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 800;
+}
+@keyframes podium-slam {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) rotate(-6deg) scale(1.5);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) rotate(-1.5deg) scale(1);
+  }
+}
+
+/* ── 설교 배너 ── */
+.podium-banner {
+  position: fixed;
+  top: calc(var(--hud-bottom, calc(56px + var(--safe-t))) + 8px);
+  left: 50%;
+  z-index: 13;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: max-content;
+  min-width: 200px;
+  max-width: min(86vw, 420px);
+  padding: 5px 14px 7px;
+  border: var(--border);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow-sm);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.podium-banner.mine {
+  background: #efe8ff;
+}
+.podium-banner-text {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.podium-banner-bar {
+  position: relative;
+  height: 7px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--white);
+  overflow: hidden;
+}
+.podium-banner-bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--purple);
+  transition: width 0.25s linear;
+}
+/* 세로 폰: HUD 바로 밑은 소식 피드(최대 3줄) 자리 → 그 아래로 내린다(토스트와 같은 줄) */
+@media (max-width: 699px) and (orientation: portrait) {
+  .podium-banner {
+    top: calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 92px);
+    max-width: 92vw;
+  }
+  .podium-call,
+  .podium-caption,
+  .podium-result {
+    top: max(28vh, calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 150px));
+  }
+  /* 좁은 화면에서는 구호가 떠 있는 동안 배너를 잠깐 치운다(구호 자막이 같은 정보를 더 크게 보여 준다) */
+  .podium.calling .podium-banner {
+    display: none;
+  }
+}
+
+/* ── 구호 자막 ── */
+.podium-call {
+  position: fixed;
+  top: max(calc(24vh + var(--safe-t)), calc(var(--hud-bottom, 60px) + 64px));
+  left: 50%;
+  z-index: 14;
+  width: max-content;
+  max-width: min(92vw, 620px);
+  text-align: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.podium-call.pop {
+  animation: podium-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+.podium-call-round {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  padding: 2px 12px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--pink);
+  font-size: 13px;
+  font-weight: 900;
+}
+.podium-call-text {
+  margin-top: -4px;
+  padding: 6px 18px 8px;
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  background: var(--white);
+  box-shadow: 0 5px 0 var(--ink);
+  color: var(--ink);
+  font-size: clamp(24px, 6.4vw, 42px);
+  font-weight: 900;
+  line-height: 1.15;
+  word-break: keep-all;
+}
+.podium-call-hint {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  font-weight: 800;
+}
+@keyframes podium-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+}
+
+/* ── 응답 버튼: 오른쪽 아래, 상황 버튼 위(엄지 자리) ── */
+.podium-resp {
+  position: fixed;
+  right: calc(18px + var(--safe-r));
+  bottom: calc(118px + var(--safe-b));
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  padding: 0;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--yellow);
+  box-shadow: 0 5px 0 var(--ink);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  animation: podium-bounce 0.6s ease-in-out infinite alternate;
+  touch-action: manipulation;
+}
+.podium-resp:active,
+.podium-resp.active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 var(--ink);
+  animation: none;
+}
+.podium-resp.done {
+  background: var(--green);
+  animation: none;
+}
+.podium-resp-label {
+  position: relative;
+  max-width: 104px;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1.15;
+  text-align: center;
+  word-break: keep-all;
+}
+.podium-ring {
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+.podium-ring-bg {
+  fill: none;
+  stroke: rgba(36, 27, 53, 0.12);
+  stroke-width: 7;
+}
+.podium-ring-fg {
+  fill: none;
+  stroke: var(--purple);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+.podium-resp.done .podium-ring-fg {
+  stroke: var(--ink);
+}
+.podium-resp-key {
+  position: absolute;
+  bottom: -12px;
+  left: 50%;
+  padding: 1px 7px;
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  background: var(--white);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  transform: translateX(-50%);
+}
+.hud-touch .podium-resp-key {
+  display: none;
+}
+.hud-touch .podium-resp {
+  width: 118px;
+  height: 118px;
+  bottom: calc(104px + var(--safe-b));
+}
+/* 크기를 바꾸지 않고 빛만 번지게 한다(누르는 순간 버튼이 움직이면 탭이 빗나간다) */
+@keyframes podium-bounce {
+  from {
+    box-shadow: 0 5px 0 var(--ink), 0 0 0 0 rgba(255, 210, 63, 0.9);
+  }
+  to {
+    box-shadow: 0 5px 0 var(--ink), 0 0 0 12px rgba(255, 210, 63, 0);
+  }
+}
+
+/* ── 결과 카드 ── */
+.podium-result {
+  position: fixed;
+  top: max(calc(20vh + var(--safe-t)), calc(var(--hud-bottom, 60px) + 50px));
+  left: 50%;
+  z-index: 15;
+  width: min(86vw, 320px);
+  padding: 14px 16px 16px;
+  border: 3px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: 0 5px 0 var(--ink);
+  transform: translateX(-50%) rotate(1deg);
+  animation: podium-pop 0.3s cubic-bezier(0.2, 1.6, 0.4, 1);
+  pointer-events: none;
+}
+.podium-result.out {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.podium-result-title {
+  margin-bottom: 10px;
+  font-size: 19px;
+  font-weight: 900;
+  text-align: center;
+}
+.podium-result-gauge {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.podium-result-gauge b {
+  font-size: 18px;
+}
+.podium-result-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+.podium-result-rows > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  font-weight: 800;
+}
+.podium-result-rows b {
+  font-size: 17px;
+}
+.podium-result-note {
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 가로 폰: 위아래가 좁으니 자막과 카드를 조금 위로 */
+@media (max-height: 460px) {
+  .podium-caption,
+  .podium-call,
+  .podium-result {
+    top: calc(var(--hud-bottom, 50px) + 34px);
+  }
+  .podium-call-text {
+    font-size: 26px;
+  }
+}

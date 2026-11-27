@@ -143,7 +143,14 @@ export function createNet(store: Store, bus: Bus): Net {
     sock.onopen = () => {
       if (ws !== sock) return
       const p = store.profile
-      sendRaw({ t: 'hello', v: PROTOCOL_VERSION, pid: p.pid, name: p.name, look: p.look, save: p.save })
+      // 포교 링크(?by=닉네임)로 들어왔다면 초대한 사람을 알린다(서버가 그 사람의 초대 카드를 보내 준다)
+      let ref: string | undefined
+      try {
+        ref = new URLSearchParams(location.search).get('by')?.slice(0, 40) || undefined
+      } catch {
+        ref = undefined
+      }
+      sendRaw({ t: 'hello', v: PROTOCOL_VERSION, pid: p.pid, name: p.name, look: p.look, save: p.save, ...(ref ? { ref } : {}) })
     }
     sock.onmessage = (ev) => {
       if (ws !== sock) return

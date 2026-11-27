@@ -1,0 +1,282 @@
+/* 나만의 교단 패널: 창설 폼, 정보 카드, 순위표 */
+.cult-tabs {
+  margin-bottom: 12px;
+}
+.cult-tabs .tab {
+  min-height: 42px;
+}
+
+.cult-form {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.cult-lead {
+  margin: 0 0 4px;
+}
+.cult-form .label {
+  margin-top: 6px;
+}
+.cult-dice {
+  flex: 0 0 auto;
+  min-height: 44px;
+}
+.cult-msg {
+  min-height: 0;
+  color: #d23c3c;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+.cult-msg:empty {
+  display: none;
+}
+.cult-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 42px);
+  gap: 8px;
+  justify-content: start;
+}
+.cult-swatches .swatch {
+  width: 42px;
+  height: 42px;
+}
+.cult-emblems {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 6px;
+}
+.cult-emblem-tile {
+  min-height: 44px;
+  padding: 2px;
+}
+.cult-emblem-tile .big {
+  font-size: 22px;
+}
+.cult-chips {
+  gap: 6px;
+}
+.cult-chip {
+  min-height: 36px;
+  font-size: 13px;
+}
+.cult-chip:active {
+  transform: translateY(2px);
+}
+
+/* 이름표 미리보기: 3D 화면 위 이름표와 같은 클래스를 쓰되, 배경을 거리 느낌으로 */
+.cult-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 12px;
+  border: 2px dashed rgba(36, 27, 53, 0.35);
+  border-radius: 14px;
+  background: linear-gradient(#b9d7f2, #f6c9a8);
+}
+.cult-preview-label {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: rgba(36, 27, 53, 0.7);
+}
+.cult-preview-tag {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+.cult-tagline {
+  max-width: 100%;
+  white-space: nowrap;
+}
+.cult-submit {
+  margin-top: 8px;
+}
+
+/* 엠블럼 동그라미 */
+.cult-emblem {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  font-size: 20px;
+  line-height: 1;
+}
+.cult-emblem.big {
+  width: 58px;
+  height: 58px;
+  font-size: 30px;
+  background-clip: padding-box;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.7);
+}
+
+/* 정보 카드 */
+.cult-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cult-card {
+  padding: 0;
+  overflow: hidden;
+}
+.cult-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: var(--border);
+}
+.cult-card-name {
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cult-card-sub {
+  font-size: 13px;
+  font-weight: 800;
+  opacity: 0.85;
+}
+.cult-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.cult-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 6px;
+}
+.cult-stat + .cult-stat {
+  border-left: 2px dashed rgba(36, 27, 53, 0.25);
+}
+.cult-stat b {
+  font-size: 22px;
+  font-weight: 900;
+}
+.cult-stat small {
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+.cult-card > p {
+  margin: 0;
+  padding: 10px 14px;
+}
+.cult-members {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cult-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--white);
+  font-weight: 800;
+}
+.cult-member.me {
+  background: #fff3c0;
+}
+.cult-member-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cult-hint {
+  margin: 0;
+}
+.cult-link-field {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+/* 순위표 */
+.cult-rank-note {
+  margin: 0 0 8px;
+}
+.cult-rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cult-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  background: var(--white);
+}
+.cult-rank-row.mine {
+  background: #fff3c0;
+  box-shadow: var(--shadow-sm);
+}
+.cult-rank-no {
+  flex: 0 0 22px;
+  font-size: 16px;
+  font-weight: 900;
+  text-align: center;
+}
+.cult-rank-row:nth-child(1) .cult-rank-no {
+  color: #d99a00;
+}
+.cult-rank-main {
+  min-width: 0;
+}
+.cult-rank-main > div {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cult-rank-name {
+  font-weight: 900;
+}
+.cult-rank-nums {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-weight: 800;
+}
+.cult-online {
+  padding: 0 7px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: #e6e2ee;
+  font-size: 11.5px;
+}
+.cult-online.on {
+  background: var(--green);
+}
+.cult-empty {
+  padding: 18px 0;
+}
+@media (max-width: 380px) {
+  .cult-swatches {
+    grid-template-columns: repeat(6, 38px);
+    gap: 6px;
+  }
+  .cult-swatches .swatch {
+    width: 38px;
+    height: 38px;
+  }
+}

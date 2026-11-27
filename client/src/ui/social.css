@@ -1,0 +1,212 @@
+/* 다른 접속자와 상호작용: 더보기 시트(차단/신고) + 교단 초대 카드 */
+
+/* 더보기 시트: 상황 버튼 위(오른쪽 아래) — 조이스틱이 있는 왼쪽 아래는 비워 둔다 */
+.social-sheet {
+  position: fixed;
+  right: calc(14px + var(--safe-r));
+  bottom: calc(112px + var(--safe-b));
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(280px, calc(100vw - 28px - var(--safe-l) - var(--safe-r)));
+  max-height: calc(100vh - 140px - var(--safe-t) - var(--safe-b));
+  padding: 12px;
+  border: var(--border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  overflow-y: auto;
+  touch-action: pan-y;
+  animation: social-up 0.18s ease-out;
+}
+.social-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.social-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.social-name {
+  max-width: 150px;
+  overflow: hidden;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.social-head .cult-tagline {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.social-buttons,
+.social-reasons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.social-buttons .btn,
+.social-reasons .btn {
+  min-height: 46px;
+  padding: 6px 10px;
+  box-shadow: var(--shadow-sm);
+}
+.social-note {
+  margin: 0;
+}
+
+/* 초대 카드: 화면을 막지 않는 떠 있는 카드. PC 는 아래 가운데(이모트 바 위), 터치는 HUD 아래 가운데 */
+.invite-card {
+  position: fixed;
+  left: 50%;
+  bottom: calc(92px + var(--safe-b));
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100vw - 24px - var(--safe-l) - var(--safe-r)));
+  padding: 0 0 12px;
+  border: var(--border);
+  border-radius: 20px;
+  background: var(--paper);
+  box-shadow: 0 6px 0 var(--ink);
+  overflow: hidden;
+  transform: translateX(-50%);
+  animation: invite-in 0.28s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+.hud-touch .invite-card {
+  top: calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 8px);
+  bottom: auto;
+}
+.invite-card.out {
+  opacity: 0;
+  transform: translateX(-50%) translateY(10px) scale(0.96);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.invite-ttl {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 6px;
+  background: rgba(36, 27, 53, 0.15);
+}
+.invite-ttl > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--yellow);
+  border-right: 2px solid var(--ink);
+  transform-origin: left center;
+  animation: invite-ttl linear forwards;
+}
+.invite-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 14px 10px;
+  border-bottom: var(--border);
+}
+.invite-emblem {
+  width: 46px;
+  height: 46px;
+  font-size: 25px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.7);
+}
+.invite-cult {
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invite-leader {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 800;
+  opacity: 0.85;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.invite-text {
+  margin: 0;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 800;
+}
+.invite-text b {
+  color: var(--purple-deep);
+}
+.invite-fine {
+  margin: -4px 0 0;
+  padding: 0 14px;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.invite-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 12px;
+}
+.invite-btns .btn {
+  min-height: 46px;
+  padding: 6px 8px;
+}
+.invite-block {
+  align-self: center;
+  min-height: 42px;
+}
+
+@keyframes invite-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+@keyframes invite-ttl {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+@keyframes social-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 가로 폰: 높이가 낮으므로 카드를 오른쪽 위로 비켜 3D 화면 가운데를 덜 가린다 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .hud-touch .invite-card {
+    left: auto;
+    right: calc(12px + var(--safe-r));
+    width: min(330px, 46vw);
+    transform: none;
+    animation: social-up 0.2s ease-out;
+  }
+  .hud-touch .invite-card.out {
+    transform: translateY(10px) scale(0.96);
+  }
+  .invite-fine {
+    display: none;
+  }
+}

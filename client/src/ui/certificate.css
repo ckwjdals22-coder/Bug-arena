@@ -1,0 +1,174 @@
+/*
+ * 임명장·공유 패널 + 거절 직후 "📸 짤 저장" 버튼 + 승급 토스트 행동 버튼.
+ * 접두사: cert-
+ */
+
+/* 미리보기: 세로 카드(9:16)는 화면 높이에 맞춰 줄이고, 짤(1:1)은 폭에 맞춘다 */
+.cert-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  height: min(52vh, 460px);
+  aspect-ratio: 9 / 16;
+  max-width: 100%;
+  border: var(--border);
+  border-radius: 12px;
+  background: var(--paper-2);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.cert-frame.square {
+  aspect-ratio: 1 / 1;
+  height: auto;
+  width: min(100%, 52vh, 400px);
+}
+.cert-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* 인앱 브라우저에서 길게 눌러 저장할 수 있게 이미지만은 선택/메뉴를 허용 */
+  -webkit-touch-callout: default;
+  user-select: auto;
+  -webkit-user-select: auto;
+  pointer-events: auto;
+}
+.cert-img:not([src]) {
+  visibility: hidden;
+}
+.cert-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: var(--paper-2);
+  font-weight: 800;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.cert-caption {
+  margin: 8px 0 6px;
+  min-height: 1.3em;
+}
+.cert-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.cert-actions .btn {
+  min-width: 140px;
+}
+.cert-retake {
+  display: flex;
+  margin: 10px auto 0;
+}
+.cert-retake.hidden {
+  display: none;
+}
+.cert-hint {
+  margin: 10px 0 0;
+}
+.cert-tabs {
+  justify-content: center;
+}
+.cert-tabs .tab {
+  min-height: 42px;
+}
+/* 좁은 세로 화면: 세 탭이 한 줄에 다 보이게 */
+@media (max-width: 420px) {
+  .cert-tabs {
+    gap: 4px;
+  }
+  .cert-tabs .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 6px 6px;
+    font-size: 13.5px;
+    white-space: nowrap;
+  }
+}
+
+/* 낮은 가로 화면(휴대폰 가로): 미리보기를 줄여 버튼까지 한 화면에 들어오게 */
+@media (max-height: 500px) {
+  .cert-frame {
+    height: min(46vh, 300px);
+  }
+  .cert-frame.square {
+    width: min(100%, 46vh, 300px);
+  }
+}
+
+/* ── 거절 직후 "📸 짤 저장" 버튼: HUD 아래 오른쪽(상황 버튼·조이스틱과 겹치지 않는 자리) ── */
+.cert-snap {
+  position: fixed;
+  top: calc(var(--hud-bottom, calc(96px + var(--safe-t))) + 12px);
+  right: calc(10px + var(--safe-r));
+  z-index: var(--z-hud);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 6px 16px 6px 12px;
+  border: var(--border);
+  border-radius: 999px;
+  background: var(--white);
+  box-shadow: var(--shadow);
+  font-weight: 900;
+  font-size: 15px;
+}
+.cert-snap-icon {
+  font-size: 20px;
+}
+.cert-snap.in {
+  animation: cert-snap-in 0.25s ease-out, cert-snap-wiggle 1.4s ease-in-out 0.3s 2;
+}
+.cert-snap:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+#ui.hud-talking .cert-snap {
+  /* 대화 시트가 열려 있어도 위쪽이라 가리지 않지만, 눈에 덜 띄게 */
+  opacity: 0.92;
+}
+@keyframes cert-snap-in {
+  from {
+    transform: translateX(40px) scale(0.8);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes cert-snap-wiggle {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(-6deg);
+  }
+  40% {
+    transform: rotate(5deg);
+  }
+  60% {
+    transform: rotate(-3deg);
+  }
+}
+
+/* ── 승급 토스트의 행동 버튼 ── */
+.toast.cert-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 16px;
+  border-radius: 999px;
+  pointer-events: auto;
+}
+.cert-toast-btn {
+  min-height: 42px;
+}

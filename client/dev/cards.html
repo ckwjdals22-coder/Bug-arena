@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>공유 카드 미리보기 — 도를 아십니까?</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #2a2238;
+        color: #fff;
+        font: 600 13px/1.4 'Apple SD Gothic Neo', 'Noto Sans KR', system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 10px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      figure {
+        margin: 0;
+        padding: 6px;
+        background: #3a3050;
+        border-radius: 10px;
+      }
+      figure img {
+        width: 100%;
+        display: block;
+        border-radius: 6px;
+        background: #000;
+      }
+      figcaption {
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      #engine {
+        position: fixed;
+        left: -10px;
+        top: -10px;
+        width: 8px;
+        height: 8px;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>공유 카드 미리보기 (임명장 · 결산 · 거절 짤) — window.__cards.png(type, i)</h1>
+    <div class="grid" id="grid"></div>
+    <canvas id="engine"></canvas>
+    <script type="module" src="./cards.ts"></script>
+  </body>
+</html>
