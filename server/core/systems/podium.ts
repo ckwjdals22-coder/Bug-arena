@@ -15,14 +15,14 @@ import {
   INF_SERMON_JOIN,
   INF_SERMON_LEADER,
   INF_SERMON_SOLO,
-  MAX_ENTOURAGE,
   PROPHECY_COOLDOWN_MS,
   PROPHECY_PAY_SLOTS,
   PROPHECY_PAY_WINDOW_MS,
-  SERMON_SOLO_CONVERTS,
   SERMON_DURATION_MS,
   SERMON_ROOM_COOLDOWN_MS,
   SERMON_ROUNDS,
+  SERMON_SOLO_CONVERTS,
+  entourageCap,
   npcKey,
 } from '../../../shared/constants'
 import { STAT } from '../../../shared/content/core'
@@ -242,10 +242,11 @@ export function createPodiumSystem(): RoomSystem {
       const solo = joined.length < 2
       const cap = solo ? SERMON_SOLO_CONVERTS : SERMON_MAX_CONVERTS
       const want = Math.min(cap, Math.floor(score / 34) + (joined.length >= 3 ? 1 : 0) + (joined.length >= 6 ? 1 : 0))
-      const slots = Math.max(0, MAX_ENTOURAGE - room.npcs.followersOf(leader.id).length)
+      const slots = Math.max(0, entourageCap(room.players.size) - room.npcs.followersOf(leader.id).length)
+      // 구경은 누구나 하지만, 절대 넘어오지 않는 유형(recruitable === false)은 설교로도 신도가 되지 않는다
       const crowd = s.gathered
         .map((id) => room.npcs.get(id))
-        .filter((n): n is NpcState => !!n && n.mode === 'gather' && n.owner === 0 && n.talker === 0)
+        .filter((n): n is NpcState => !!n && n.mode === 'gather' && n.owner === 0 && n.talker === 0 && n.arch.recruitable !== false)
       // 앞줄(단상에 가까운 사람)부터 감동한다
       const pd = room.world.podium
       crowd.sort((a, b) => Math.hypot(a.x - pd.x, a.z - pd.z) - Math.hypot(b.x - pd.x, b.z - pd.z) || a.id - b.id)

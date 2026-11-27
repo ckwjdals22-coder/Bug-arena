@@ -8,7 +8,7 @@
  * 코어는 interceptPitch 를 부르기 전에 이미 pitchRes 를 방송했다 → 여기서는 다시 보내지 않는다.
  * 가로챈 뒤의 대화 세션 정리(p.talk, talkEnd)는 이 시스템 몫이다.
  */
-import { FOLLOW_DURATION_MS, MAX_ENTOURAGE, NPC_REJECT_MEMORY_MS, PITCH_COOLDOWN_MS } from '../../../shared/constants'
+import { FOLLOW_DURATION_MS, NPC_REJECT_MEMORY_MS, PITCH_COOLDOWN_MS, entourageCap } from '../../../shared/constants'
 import { STAT } from '../../../shared/content/core'
 import { DUELS } from '../../../shared/content/misc'
 import type { DuelDef } from '../../../shared/content/types'
@@ -63,7 +63,8 @@ export function createDuelSystem(): RoomSystem {
       // 정원이 찼으면 가장 오래 따라다닌 신도부터 보내 준다(코어의 합류 처리와 같은 규칙)
       const mine = room.npcs.followersOf(p.id).filter((f) => f !== rival)
       mine.sort((a, b) => a.followSince - b.followSince)
-      while (mine.length >= MAX_ENTOURAGE) {
+      // 붐비는 방에서는 정원이 줄어든다(코어의 합류 처리와 같은 기준)
+      while (mine.length >= entourageCap(room.players.size)) {
         const oldest = mine.shift()
         if (oldest) room.npcs.release(oldest, 'expire')
       }

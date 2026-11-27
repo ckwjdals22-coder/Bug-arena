@@ -426,6 +426,15 @@ export function createNet(store: Store, bus: Bus): Net {
         bus.emit('npcSpawn', msg.n.id)
         emitPopulation()
         break
+      case 'npcGone':
+        // 출구로 나가 방에서 빠진 시민: 지우면 다음 프레임부터 그려지지 않고, 이름표·말풍선도 풀린다
+        if (store.npcs.delete(msg.n)) {
+          if (store.near.npc === msg.n) store.near.npc = 0
+          countEntourage()
+          bus.emit('npcUpdate', msg.n)
+          emitPopulation()
+        }
+        break
       case 'nu': {
         const v = store.npcs.get(msg.n)
         if (!v) break

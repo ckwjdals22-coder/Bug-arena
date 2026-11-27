@@ -11,6 +11,7 @@
 import {
   Anim,
   EMOTE_COOLDOWN_MS,
+  FOLLOWER_LOYALTY_MS,
   FOLLOW_DURATION_MS,
   HELLO_TIMEOUT_MS,
   IDLE_TIMEOUT_MS,
@@ -24,9 +25,11 @@ import {
   MAX_MSG_BYTES,
   NAME_MAX,
   NPCS_PER_ROOM,
+  NPC_MAX_PER_ROOM,
   NPC_REJECT_MEMORY_MS,
   PITCH_COOLDOWN_MS,
   PLAYER_RADIUS,
+  POACH_NOTICE_MS,
   PROTOCOL_VERSION,
   RATE_LIMIT_PER_SEC,
   ROOM_CAPACITY,
@@ -38,6 +41,7 @@ import {
   SPRINT_SPEED,
   TALK_RANGE,
   TALK_TIMEOUT_MS,
+  entourageCap,
 } from '../../shared/constants'
 import { ACHIEVEMENT_BY_ID } from '../../shared/content/achievements'
 import { EMOTE_BY_ID, RANKS, STAT, rankForInfluence } from '../../shared/content/core'
@@ -75,6 +79,7 @@ import type {
   NpcSimApi,
   NpcSimEvents,
   NpcState,
+  OwnerChangeReason,
   PlayerMemory,
   PlayerState,
   RoomApi,
@@ -123,6 +128,16 @@ const POS_RESEND_MS = 200
 const MOVED_EPS = 0.02
 /** 대화 중인 NPC 에게서 이만큼 멀어지면 대화를 끊는다(NPC 가 빈자리를 보며 서 있지 않게) */
 const TALK_LEASH_M = TALK_RANGE + 3
+/**
+ * 신도를 빼앗긴 교주에게 가는 한 줄({thief} = 데려간 교주, {npc} = 신도 이름).
+ * 붐비는 방에서는 신도가 조용히 사라지면 고장처럼 보이므로, 누가 데려갔는지 웃기게라도 알려 준다
+ */
+const POACH_NOTICES: readonly string[] = [
+  '{thief}님이 내 신도 {npc}님을 데려갔어요. 간식 약속이 더 좋았나 봐요…',
+  '{npc}님이 {thief}님 쪽 줄로 옮겨 섰어요. 우리 교리, 조금 길었던 걸까요?',
+  '{thief}님이 {npc}님을 슬쩍 데려갔어요. 신앙심이 생각보다 얇았네요…',
+  '{npc}님이 {thief}님에게 넘어갔어요. 전단지 디자인에서 졌어요.',
+]
 
 /**
  * 쿨타임 여유. 클라이언트는 '보낸 시각', 서버는 '받은 시각'으로 재기 때문에 망 지연이 출렁이면
@@ -308,7 +323,7 @@ interface Session {
 
 /** 테스트에서 NPC 시뮬을 바꿔 끼우기 위한 틈. 평소에는 생략한다 */
 export interface RoomDeps {
-  createNpcSim?: (world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number) => NpcSimApi
+  createNpcSim?: (world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number, max?: number) => NpcSimApi
 }
 
 export class Room implements RoomApi {
@@ -357,11 +372,14 @@ export class Room implements RoomApi {
 
     const events: NpcSimEvents = {
       onSpawn: (npc) => this.onNpcSpawn(npc),
-      onOwnerChange: (npc) => this.onNpcOwnerChange(npc),
+      onOwnerChange: (npc, prev, reason) => this.onNpcOwnerChange(npc, prev, reason),
       onSay: (npc, text) => this.onNpcSay(npc, text),
+      onGone: (npc) => this.onNpcGone(npc),
     }
     const makeSim = deps.createNpcSim ?? createNpcSim
-    this.npcs = makeSim(this.world, this.rnd, events, Math.max(0, Math.floor(opts.npcCount ?? NPCS_PER_ROOM)))
+    // 시민 수는 접속자 수를 따라 npcCount ~ npcMax 사이에서 늘고 준다(20명이 꽉 차도 말 걸 시민이 남게)
+    const npcCount = Math.max(0, Math.floor(opts.npcCount ?? NPCS_PER_ROOM))
+    this.npcs = makeSim(this.world, this.rnd, events, npcCount, Math.max(0, Math.floor(opts.npcMax ?? NPC_MAX_PER_ROOM)))
 
     for (const factory of opts.systems ?? DEFAULT_SYSTEMS) {
       let sys: RoomSystem
@@ -1495,6 +1513,14 @@ export class Room implements RoomApi {
       this.send(p, { t: 'talkNo', n, why: 'mine' })
       return
     }
+    if (npc.owner !== 0) {
+      // 갓 남의 신도가 된 시민은 한동안 한눈을 팔지 않는다(의리 기간). 그 뒤에는 빼앗기를 시도할 수 있다
+      const loyalLeft = npc.followSince + FOLLOWER_LOYALTY_MS - now
+      if (loyalLeft > 0) {
+        this.send(p, { t: 'talkNo', n, why: 'loyal', ms: Math.ceil(loyalLeft) })
+        return
+      }
+    }
     const lines = pickLines(p.prog.rank, this.rnd)
     if (lines.length === 0) {
       this.send(p, { t: 'talkNo', n, why: 'gone' })
@@ -1603,10 +1629,12 @@ export class Room implements RoomApi {
     p.talk = null
 
     if (outcome === 'join' || outcome === 'king') {
-      // 정원이 찼으면 가장 오래 따라다닌 신도부터 보내 준다
+      // 정원이 찼으면 가장 오래 따라다닌 신도부터 보내 준다. 정원은 방이 붐빌수록 줄어든다(시민이 모자라므로).
+      // 정원이 줄기 전에 모은 신도는 그대로 두었다가, 다음에 새 신도가 들어올 때 정원에 맞춘다
       const mine = this.npcs.followersOf(p.id).filter((f) => f !== npc)
       mine.sort((a, b) => a.followSince - b.followSince)
-      while (mine.length >= MAX_ENTOURAGE) {
+      const cap = entourageCap(this.players.size)
+      while (mine.length >= cap) {
         const oldest = mine.shift()
         if (oldest) this.npcs.release(oldest, 'expire')
       }
@@ -1828,9 +1856,29 @@ export class Room implements RoomApi {
     this.broadcast({ t: 'npcSpawn', n: this.npcs.publicOf(npc) })
   }
 
-  private onNpcOwnerChange(npc: NpcState): void {
+  private onNpcOwnerChange(npc: NpcState, prev = 0, reason?: OwnerChangeReason): void {
     if (this.players.size === 0) return
     this.broadcast({ t: 'nu', n: npc.id, owner: npc.owner })
+    if (reason === 'poach' && prev) this.noticePoach(npc, prev)
+  }
+
+  /** 신도를 빼앗긴 교주에게 누가 누구를 데려갔는지 한 줄로 알려 준다(교주당 5초에 한 번) */
+  private noticePoach(npc: NpcState, prev: number): void {
+    const victim = this.players.get(prev)
+    const thief = this.players.get(npc.owner)
+    if (!victim || !thief || victim === thief) return
+    if (this.cooldown(victim, 'poachNotice', POACH_NOTICE_MS) > 0) return
+    const line = POACH_NOTICES[Math.floor(this.rnd() * POACH_NOTICES.length) % POACH_NOTICES.length]!
+    const text = line.replace('{thief}', thief.name).replace('{npc}', npc.name)
+    this.send(victim, { t: 'feed', k: 'info', id: thief.id, text })
+  }
+
+  /** 시민이 출구로 나가 방에서 빠졌다 → 모두의 화면에서 지운다 */
+  private onNpcGone(npc: NpcState): void {
+    if (this.players.size === 0) return
+    // 떠나는 말풍선이 남아 있으면 먼저 내보낸다(지운 뒤에 오면 붙을 곳이 없다)
+    this.flushSays()
+    this.broadcast({ t: 'npcGone', n: npc.id })
   }
 
   private onNpcSay(npc: NpcState, text: string): void {

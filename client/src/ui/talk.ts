@@ -344,7 +344,8 @@ export function mountTalk(ctx: AppContext): void {
     const sec = Math.max(1, Math.ceil((msg.ms ?? 0) / 1000))
     // 남은 시간을 버튼에도 바로 보여 준다(다음 0.5초 갱신을 기다리지 않는다)
     if (msg.why === 'cool' && msg.ms) coolUntil = performance.now() + msg.ms
-    if (msg.why === 'memo') refusedUntil.set(msg.n, performance.now() + (msg.ms || NPC_REJECT_MEMORY_MS))
+    // 방금 나를 거절했거나(memo), 갓 남의 신도가 되어 한눈을 안 파는(loyal) 시민: 버튼에 남은 시간을 보여 준다
+    if (msg.why === 'memo' || msg.why === 'loyal') refusedUntil.set(msg.n, performance.now() + (msg.ms || NPC_REJECT_MEMORY_MS))
     ui.refreshContext()
     switch (msg.why) {
       case 'cool':
@@ -352,6 +353,9 @@ export function mountTalk(ctx: AppContext): void {
         break
       case 'busy':
         ui.toast('지금은 다른 분과 이야기 중이에요. 다른 시민을 찾아보세요.', 'info')
+        break
+      case 'loyal':
+        ui.toast(`방금 남의 신도가 된 분이라 한눈을 안 팔아요. ${sec}초쯤 뒤에나 흔들릴지도요.`, 'info')
         break
       case 'far':
         ui.toast('너무 멀어요. 조금 더 가까이 가서 말을 걸어 보세요.', 'info')

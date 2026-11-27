@@ -78,7 +78,8 @@ export function run(seed: number, minutes: number, bots: Bot[]) {
   ;(host as any).seed = seed * 7919 + 1
   const room = new Room(
     host,
-    { id: '1', name: 'sim', capacity: 20, npcCount: 28, seed, world: WORLD, systems: [...DEFAULT_SYSTEMS] },
+    // NPC_MAX=28 이면 시민 수 고정(2차 수정 전과 같은 인구)
+    { id: '1', name: 'sim', capacity: 20, npcCount: 28, ...(process.env.NPC_MAX ? { npcMax: Number(process.env.NPC_MAX) } : {}), seed, world: WORLD, systems: [...DEFAULT_SYSTEMS] },
     { createNpcSim },
   )
   const brnd = mulberry(seed ^ 0xabcdef)
@@ -275,7 +276,7 @@ export function run(seed: number, minutes: number, bots: Bot[]) {
       // ── 포교: 가장 가까운 말 걸 수 있어 보이는 NPC ──
       if (b.phase === 'seek' || b.phase === 'approach') {
         let tgt: NpcState | undefined = b.phase === 'approach' ? room.npcs.get(b.target) : undefined
-        const bad = (n: NpcState) => n.role === 'patrol' || n.mode === 'leave' || n.mode === 'enter' || n.mode === 'flee' || n.mode === 'script' || n.owner === p.id || (process.env.NOPOACH && n.owner !== 0) || (b.localMemo.get(n.id) ?? 0) > now
+        const bad = (n: NpcState) => n.role === 'patrol' || n.mode === 'leave' || n.mode === 'enter' || n.mode === 'flee' || n.mode === 'script' || n.owner === p.id || (process.env.NOPOACH && n.owner !== 0) || (process.env.SEEBUSY && n.talker !== 0 && n.talker !== p.id) || (b.localMemo.get(n.id) ?? 0) > now
         if (!tgt || bad(tgt) || now - b.since > 20_000) {
           tgt = undefined
           let bd = Infinity
@@ -293,6 +294,11 @@ export function run(seed: number, minutes: number, bots: Bot[]) {
           b.phase = 'wait'; b.since = now
         }
       }
+    }
+    if (process.env.MODES && el % 300_000 === 0) {
+      const h: Record<string, number> = {}
+      for (const n of room.npcs.list) { const k = n.mode + (n.owner ? '+own' : '') + (n.talker ? '+talk' : ''); h[k] = (h[k] ?? 0) + 1 }
+      console.log(Math.round(el / 60000), JSON.stringify(h))
     }
     for (const fr of host.frames.values()) for (let i = fr.length - 1; i >= 0; i--) if (typeof fr[i] !== 'string') fr.splice(i, 1)
   }
@@ -349,6 +355,8 @@ function main() {
       add(`${tag}.joins/pitch`, (st.joins ?? 0) / Math.max(1, st.pitches ?? 0))
       add(`${tag}.ach_count`, p.prog.ach.length)
       add(`${tag}.offer_items`, Object.keys(p.prog.items).length)
+      add(`${tag}.steals/hour`, ((st.poaches ?? 0) / mins) * 60)
+      add(`${tag}.joins/hour`, ((st.joins ?? 0) / mins) * 60)
       add(`${tag}.caught`, st.caught ?? 0); add(`${tag}.offerings`, st.offerings ?? 0); add(`${tag}.escapes`, st.escapes ?? 0); add(`${tag}.poaches`, st.poaches ?? 0)
       add(`${tag}.prophecies`, st.prophecies ?? 0)
       add(`${tag}.sermonsLed`, st.sermonsLed ?? 0)
@@ -368,6 +376,7 @@ function main() {
       if (scenario === 'podium' || scenario.startsWith('battle')) add(`${tag}.achs`, p.prog.ach.length)
     })
     if (scenario === 'room20') add('gini_early_inf', gini(infs.slice(0, 15)))
+    add('npcs_end', r.room.npcs.list.length)
   }
   console.log(`# ${scenario} seeds=${seeds} minutes=${minutes}  (median [p10–p90])`)
   for (const [k, v] of Object.entries(agg)) console.log(k.padEnd(28), fmt(v, 2), `n=${v.length}`)

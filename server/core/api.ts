@@ -156,6 +156,23 @@ export interface NpcSimEvents {
   onOwnerChange(npc: NpcState, prevOwner: number, reason: OwnerChangeReason): void
   /** NPC 가 말풍선을 띄움(혼잣말, 떠나는 말 등) */
   onSay(npc: NpcState, text: string): void
+  /**
+   * 시민이 출구로 나가 방에서 아예 빠졌다(접속자가 줄어 목표 시민 수가 내려갔을 때). 이 id 는 목록에서 지워졌고
+   * 나중에 다른 시민이 다시 쓸 수 있다
+   */
+  onGone?(npc: NpcState): void
+}
+
+/** 시민 수 현황 */
+export interface NpcPopulation {
+  /** 지금 방에 있는 일반 시민 수(특수 NPC 제외) */
+  citizens: number
+  /** 시뮬이 맞추려는 시민 수 */
+  target: number
+  /** 설정한 기본 수(접속자가 적어도 이 아래로는 줄지 않는다) */
+  base: number
+  /** 상한 */
+  max: number
 }
 
 export interface NpcSimApi {
@@ -192,6 +209,8 @@ export interface NpcSimApi {
   addScripted(arch: Archetype, role: string, name: string, look: Look, x: number, z: number): NpcState | null
   removeScripted(npc: NpcState): void
   publicOf(npc: NpcState): NpcPublic
+  /** 시민 수 현황(진단·테스트용). 접속자 수에 따라 늘고 준다 */
+  population?(): NpcPopulation
 }
 
 export interface Grant {
@@ -307,7 +326,10 @@ export interface RoomOptions {
   id: string
   name: string
   capacity?: number
+  /** 기본 시민 수(접속자가 적을 때의 수이자 하한) */
   npcCount?: number
+  /** 접속자가 늘 때 시민을 몇 명까지 늘릴 수 있는가(기본 NPC_MAX_PER_ROOM). npcCount 이하면 늘리지 않는다 */
+  npcMax?: number
   /** 접속자별 메모 저장소. 여러 방이 같은 것을 쓰면 방을 옮겨도 기억이 따라간다(없으면 방마다 따로) */
   memory?: Map<string, PlayerMemory>
   /** 테스트용 난수 시드 */

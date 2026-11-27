@@ -255,6 +255,14 @@ export interface SNpcSpawn {
   t: 'npcSpawn'
   n: NpcPublic
 }
+/**
+ * 시민이 출구로 나가 방에서 빠졌다(접속자가 줄어 시민 수를 줄일 때). 클라이언트는 그 id 를 지운다.
+ * 같은 id 는 나중에 npcSpawn 으로 다른 시민이 다시 쓸 수 있다
+ */
+export interface SNpcGone {
+  t: 'npcGone'
+  n: number
+}
 /** NPC 공개 정보 일부 변경(주인/역할) */
 export interface SNpcUpdate {
   t: 'nu'
@@ -278,9 +286,9 @@ export interface STalkOk {
 export interface STalkNo {
   t: 'talkNo'
   n: number
-  /** busy: 다른 사람과 대화 중 / cool: 쿨타임 / far: 너무 멂 / memo: 방금 거절한 사람 / mine: 이미 내 신도 / gone: 사라짐 */
-  why: 'busy' | 'cool' | 'far' | 'memo' | 'mine' | 'gone'
-  /** 쿨타임 남은 ms (why=cool|memo) */
+  /** busy: 다른 사람과 대화 중 / cool: 쿨타임 / far: 너무 멂 / memo: 방금 거절한 사람 / mine: 이미 내 신도 / gone: 사라짐 / loyal: 갓 남의 신도가 되어 한눈팔지 않는 중 */
+  why: 'busy' | 'cool' | 'far' | 'memo' | 'mine' | 'gone' | 'loyal'
+  /** 쿨타임 남은 ms (why=cool|memo|loyal) */
   ms?: number
 }
 /** 포교 결과. 방 전체에 방송된다(말풍선/연출용) */
@@ -462,6 +470,7 @@ export type ServerMsg =
   | SEmote
   | SSay
   | SNpcSpawn
+  | SNpcGone
   | SNpcUpdate
   | SNpcSay
   | STalkOk

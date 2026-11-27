@@ -8,7 +8,15 @@
  *  - 스냅샷 절약: 전송 양자화(1cm, 1/256 바퀴) 기준으로 값이 실제로 달라졌을 때만 dirty 를 세운다 → 서 있는 NPC 는 트래픽 0.
  *  - 보기 좋은 움직임: 등속 보행, 사람마다 다른 차선(우측통행), 모퉁이 돌기, 제한된 회전 속도, 마주 오는 사람 비켜 가기.
  */
-import { Anim, NPC_FLEE_SPEED, NPC_FOLLOW_SPEED, NPC_RADIUS, NPC_WALK_SPEED } from '../../shared/constants'
+import {
+  Anim,
+  NPC_FLEE_SPEED,
+  NPC_FOLLOW_SPEED,
+  NPC_POP_BASE,
+  NPC_POP_PER_PLAYER,
+  NPC_RADIUS,
+  NPC_WALK_SPEED,
+} from '../../shared/constants'
 import { ARCHETYPES } from '../../shared/content/archetypes'
 import { SKIN_COLORS } from '../../shared/content/core'
 import type { Archetype } from '../../shared/content/types'
@@ -16,7 +24,7 @@ import { quantPos, quantYaw } from '../../shared/protocol'
 import { type Rnd, pick, pickWeighted } from '../../shared/rng'
 import type { Look, NpcPublic } from '../../shared/types'
 import { type NavKind, type WorldDef, findNavPath, navNodesOfKind, nearestNavNode, resolveCollision } from '../../shared/world'
-import type { NpcSimApi, NpcSimEvents, NpcState, OwnerChangeReason, PlayerState } from './api'
+import type { NpcPopulation, NpcSimApi, NpcSimEvents, NpcState, OwnerChangeReason, PlayerState } from './api'
 
 const TAU = Math.PI * 2
 
@@ -51,6 +59,22 @@ const EXIT_CHANCE = 0.17
 const TRIPS_BEFORE_EXIT = 1
 const VANISH_S = 1.0
 const ENTER_S = 0.9
+
+// 시민 수 조절(접속자 수를 따라감)
+/**
+ * 접속자가 줄어 목표가 내려가도 이 시간 동안은 그대로 둔다. 한 명이 잠깐 끊겼다 다시 들어오거나
+ * 방을 들락날락할 때마다 시민이 나갔다 들어왔다 하며 출렁이지 않게 하려는 것
+ */
+const SHRINK_HOLD_MS = 60_000
+/** 새 시민이 출입구에서 올라오는 간격(초) — 한꺼번에 쏟아져 나오지 않고 줄줄이 들어오게 */
+const SPAWN_GAP_S = 0.8
+/** 남는 시민을 출구로 보내는 간격(초) */
+const RETIRE_GAP_S = 1.5
+/**
+ * 지워진 id 는 이 시간 동안 새 시민에게 주지 않는다. 클라이언트에 이미 떠 있는 이전 스냅샷 조각이
+ * 새 시민에게 잘못 붙는(유령처럼 순간이동하는) 일을 막는다
+ */
+const ID_REUSE_MS = 10_000
 
 /** 중간 경유점은 이 거리 안에 들면 다음 지점으로 넘어간다 → 모퉁이를 둥글게 돈다 */
 const CORNER_R = 0.45
@@ -443,7 +467,11 @@ interface Group {
   stamp: number
 }
 
-export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number): NpcSimApi {
+/**
+ * count = 기본 시민 수(하한). max 를 count 보다 크게 주면 접속자 수에 따라 시민이 max 까지 늘었다 줄었다 한다.
+ * max 를 주지 않으면(또는 count 이하면) 시민 수는 count 로 고정이다.
+ */
+export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number, max?: number): NpcSimApi {
   const nav = navInfoOf(world)
   const list: Sim[] = []
   const byId: (Sim | undefined)[] = new Array<Sim | undefined>(MAX_ID + 1).fill(undefined)
@@ -645,6 +673,127 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
     remember(n)
     list.push(n)
     byId[n.id] = n
+  }
+
+  // ───────── 시민 수(접속자 수를 따라 늘고 준다) ─────────
+  const popBase = citizens
+  // 기본 수가 0 이면(시민 없는 방) 늘리지 않는다
+  const popMax = popBase > 0 ? Math.max(popBase, Math.min(MAX_CITIZENS, Math.floor(max ?? 0) || 0)) : 0
+  /** 지금 목록에 있는 일반 시민 수(특수 NPC 제외, 이번 틱에 지워질 사람은 이미 뺀 값) */
+  let citizenN = citizens
+  let popTarget = popBase
+  /** 목표보다 적은 값이 처음 나온 시각(0 = 없음)과 그 뒤로 나온 가장 큰 값 */
+  let lowSince = 0
+  let lowMax = 0
+  let spawnIn = 0
+  let retireIn = 0
+  /** id 별로 비워진 시각 */
+  const freedAt = new Float64Array(MAX_ID + 1)
+  /** 이번 틱이 끝나면 목록에서 지울 시민 */
+  const goneBuf: Sim[] = []
+
+  function wantedCitizens(players: number): number {
+    const want = NPC_POP_BASE + Math.round(NPC_POP_PER_PLAYER * players)
+    return want < popBase ? popBase : want > popMax ? popMax : want
+  }
+
+  /** 접속자 수로 목표를 정한다. 올릴 때는 바로, 내릴 때는 SHRINK_HOLD_MS 동안 낮은 값이 이어져야 내린다 */
+  function updateTarget(now: number, players: number): void {
+    const want = wantedCitizens(players)
+    if (want >= popTarget) {
+      popTarget = want
+      lowSince = 0
+      return
+    }
+    if (lowSince === 0) {
+      lowSince = now
+      lowMax = want
+      return
+    }
+    if (want > lowMax) lowMax = want
+    if (now - lowSince >= SHRINK_HOLD_MS) {
+      popTarget = lowMax
+      lowSince = 0
+    }
+  }
+
+  /** 새 시민 id: 비어 있는 칸 중 오래전에 비워진 것. 그런 칸이 없으면 아무 빈칸 */
+  function freeCitizenId(now: number): number {
+    let any = 0
+    for (let i = 1; i <= MAX_ID; i++) {
+      if (byId[i] !== undefined) continue
+      if (freedAt[i] === 0 || now - freedAt[i]! >= ID_REUSE_MS) return i
+      if (any === 0) any = i
+    }
+    return any
+  }
+
+  /** 시민 한 명을 새로 들인다: 출입구에서 등장(onSpawn) */
+  function addCitizen(now: number): boolean {
+    const id = freeCitizenId(now)
+    if (id === 0) return false
+    const n = blank(id, ARCHETYPES[0]!, '', [0, 0, 0, 0, 0, 0, 0], '')
+    list.push(n)
+    byId[id] = n
+    citizenN++
+    respawn(n)
+    return true
+  }
+
+  /** 남는 시민 하나를 출구로 보낸다. 신도·대화 중·구경 중·특수 NPC 는 건드리지 않는다. 주변 교주와 먼 사람부터 */
+  function retireSurplus(): boolean {
+    let best: Sim | null = null
+    let bestD = -1
+    for (let i = 0; i < list.length; i++) {
+      const n = list[i]!
+      if (n.scripted || n.retiring || n.owner !== 0 || n.talker !== 0 || n.gslot) continue
+      if (n.mode !== 'wander' && n.mode !== 'pause') continue
+      let near = Infinity
+      for (let k = 0; k < pn; k++) {
+        const p = plist[k]!
+        const d = (p.x - n.x) * (p.x - n.x) + (p.z - n.z) * (p.z - n.z)
+        if (d < near) near = d
+      }
+      if (near > bestD) {
+        bestD = near
+        best = n
+      }
+    }
+    if (!best) return false
+    retireSim(best)
+    return true
+  }
+
+  /** 틱 앞머리: 목표에 맞춰 시민을 한 명씩 들이거나 내보낸다 */
+  function updatePopulation(now: number, dt: number): void {
+    updateTarget(now, pn)
+    if (spawnIn > 0) spawnIn -= dt
+    if (retireIn > 0) retireIn -= dt
+    if (citizenN < popTarget) {
+      if (spawnIn <= 0 && addCitizen(now)) spawnIn = SPAWN_GAP_S * (0.6 + rnd() * 0.8)
+      return
+    }
+    if (citizenN > popTarget && retireIn <= 0) {
+      // 이미 출구로 가는 사람(스스로 떠나는 사람 포함)이 남는 수만큼 있으면 더 보내지 않는다.
+      // 그 사람들은 사라질 때 교체되지 않고 빠진다(finishLeave)
+      let leaving = 0
+      for (let i = 0; i < list.length; i++) if (list[i]!.mode === 'leave' && !list[i]!.scripted) leaving++
+      if (citizenN - popTarget > leaving && retireSurplus()) retireIn = RETIRE_GAP_S
+    }
+  }
+
+  /** 틱 끝: 이번 틱에 빠진 시민을 목록에서 지우고 알린다(틱 도중에 지우면 목록 순회가 꼬인다) */
+  function flushGone(now: number): void {
+    if (goneBuf.length === 0) return
+    for (let i = 0; i < goneBuf.length; i++) {
+      const n = goneBuf[i]!
+      const at = list.indexOf(n)
+      if (at >= 0) list.splice(at, 1)
+      if (byId[n.id] === n) byId[n.id] = undefined
+      freedAt[n.id] = now
+      events.onGone?.(n)
+    }
+    goneBuf.length = 0
   }
 
   // ───────── 충돌 / 걷기 ─────────
@@ -1658,7 +1807,24 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
       return
     }
     n.wait -= dt
-    if (n.wait <= 0) respawn(n)
+    if (n.wait <= 0) finishLeave(n)
+  }
+
+  /** 출구에서 사라짐이 끝났다: 시민이 남으면 방에서 빼고, 아니면 새 시민으로 교체 */
+  function finishLeave(n: Sim): void {
+    if (popMax > popBase && !n.scripted && citizenN > popTarget) {
+      const prev = detach(n)
+      n.mode = 'leave'
+      n.phase = 2
+      n.wait = Infinity
+      n.talker = 0
+      n.dirty = false
+      citizenN--
+      goneBuf.push(n)
+      if (prev) events.onOwnerChange(n, prev, 'replace')
+      return
+    }
+    respawn(n)
   }
 
   function updateListen(n: Sim, now: number, dt: number): void {
@@ -2040,6 +2206,41 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
     }
   }
 
+  /** 출구로 걸어 나가게 한다(사라지면 finishLeave 가 교체하거나 방에서 뺀다) */
+  function retireSim(n: Sim): void {
+    const prev = detach(n)
+    n.talker = 0
+    n.gslot = false
+    n.retiring = true
+    n.leaving = false
+    n.exitNext = false
+    n.until = 0
+    n.moving = false
+    n.running = false
+    n.turning = false
+    n.hurry = 0
+    n.mode = 'leave'
+    n.phase = 0
+    n.st = WALK
+    n.wn = 0
+    n.wi = 0
+    // 가장 가까운 출구로 걸어 나간다. 출구가 없는 월드면 그 자리에서 사라진다
+    const start = nav.n > 0 ? startNode(n) : -1
+    const exit = start >= 0 ? pickExit(n, start, true) : -1
+    if (exit >= 0) {
+      const path = findNavPath(start, exit, world)
+      if (path[path.length - 1] === exit) {
+        pickSpot(n, exit, 0.5, true)
+        buildRoute(n, path, outX, outZ)
+        n.dest = exit
+      }
+    }
+    if (n.wn === 0) beginVanish(n)
+    else startWalking(n)
+    flush(n)
+    if (prev) events.onOwnerChange(n, prev, 'replace')
+  }
+
   // ───────── 공개 API ─────────
 
   /** 이 시뮬이 관리하는 NPC 인지 확인(다른 방의 객체나 지워진 특수 NPC 는 무시) */
@@ -2065,6 +2266,7 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
       players.forEach(collectPlayer)
       if (mutterCd > 0) mutterCd -= dt
       if (gatherOn && now >= gatherUntil) ungatherAll()
+      if (popMax > popBase) updatePopulation(now, dt)
 
       for (let i = 0; i < list.length; i++) {
         const n = list[i]!
@@ -2099,6 +2301,7 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
         }
         flush(n)
       }
+      flushGone(now)
     },
 
     canTalk(npc, playerId, now) {
@@ -2315,47 +2518,12 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
     retire(npc) {
       const n = own(npc)
       if (!n || n.mode === 'script' || n.mode === 'leave') return
-      const prev = detach(n)
-      n.talker = 0
-      n.gslot = false
-      n.retiring = true
-      n.leaving = false
-      n.exitNext = false
-      n.until = 0
-      n.moving = false
-      n.running = false
-      n.turning = false
-      n.hurry = 0
-      n.mode = 'leave'
-      n.phase = 0
-      n.st = WALK
-      n.wn = 0
-      n.wi = 0
-      // 가장 가까운 출구로 걸어 나간다. 출구가 없는 월드면 그 자리에서 사라진다
-      const start = nav.n > 0 ? startNode(n) : -1
-      const exit = start >= 0 ? pickExit(n, start, true) : -1
-      if (exit >= 0) {
-        const path = findNavPath(start, exit, world)
-        if (path[path.length - 1] === exit) {
-          pickSpot(n, exit, 0.5, true)
-          buildRoute(n, path, outX, outZ)
-          n.dest = exit
-        }
-      }
-      if (n.wn === 0) beginVanish(n)
-      else startWalking(n)
-      flush(n)
-      if (prev) events.onOwnerChange(n, prev, 'replace')
+      retireSim(n)
     },
 
     addScripted(arch, role, name, look, x, z) {
-      let id = 0
-      for (let i = 1; i <= MAX_ID; i++) {
-        if (byId[i] === undefined) {
-          id = i
-          break
-        }
-      }
+      // 방금 빠진 시민의 id 는 되도록 피한다(시민 id 와 같은 규칙)
+      const id = freeCitizenId(lastNow)
       if (id === 0) return null
       const n = blank(id, arch, name, look, role)
       n.x = x
@@ -2372,13 +2540,18 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
 
     removeScripted(npc) {
       const n = own(npc)
-      // 일반 시민은 지우지 않는다(방의 시민 수는 일정해야 한다)
+      // 일반 시민은 여기서 지우지 않는다(시민 수는 시뮬이 접속자 수에 맞춰 직접 늘리고 줄인다)
       if (!n || !n.scripted) return
       detach(n)
       n.talker = 0
       const i = list.indexOf(n)
       if (i >= 0) list.splice(i, 1)
       byId[n.id] = undefined
+      freedAt[n.id] = lastNow
+    },
+
+    population(): NpcPopulation {
+      return { citizens: citizenN, target: popTarget, base: popBase, max: popMax > popBase ? popMax : popBase }
     },
 
     publicOf(npc): NpcPublic {

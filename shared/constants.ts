@@ -117,3 +117,27 @@ export enum Anim {
   /** NPC: 지하철 등으로 퇴장/등장 중(축소 연출) */
   Vanish = 7,
 }
+
+// ───────── 붐비는 방(2차 검수): 시민 수와 신도 정원이 접속자 수를 따라간다 ─────────
+/** 방 하나의 시민 수 상한(설정한 기본 수가 이보다 크면 기본 수가 상한) */
+export const NPC_MAX_PER_ROOM = 52
+/** 목표 시민 수 = NPC_POP_BASE + NPC_POP_PER_PLAYER × 접속자, [기본 수, 상한] 으로 자른다 */
+export const NPC_POP_BASE = 20
+export const NPC_POP_PER_PLAYER = 1.6
+/** 남의 신도를 데려갔을 때 원래 교주에게 가는 알림의 최소 간격(교주당) */
+export const POACH_NOTICE_MS = 5000
+/**
+ * 갓 따라나선 신도는 이 시간 동안 다른 교주의 말을 듣지 않는다(의리 기간).
+ * 붐비는 방에서 방금 얻은 신도를 바로 옆 사람이 곧장 데려가 줄이 생기지 않던 문제를 줄인다.
+ * 빼앗긴 직후에도 새로 따라나선 것이므로 같은 기간이 다시 시작된다.
+ */
+export const FOLLOWER_LOYALTY_MS = 40_000
+
+/**
+ * 지금 방 인원에서 교주 한 명이 거느릴 수 있는 신도 수. 사람이 많으면 시민도 모자라므로 정원을 줄인다.
+ * MAX_ENTOURAGE 가 절대 상한이다.
+ */
+export function entourageCap(players: number): number {
+  const cap = players <= 8 ? 6 : players <= 14 ? 5 : 4
+  return Math.min(cap, MAX_ENTOURAGE)
+}

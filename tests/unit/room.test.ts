@@ -19,6 +19,7 @@ import {
   MAX_MSG_BYTES,
   NAME_MAX,
   NPC_REJECT_MEMORY_MS,
+  FOLLOWER_LOYALTY_MS,
   PITCH_COOLDOWN_MS,
   PROTOCOL_VERSION,
   RATE_LIMIT_PER_SEC,
@@ -1540,6 +1541,14 @@ describe('대화와 포교', () => {
     t.talk(b, 1)
     t.pitch(b, 1, R_JOIN)
     expect(t.npc(1).owner).toBe(b.id)
+
+    // 갓 따라나선 신도는 의리 기간 동안 남의 말을 듣지 않는다
+    t.host.clear()
+    t.talk(a, 1)
+    expect(t.host.of(a.conn, 'talkOk')).toHaveLength(0)
+    expect(t.host.of(a.conn, 'talkNo').at(-1)).toMatchObject({ n: 1, why: 'loyal', ms: FOLLOWER_LOYALTY_MS })
+    // 의리 기간이 지난 뒤(따라나선 지 오래된 신도)
+    t.npc(1).followSince = t.host.t - FOLLOWER_LOYALTY_MS
 
     // 실패(도망 판정이어도 주인을 떠나지 않는다)
     t.talk(a, 1)

@@ -5,8 +5,11 @@
  *
  * 봇이 하는 일(사람과 같은 메시지를 보낸다): hello → 10Hz 이동(충돌 처리 포함 무작위 걷기) → 가끔 이모트 →
  * 가까운 NPC 에게 말 걸기/멘트 선택 → 4초마다 ping.
+ * 단속반에게 걸리면(patrol caught) 사람처럼 얼어붙은 동안(ms + 200) 이동을 보내지 않는다.
  * 재는 것: 접속 성공/실패/내보내짐, 봇 1명당 송수신 메시지·바이트, 스냅샷 수신율, ping 왕복 시간,
  *          서버 /healthz 의 틱 시간(p95/최대)·메모리·CPU.
+ *          위치 보정(pos)은 단속에 걸린 직후의 것(stunCorrections: 걸린 줄 모르고 이미 보낸 이동)과
+ *          그 밖의 것(posCorrections: 속도 초과·벽 통과 등 진짜 어긋남)을 따로 센다.
  *
  * 봇은 어디까지나 시험용 클라이언트다. 남의 서버를 두드리지 않도록 localhost 가 아니면 실행을 거부한다
  * (자기 서버라면 --i-own-this-server 를 붙인다).
@@ -54,6 +57,9 @@ interface Stats {
   snapshots: number
   snapshotBytes: number
   posCorrections: number
+  stunCorrections: number
+  caught: number
+  npcGone: number
   talks: number
   pitches: number
   joins: number
@@ -61,8 +67,10 @@ interface Stats {
 }
 const stats: Stats = {
   opened: 0, welcomed: 0, failed: 0, kicked: {}, full: 0, closedEarly: 0, sentMsgs: 0, sentBytes: 0, recvMsgs: 0, recvBytes: 0,
-  snapshots: 0, snapshotBytes: 0, posCorrections: 0, talks: 0, pitches: 0, joins: 0, rtts: [],
+  snapshots: 0, snapshotBytes: 0, posCorrections: 0, stunCorrections: 0, caught: 0, npcGone: 0, talks: 0, pitches: 0, joins: 0, rtts: [],
 }
+/** 단속 보정으로 볼 여유(ms): caught 소식과 보정이 망 지연만큼 앞뒤로 엇갈릴 수 있다 */
+const STUN_SLACK_MS = 400
 let stopping = false
 let measuring = false
 
@@ -78,6 +86,10 @@ class Bot {
   alive = false
   talking = false
   talkAt = 0
+  /** 단속에 걸려 얼어붙은 만료 시각(이때까지 이동을 보내지 않는다) */
+  stunUntil = 0
+  /** 단속에 걸린 시각. 이 뒤로 stunUntil 까지 온 위치 보정은 '단속 보정'으로 센다 */
+  caughtAt = 0
   npcs = new Map<number, { x: number; z: number; owner: number }>()
   rnd: () => number
   timers: ReturnType<typeof setInterval>[] = []
@@ -171,10 +183,29 @@ class Bot {
       case 'full':
         stats.full++
         break
-      case 'pos':
+      case 'pos': {
         this.x = msg.x
         this.z = msg.z
-        if (measuring) stats.posCorrections++
+        const now = Date.now()
+        // 걸렸다는 소식보다 먼저 보낸 이동은 서버가 얼어붙은 자리로 되돌린다 — 넷코드 문제가 아니다
+        if (measuring) {
+          if (this.caughtAt > 0 && now >= this.caughtAt - STUN_SLACK_MS && now <= this.stunUntil + STUN_SLACK_MS) stats.stunCorrections++
+          else stats.posCorrections++
+        }
+        break
+      }
+      case 'patrol':
+        if (msg.ph === 'caught' && msg.p === this.id) {
+          const now = Date.now()
+          this.caughtAt = now
+          this.stunUntil = now + (msg.ms ?? 0) + 200
+          if (measuring) stats.caught++
+        }
+        break
+      case 'npcGone':
+        // 출구로 나가 방에서 빠진 시민: 더 이상 말 걸 대상이 아니다
+        this.npcs.delete(msg.n)
+        if (measuring) stats.npcGone++
         break
       case 'npcSpawn':
         this.npcs.set(msg.n.id, { x: msg.n.x, z: msg.n.z, owner: msg.n.owner })
@@ -213,6 +244,8 @@ class Bot {
   step(): void {
     if (!this.alive || this.talking) return
     const now = Date.now()
+    // 얼어붙은 동안은 사람도 못 움직인다
+    if (now < this.stunUntil) return
     if (now > this.until) {
       const a = this.rnd() * Math.PI * 2
       const pause = this.rnd() < 0.25
@@ -360,7 +393,17 @@ async function main(): Promise<void> {
     },
     total: { outboundMbps: Math.round(((stats.recvBytes * 8) / elapsed / 1e6) * 100) / 100 },
     ping: { samples: rtts.length, p50: pct(rtts, 0.5), p95: pct(rtts, 0.95), p99: pct(rtts, 0.99) },
-    gameplay: { talks: stats.talks, pitches: stats.pitches, joins: stats.joins, posCorrections: stats.posCorrections },
+    gameplay: {
+      talks: stats.talks,
+      pitches: stats.pitches,
+      joins: stats.joins,
+      /** 속도 초과·벽 등 진짜 위치 어긋남 */
+      posCorrections: stats.posCorrections,
+      /** 단속에 걸린 직후 이미 보낸 이동이 되돌려진 것(정상) */
+      stunCorrections: stats.stunCorrections,
+      caught: stats.caught,
+      npcGone: stats.npcGone,
+    },
   }
   console.log('\n' + JSON.stringify(report, null, 2))
   if (OUT) writeFileSync(OUT, JSON.stringify(report, null, 2))
