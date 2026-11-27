@@ -1,0 +1,25 @@
+# Render Blueprint — 저장소를 연결하면 이 설정으로 서버+클라이언트를 한 번에 띄운다.
+# 주의: 방 상태가 프로세스 메모리에 있으므로 인스턴스는 반드시 1개여야 한다.
+services:
+  - type: web
+    name: doas-game
+    runtime: node
+    plan: free            # 잠들지 않게 하려면 유료 플랜으로 바꾼다
+    region: singapore     # 한국에서 가장 가까운 Render 리전
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    numInstances: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+      - key: PORT
+        value: "10000"
+      - key: SAVE_SECRET
+        generateValue: true   # 한 번 정해지면 바꾸지 않는다(바꾸면 모든 진행도가 초기화된다)
+      - key: ROOMS
+        value: "3"
+      - key: ROOM_CAPACITY
+        value: "20"
+      - key: ALLOWED_ORIGINS
+        sync: false           # 예: https://doas-game.onrender.com (클라이언트를 따로 올리면 그 주소도 쉼표로 추가)

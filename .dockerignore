@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.claude
+.data
+.wrangler
+tests/e2e/out
+docs
+worker/node_modules
+*.log
