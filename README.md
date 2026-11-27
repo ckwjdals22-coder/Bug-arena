@@ -31,7 +31,7 @@ npm start            # http://localhost:8787  (브라우저 두 개로 열면 �
 - **가상 헌금함** — 신도가 터무니없는 잡동사니를 내놓습니다. 헌납품 123종 도감. 전부 가상이며 결제가 없습니다.
 - **가상 매점** — 헌납에 딸려 온 가상 코인을 천막에서 쓸모없는 칭호와 바꿉니다. 실제 돈과 무관하고, 칭호는 이름표 장식일 뿐 게임이 유리해지지 않습니다.
 - **돌발 이벤트** — 호루라기를 문 단속반에게 쫓기기, "저도 사실 교주입니다" 라이벌과 기싸움.
-- **업적·일일 수행·칭호**, **교주 임명장 / 오늘의 포교 결산 / 거절 짤** 이미지 저장·공유(세로 1080×1920).
+- **업적·일일 수행·칭호**, **교주 임명장 / 오늘의 포교 결산**(세로 1080×1920) · **거절 짤**(정사각 1080×1080) 이미지 저장·공유.
 - PC(WASD·마우스)와 모바일(가상 조이스틱·탭 이동) 모두 지원.
 
 ## 멀티플레이에 대해 정직하게
@@ -61,6 +61,7 @@ node tests/e2e/cult.cjs                  # 기능별: cult, podium, battle, achi
 node tests/e2e/ops.cjs                   # 운영: 종료 신호·강제 종료·저장 폴더 장애·중복 실행·교단 기록 손상
 node tests/e2e/csp.cjs                   # 보안 헤더(CSP) 위반 없이 전 기능이 도는지
 node tests/e2e/crowd.cjs                 # 방이 붐빌 때 시민이 늘고 줄어드는지(약 4분)
+node tests/e2e/resume.cjs                # 가득 찬 방에서 끊겼다 돌아오기(같은 방·같은 번호 / 자리가 넘어갔으면 다른 방 안내)
 npm run loadtest -- --url ws://localhost:8787 --rooms 3 --bots 20 --seconds 45
 ```
 
@@ -73,7 +74,7 @@ E2E 는 Playwright(Chromium)가 필요합니다: `npm i -D playwright && npx pla
 ```
 shared/    클라·서버 공용: 프로토콜(JSON 이벤트 + 바이너리 위치), 월드 데이터, 콘텐츠, 규칙(포교 판정·이름 필터)
 server/
-  core/    전송 계층과 무관한 방 로직: Room, NPC 시뮬, 기능 시스템(교단·단상·배틀·헌금함·업적·단속반·기싸움)
+  core/    전송 계층과 무관한 방 로직: Room, NPC 시뮬, 기능 시스템(교단·단상·배틀·헌금함·가상 매점·업적·단속반·기싸움)
   node/    Node 어댑터: HTTP(정적 파일, /api/rooms, /healthz) + WebSocket
 worker/    Cloudflare Workers + Durable Objects 어댑터(같은 core 를 사용)
 client/    Three.js 클라이언트. 그래픽·소리 전부 코드로 생성(외부 모델·이미지·음원 없음)

@@ -20,7 +20,7 @@ Node 서버(`server/node/main.ts`) 대신 Cloudflare 에서 **같은 `server/cor
 | `src/env.ts` | 바인딩 타입(`Env`)과 `vars` 해석(Node 의 환경변수와 같은 이름·범위) |
 | `wrangler.jsonc` | 설정: `compatibility_date`, DO 바인딩 + `exports`(SQLite), `vars`, `assets`, 필수 비밀 |
 
-흐름: 브라우저 → Worker `/ws?room=auto` → `LobbyDO.pick()` 이 방 번호를 고름 → `env.ROOM.getByName("room-<id>")` 로 업그레이드를 넘김
+흐름: 브라우저 → Worker `/ws?room=auto` → `LobbyDO.pick()` 이 방 번호를 고름(`&resume=1` 이면 요청한 방이 가득 차 보여도 그 방, 판정은 방이 hello 때) → `env.ROOM.getByName("room-<id>")` 로 업그레이드를 넘김
 → `RoomDO.fetch()` 가 `WebSocketPair` 를 받아 `room.connect()`. 게임 메시지는 로비를 거치지 않고 방 DO 로 바로 갑니다.
 전부 가득이면 Worker 가 직접 연결을 받아 `{t:'full', rooms}` 를 보내고 4001 로 닫습니다(Node 와 같은 동작).
 
@@ -30,7 +30,7 @@ Node 서버(`server/node/main.ts`) 대신 Cloudflare 에서 **같은 `server/cor
   Hibernation API 는 서버가 틱·fetch 문맥에서 `close()` 한 소켓의 종료가 클라이언트에 늦게(10초) 또는 아예 가지 않는 현상이
   로컬에서 관찰됐습니다. 코어는 가득 참·중복·무응답 종료를 바로 그 문맥에서 하므로 표준 API 가 맞습니다
   (`docs/research/06-cloudflare-durable-objects.md` §3).
-- **빈 방은 틱을 멈춥니다.** 마지막 소켓이 나가면 `clearTimeout` → DO 가 메모리에서 내려가고 과금이 멈춥니다.
+- **빈 방은 틱을 멈춥니다.** 마지막 소켓이 나가고 잠깐 끊긴 채 자리를 지키던 사람(최대 15초)까지 정리되면 `clearTimeout` → DO 가 메모리에서 내려가고 과금이 멈춥니다.
   Node 판은 빈 방도 1초에 한 번 NPC 를 움직이지만, 여기서는 다음 입장 때 다시 움직입니다(방 상태는 그때 새로 시작될 수 있음).
 - **틱은 매번 다시 거는 `setTimeout` + 밀림 보정.** 알람(`setAlarm`)으로 10Hz 를 만들면 요청·행 쓰기 과금으로 약 7배 비쌉니다.
 - **`RoomHost` 구현**: `send/close` 는 연결 표 조회(+예외 무시), `now = Date.now`, `random = Math.random`,
@@ -39,7 +39,7 @@ Node 서버(`server/node/main.ts`) 대신 Cloudflare 에서 **같은 `server/cor
 - **로비 보고**: 인원(players/pending)이 바뀔 때마다 즉시 + 10초마다. 보고가 35초 넘게 끊긴 방(배포·리셋으로 '0명' 보고 없이 사라진 방)은 0명으로 봅니다.
   배정 직후 아직 접속이 도착하지 않은 자리는 10초 동안 예약으로 잡아 둡니다(몰릴 때 정원 초과 배정 방지).
   인사 전 연결은 Node 처럼 4개까지만 자리로 칩니다(빈 연결로 모든 방을 '가득 참'으로 만들지 못하게).
-- **접속자 메모(`src/memory.ts`)**: 쿨타임·차단·입막음·이름 고정·마지막 자리를 방 DO 저장소에 5초마다(바뀌었을 때만)와
+- **접속자 메모(`src/memory.ts`)**: 쿨타임·차단·입막음·이름 고정·마지막 자리·나가기 직전 60초의 진행도를 방 DO 저장소에 5초마다(바뀌었을 때만)와
   마지막 사람이 나갈 때 쓰고, DO 가 깨어날 때 `blockConcurrencyWhile` 안에서 되살립니다. Node 판과 달리 **방 단위**입니다.
 - **교단 기록(`host.cults`)**: 구현되어 있습니다. 방 DO 가 사본을 들고 코어에 동기로 답하고, 변경은 로비 보고에 실어 보냅니다.
   로비는 SQLite 에 저장하고 행마다 seq 를 매겨 변경분만 돌려줍니다.

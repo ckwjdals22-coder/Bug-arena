@@ -76,7 +76,7 @@ npm test               # vitest (tests/unit)
 npm run test:e2e       # Playwright 스크립트
 ```
 
-서버 환경변수: `PORT`(8787) · `ROOMS`(3) · `ROOM_CAPACITY`(20) · `NPCS`(28) · `SAVE_SECRET`(없으면 `.data/secret` 에 생성) · `CLIENT_DIR`(정적 파일 위치) · `ALLOWED_ORIGINS`(쉼표 구분, 비우면 같은 출처만, `*` 면 전부) · `FRAME_ANCESTORS`(기본 `'self'`) · `DATA_DIR`(.data). 전체 목록과 운영 안내는 `docs/DEPLOY.md`.
+서버 환경변수: `PORT`(8787) · `ROOMS`(3) · `ROOM_CAPACITY`(20) · `NPCS`(28, 최소 시민 수) · `SAVE_SECRET`(없으면 `.data/secret` 에 생성) · `CLIENT_DIR`(정적 파일 위치) · `ALLOWED_ORIGINS`(쉼표 구분, 비우면 같은 출처만, `*` 면 전부) · `FRAME_ANCESTORS`(기본 `'self'`) · `DATA_DIR`(.data). 전체 목록과 운영 안내는 `docs/DEPLOY.md`.
 
 헤드리스 검증: Playwright Chromium 은 SwiftShader 로 WebGL2 가 동작한다. `require('playwright')` 는 어디서나 된다(전역 설치). **`playwright install` 을 실행하지 말 것.**
 
@@ -126,15 +126,15 @@ export class Room implements RoomApi {
 - `talk{n}`:
   - 이미 대화 중이면 그 세션을 먼저 끝낸다.
   - 포교 쿨타임(`cd 'pitch'`)이면 `talkNo{why:'cool', ms}`.
-  - NPC 없음/역할이 대화 불가(`role==='patrol'`) → `talkNo{why:'gone'}`. 거리 > `TALK_RANGE + 1.0` → `far`. `npcs.canTalk` 결과가 busy/memo/gone 이면 그대로. 이미 내 신도(`owner === p.id`) → `mine`.
+  - NPC 없음/역할이 대화 불가(`role==='patrol'`) → `talkNo{why:'gone'}`. 거리 > `TALK_RANGE + 1.0` → `far`. `npcs.canTalk` 결과가 busy/memo/gone 이면 그대로. 이미 내 신도(`owner === p.id`) → `mine`. 남의 신도이고 따라나선 지 `FOLLOWER_LOYALTY_MS`(40초)가 안 됐으면 → `loyal`(+`ms` 남은 시간).
   - 통과: `npcs.beginListen(npc, p, now + TALK_TIMEOUT_MS)`, `p.talk = {npc, round:1, lines: pickLines(rank, rnd), used:[], until}`, `talkOk{n, greet: pick(arch.greet), lines, round:1}`. `STAT.talks` +1, `prog.met` 에 유형 기록(처음이면 `markSave`).
 - `pitch{n,l}`: 세션 검증(`p.talk.npc === n`, `lines.includes(l)`) 실패 시 `err`. 판정:
   ```ts
   const result = resolvePitch(npc.arch, PITCH_LINES[l], {rank, streak, failStreak, round, buff, poach: npc.owner !== 0 && npc.owner !== p.id}, rnd)
   ```
   - 시스템 `interceptPitch` 중 하나가 true 면 기본 처리 생략(그 시스템이 세션 정리까지 책임).
-  - 방 전체에 `pitchRes{p,n,l,o,say}`.
-  - `join`/`king`: `MAX_ENTOURAGE` 초과면 가장 오래된 신도를 `release(…,'expire')`. `npcs.startFollow(npc, p.id, now + FOLLOW_DURATION_MS, now)`. `grant{why:'join', inf: INF_JOIN + min(streak×INF_STREAK_BONUS, INF_STREAK_MAX), fol: 1, streak}`. 통계: joins+1, streak+1, bestStreak, failStreak=0, (king 이면 kings+1), (poach 면 poaches+1). 세션 종료.
+  - 방 전체에 `pitchRes{p,n,l,o,say,sym?}`(`sym`: 연속 실패 끝의 동정표 합류일 때만).
+  - `join`/`king`: 신도 정원 `entourageCap(방 인원)`(6/5/4)에 차 있으면 가장 오래된 신도부터 `release(…,'expire')`. `npcs.startFollow(npc, p.id, now + FOLLOW_DURATION_MS, now)`. `grant{why:'join', inf: INF_JOIN + min(streak×INF_STREAK_BONUS, INF_STREAK_MAX), fol: 1, streak}`. 통계: joins+1, streak+1, bestStreak, failStreak=0, (king 이면 kings+1), (poach 면 poaches+1). 세션 종료.
   - `more`: `grant{why:'more', inf: INF_MORE}`. `round = 2`, 새 `lines = pickLines(rank, rnd, LINES_PER_TALK, used)`, `until` 연장, `talkOk{round:2, greet: say}` 재전송.
   - `no`/`ignore`: `npcs.remember(npc, p.id, now + NPC_REJECT_MEMORY_MS)`, `npcs.endListen`/`walkOff`. `grant{why:'fail', inf: INF_FAIL}`. 통계: rejects+1, (ignore 면 ignores+1), streak=0, failStreak+1, worstStreak.
   - `flee`: 위와 같고 `npcs.flee(npc, p.x, p.z, now)`, flees+1.
@@ -146,7 +146,7 @@ export class Room implements RoomApi {
 1. `npcs.tick(now, dt, players)`.
 2. 대화 세션 시간 초과, hello 시간 초과, 무응답(`IDLE_TIMEOUT_MS`) 연결 정리, 버프 만료.
 3. 시스템 `onTick`.
-4. **스냅샷:** `dirty` 인 플레이어/NPC 만 모아 `encodeSnapshot(now, players, npcs)` → 방 전원에게 전송 후 `dirty = false`. 둘 다 비어도 1초에 한 번은 빈 스냅샷을 보낸다(클라이언트 시계/hold 갱신용). 255개 초과는 없다(20 + 28).
+4. **스냅샷:** `dirty` 인 플레이어/NPC 만 모아 `encodeSnapshot(now, players, npcs)` → 방 전원에게 전송 후 `dirty = false`. 둘 다 비어도 1초에 한 번은 빈 스냅샷을 보낸다(클라이언트 시계/hold 갱신용). 255개 초과는 없다(접속자 최대 20 + 시민 최대 52 + 단속반).
 5. `saveDirty` 인 플레이어는 최대 1초에 한 번 `save{me, save: {d, s}}` 전송.
 
 **RoomApi 구현 메모**
@@ -157,21 +157,22 @@ export class Room implements RoomApi {
 
 **끊김과 재접속**
 - 비정상 끊김(망 전환, 응답 없어 끊은 경우)은 플레이어를 방에서 빼지 않고 `RESUME_GRACE_MS`(15초) 동안 `lingering` 에 둔다. 다른 사람에게는 서 있는 것으로 보인다(leave 를 보내지 않는다). 시간이 지나면 그때 퇴장 처리한다.
-- 같은 pid 의 `hello` 가 오면 새로 입장시키지 않고 **방에 있던 그 `PlayerState` 에 새 연결을 이어 붙인다**(`resume`): 같은 id·위치·진행도·배틀·신도·쿨타임. 옛 연결이 아직 살아 있으면(다른 탭, 서버가 아직 끊긴 줄 모르는 연결) `kick{why:'dup'}` 로 닫되 사람은 남긴다. 시스템의 `onLeave`/`onJoin` 은 불리지 않고 `onWelcome` 만 불린다.
-- 완전히 나간 뒤에는 `PlayerMemory.last` 에 자리(위치, 따라오던 신도 id·남은 시간·헌납 여부)를 5분 적어 둔다. 같은 방에 다시 들어오면 그 자리에서 시작하고, 아직 임자 없는 옛 신도를 다시 따라오게 한다(`restoreFollowers`).
+- 같은 pid 의 `hello` 가 오면 새로 입장시키지 않고 **방에 있던 그 `PlayerState` 에 새 연결을 이어 붙인다**(`resume`): 같은 id·위치·진행도·배틀·신도·쿨타임. 옛 연결이 아직 살아 있으면(다른 탭, 서버가 아직 끊긴 줄 모르는 연결) `kick{why:'dup'}` 로 닫되 사람은 남긴다. 시스템의 `onLeave`/`onJoin` 은 불리지 않고 `onWelcome` 과, welcome 을 보낸 뒤 `onResume(p)` 만 불린다. 새 화면은 끊기기 전의 안내를 모르므로 `onResume` 에서 기싸움은 벌칙 없이 무효로 접고(`duel{ph:'end', void:true}` — 끊긴 채 시간이 다 돼도 패배로 치지 않는다), 단속반은 지금 단계(`alert`/`chase`+남은 시간/`caught`+남은 얼어붙는 시간)를 그 사람에게 다시 보낸다.
+- 가득 찬 방이라도 그 방의 `lingering` 에 있던 pid 는 정원 검사에서 빠진다. 로비가 `resume` 요청을 이 방까지 보내 주는 이유다(§4.4).
+- 완전히 나간 뒤에는 `PlayerMemory.last` 에 자리(위치, 따라오던 신도 id·남은 시간·헌납 여부)를 5분 적어 둔다. 같은 방에 다시 들어오면 그 자리에서 시작하고, 아직 임자 없는 옛 신도를 방 인원별 정원(`entourageCap`) 안에서 다시 따라오게 한다(`restoreFollowers`). 신도의 의리 기간 시작 시각(`followSince`)은 원래 값을 지킨다(나갔다 들어와 40초를 새로 받지 못하게). 시스템의 `keepsFollowers(p)` 가 하나라도 false 면(단속반: 들켜서 호루라기·추격 중인 대상) 자리만 기억하고 신도는 남기지 않는다.
 
-**접속자 메모(`PlayerMemory`)**: pid 별로 서버 메모리에만 두는 짧은 기억 — 쿨타임 표(`cd`: 초대·배틀·영입 보상 칸·시민의 거절 기억 키 등), 차단 목록, 입막음·이름 고정 만료 시각, 마지막 자리, 나가기 직전의 진행도(60초). 재접속·새 탭·방 이동으로 제재와 쿨타임을 지우지 못하게 한다. Node 어댑터는 모든 방이 하나의 저장소를 함께 쓰고, Cloudflare 어댑터는 방(Durable Object)마다 따로 두되 DO 저장소에 보관한다. 기억할 것이 없으면 나가는 즉시 지우고, 상한(2만 건)을 넘으면 오래된 것부터 버린다.
+**접속자 메모(`PlayerMemory`)**: pid 별로 서버 메모리에만 두는 짧은 기억 — 쿨타임 표(`cd`: 초대·배틀·영입 보상 칸·시민의 거절 기억 키 등), 차단 목록, 입막음·이름 고정 만료 시각, 마지막 자리, 나가기 직전의 진행도(60초). 재접속·새 탭·방 이동으로 제재와 쿨타임을 지우지 못하게 한다. Node 어댑터는 모든 방이 하나의 저장소를 함께 쓰고, Cloudflare 어댑터는 방(Durable Object)마다 따로 두되 DO 저장소에 보관한다(나가기 직전 진행도도 함께). 기억할 것이 없으면 나가는 즉시 지우고, 상한(2만 건)을 넘으면 오래된 것부터 버린다.
 
 **부정 방지/안정성:** 연결당 토큰 버킷(`RATE_LIMIT_PER_SEC`, 넘치면 `kick{why:'rate'}`), 메시지 크기 `MAX_MSG_BYTES`, 모든 필드 타입 검사(잘못되면 무시), 한 메시지 처리 중 예외는 잡아서 로그만 남기고 방은 계속 돈다.
 
 ### 4.3 NpcSim (server/core/npcSim.ts)
 
 ```ts
-export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number): NpcSimApi
+export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, count: number, max?: number): NpcSimApi
 ```
 
-- 시작 시 `count` 명을 이동망 위 임의 지점에 배치(유형은 `weight` 가중 추첨, 이름은 `arch.names`, 외형은 `arch.look` 풀에서).
-- **wander:** 임의 목적지 노드까지 `findNavPath` 로 걷는다(속도 `NPC_WALK_SPEED × arch.speed`, 노드 위치에서 ±1m 흩뿌림으로 줄 맞춰 걷지 않게). 도착하면 노드 종류에 따라 `pause`(shop 2~5초, rest 5~12초, 그 외 0.5~2초) 후 새 목적지. 목적지가 `exit` 면 도착 후 `Vanish` 로 1초 뒤 새 시민으로 교체(`onSpawn`) — 약 15% 확률로 exit 를 목적지로 고른다.
+- 시작 시 `count` 명(시민 수의 최소값, `max` 는 늘어날 상한)을 이동망 위 임의 지점에 배치(유형은 `weight` 가중 추첨, 이름은 `arch.names`, 외형은 `arch.look` 풀에서).
+- **wander:** 임의 목적지 노드까지 `findNavPath` 로 걷는다(속도 `NPC_WALK_SPEED × arch.speed`, 노드 위치에서 ±1m 흩뿌림으로 줄 맞춰 걷지 않게). 도착하면 노드 종류에 따라 `pause`(shop 2~5초, rest 5~12초, 그 외 0.5~2초) 후 새 목적지. 목적지가 `exit` 면 도착 후 `Vanish` 로 1초 뒤 새 시민으로 교체(`onSpawn`. 시민이 목표 수보다 많으면 교체하지 않고 지운다 — 아래 인구 조절) — 목적지를 한 번 다녀온 뒤 약 17% 확률로 exit 를 목적지로 고른다.
 - **교체(retire/replace):** 같은 id 를 재사용해 유형·이름·외형을 새로 뽑고 `subway`(또는 임의 exit)에서 `enter` 로 등장 → `onSpawn`.
 - **listen:** 멈춰서 플레이어 쪽으로 yaw. `until` 이 지나면 자동 `endListen`.
 - **follow:** 주인 뒤를 줄지어 따른다. i번째 신도의 목표 = 주인 위치에서 주인 진행 반대 방향으로 `1.1 + 0.95×i` m (주인이 서 있으면 주인 뒤쪽 반원에 부채꼴). 목표와 멀면 `NPC_FOLLOW_SPEED` 까지 빨라지고 가까우면 멈춘다. 주인과 25m 이상 벌어지면 주인 뒤로 순간이동하지 말고 달려서 따라온다(그래도 40m 이상이면 `release`). `until` 이 지나면 `release(npc,'expire')`. 따라다니는 동안 20~40초에 한 번 `arch.follow` 혼잣말(`onSay`).
@@ -189,22 +190,25 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
 
 ```ts
 export class Lobby {
-  constructor(makeRoom: (id: string, name: string) => Room, roomCount: number)
+  constructor(makeRoom: (id: string, name: string) => Room, roomCount: number, maxRooms?: number)
   rooms(): RoomInfo[]
   get(id: string): Room | undefined
   /** 'auto' 또는 가득 찬 방 요청 시: 가득 차지 않은 방 중 사람이 가장 많은 방(함께 놀 수 있게), 전부 비었으면 1번 방. 전부 가득이면 undefined */
-  pick(requested: string | null): Room | undefined
+  pick(requested: string | null, resume?: boolean): Room | undefined
+  sweep(now: number): string[]                     // 오래 빈 증설 방 정리(어댑터가 10초마다)
 }
 ```
 방 id 는 '1','2','3'…, 이름은 '수상역 1번 출구' 식. `ROOMS` 환경변수로 개수 조절(최대 `MAX_ROOM_COUNT`).
+`MAX_ROOMS` 가 `ROOMS` 보다 크면 모든 방이 80%(`GROW_AT`) 이상 찼을 때 방을 하나 더 만들고, 늘어난 방이 5분(`EXTRA_ROOM_IDLE_MS`) 넘게 비면 정리한다.
+`resume` 이 참이면(클라이언트가 있던 방으로 재접속하며 `&resume=1` 을 붙임) 요청한 방이 가득 차 보여도 그 방을 돌려준다. 차 있는 자리 하나가 잠깐 끊긴 그 사람의 자리일 수 있기 때문이다. 판정은 방이 hello 때 한다(그 자리 주인이 아니면 `full`). Cloudflare 어댑터의 `RoomTable.pick(requested, now, resume)`(`worker/src/policy.ts`)도 같은 규칙이다.
 
 ### 4.5 저장 서명 (server/core/save.ts)
 순수 JS 동기 HMAC-SHA256(`createSigner(secret: string): SaveSigner`). 서명은 base64url. 검증은 상수 시간 비교. Node `crypto` 와 결과가 같은지 단위 테스트.
 
 ### 4.6 Node 어댑터 (server/node/main.ts)
-- `http.createServer` + `ws`(`noServer: true`, `perMessageDeflate: false`, `maxPayload: MAX_MSG_BYTES`).
+- `http.createServer` + `ws`(`noServer: true`, `perMessageDeflate: false`, `maxPayload: MAX_HELLO_BYTES`(32KB — hello 에 실린 서명 저장본 때문. 입장 후 프레임은 Room 이 `MAX_MSG_BYTES` 로 거른다)).
 - `GET /api/rooms` → `{rooms: RoomInfo[]}` (CORS 허용), `GET /healthz` → `{ok, persist:{ok,lastCultSaveAt,lastError}, rooms, players, uptime, tickMsP95, …}`(저장 실패 중이거나 종료 중이면 503), 그 외는 `CLIENT_DIR`(기본 `dist/client`) 정적 파일(경로 탈출 방지, 올바른 Content-Type, `/assets/` 안의 실제 파일만 장기 캐시, `index.html`·`config.js` 는 no-cache, `/assets/` 아래나 확장자 있는 없는 경로는 404, 그 밖의 없는 경로는 index.html). 압축은 `Accept-Encoding` 의 q 값을 지킨다. HTML 에는 CSP·Referrer-Policy·Permissions-Policy(`ops.ts securityHeaders`, Cloudflare 는 `client/public/_headers` 에 같은 값 — 단위 테스트가 둘을 맞춰 본다).
-- `GET /ws?room=<id|auto>` 업그레이드: Origin 검사(기본 같은 출처: Origin 의 host = `Host`/신뢰하는 프록시의 `X-Forwarded-Host`, Origin 없는 도구는 통과) → `lobby.pick` → 방이 없으면(전부 가득) 연결을 받은 뒤 `full` 메시지를 보내고 `CLOSE_FULL` 로 닫는다(클라이언트가 안내를 띄울 수 있게).
+- `GET /ws?room=<id|auto>[&resume=1]` 업그레이드: Origin 검사(기본 같은 출처: Origin 의 host = `Host`/신뢰하는 프록시의 `X-Forwarded-Host`, Origin 없는 도구는 통과) → `lobby.pick(room, resume)` → 방이 없으면(전부 가득) 연결을 받은 뒤 `full` 메시지를 보내고 `CLOSE_FULL` 로 닫는다(클라이언트가 안내를 띄울 수 있게).
 - 연결마다 `connId` 발급, `room.connect/message/disconnect` 연결. `host.send` 는 `ws.bufferedAmount` 가 과하면(예: 1MB) 느린 클라이언트로 보고 스냅샷을 건너뛰거나 연결을 끊는다.
 - 하트비트: 20초마다 ws ping, 응답 없으면 terminate.
 - 틱: 방마다 따로 타이머를 두지 말고 **하나의 `setInterval(TICK_MS)` 에서 사람이 있는 방만** `tick()`(빈 방은 1초에 한 번만 — NPC 는 가볍게 유지). 틱 소요 시간을 측정해 `/healthz` 에 p95 를 노출.
@@ -249,17 +253,18 @@ mountUi(ctx)
 
 ### 5.3 네트워크 (net/client.ts)
 - 접속: `new WebSocket(wsUrl('/ws?room=' + id))`, `binaryType = 'arraybuffer'`. open 되면 `hello` 전송.
-- 상태기계: `connecting → playing`. 끊기면(의도적 종료/kick/full 제외) `reconnecting` 으로 바꾸고 지수 백오프(0.5s, 1s, 2s, 4s, 최대 8s, ±30% 지터)로 같은 방에 재접속. 8회 실패하면 `error`. 재접속에 성공하면 새 `welcome` 으로 상태를 통째로 다시 채운다.
-- `kick` → `phase='kicked'`, `phaseWhy=why`, 자동 재접속 안 함. `full` → `phase='full'`, `store.rooms` 갱신.
+- 상태기계: `connecting → playing`. 끊기면(의도적 종료/kick/full 제외) `reconnecting` 으로 바꾸고 백오프(0.5s, 1s, 2s, 4s, 6s, 8s×3, 10s×2, 12s, ±30% 지터, 합계 약 70초)로 같은 방에 재접속(게임 중이던 방이면 `&resume=1`). 11번 다시 시도해도 실패하면 `error`. resume 으로 열었는데 `full` 이 오면(그새 자리를 잃음) 가득 참 화면 대신 플래그 없이 한 번 더 열어 평소 규칙대로 배정받는다. 재접속에 성공하면 새 `welcome` 으로 상태를 통째로 다시 채운다.
+- `kick` → `phase='kicked'`, `phaseWhy=why`, 자동 재접속 안 함. 예외: `shutdown`(서버 재시작)은 `reconnecting` 으로 다시 붙고, `idle`(자리 비움)은 탭이 다시 보이면 다시 들어간다. `full` → `phase='full'`, `store.rooms` 갱신.
 - 수신 처리 후 **항상 `bus.emitMsg(msg)`** (store 반영을 먼저 끝낸 뒤). 다른 모듈은 `bus.onMsg('종류', fn)` 로 구독.
 - `welcome`: store.room/me/players/npcs/sermon/battles 채움, `profile.save/name/look` 갱신·저장, `clockOffset = welcome.now - Date.now()`, `phase='playing'`, `bus.emit('entered')`.
-- `join/leave/pu/npcSpawn/nu/emote/save/talkOk/talkNo/talkEnd/pitchRes/reward/pos/pong/rooms` 를 store 에 반영하고 해당 bus 이벤트 발행. `save` 는 localStorage 에도 저장. `reward.rankUp` → `bus.emit('rankUp')`. 내 신도 수(`me.entourage`)는 `owner === me.id` 인 NPC 수로 계산.
+- `join/leave/pu/npcSpawn/npcGone/nu/emote/save/talkOk/talkNo/talkEnd/pitchRes/reward/pos/pong/rooms` 를 store 에 반영하고 해당 bus 이벤트 발행. `save` 는 localStorage 에도 저장. `reward.rankUp` → `bus.emit('rankUp')`. 내 신도 수(`me.entourage`)는 `owner === me.id` 인 NPC 수로 계산.
 - 시계: 4초마다 `ping`. `pong` 으로 `rtt` 와 `clockOffset`(부드럽게 보정) 갱신.
 - **보간:** 스냅샷 `{time, players, npcs}` 를 받으면 포함된 엔티티는 샘플 추가(`hold = t`), **포함되지 않은 엔티티는 마지막 샘플의 `hold = time`** 으로 늘린다. 렌더 시각 `rt = serverNow() - INTERP_DELAY_MS`. 샘플 a(가장 최근의 `t <= rt`)와 다음 샘플 b 사이: `rt <= a.hold` 면 a 위치, 아니면 `(rt - a.hold)/(b.t - a.hold)` 로 선형 보간(yaw 는 최단 각도). b 가 없으면 a 위치(외삽은 하지 않거나 100ms 이내로만). 오래된 샘플은 버린다. 순간이동(4m 이상 차이)은 보간하지 않고 스냅.
 - 내 캐릭터는 스냅샷에서 무시한다(예측값 사용).
 - **조용히 죽은 연결:** 게임 중 10초 동안 서버에서 아무것도 오지 않으면(휴대폰의 망 전환은 닫힘 신호 없이 멎는 일이 흔하다) 끊긴 것으로 보고 바로 재접속한다. 탭이 가려져 있는 동안은 재지 않는다.
 - **다시 들어왔을 때:** 끊기는 순간의 상태(배틀·설교·대화 중이었는지)를 적어 두었다가 welcome 뒤에 `bus.emit('resumed', {same, lost, idle})` 로 알린다. `same`(서버가 같은 번호로 이어 붙여 줌)이면 카메라를 돌리지 않고 입장음도 내지 않는다. 사라진 것이 있으면 한 줄로 안내한다.
 - `npcGone`: 시민이 방을 떠나 지워졌다 → `store.npcs` 에서 지우고 이름표·말풍선을 정리한다.
+- 가상 매점: 클라이언트 `buy{id}` → 서버(`systems/shop.ts`)가 위치(천막 헌금함 앞)·가격·잔액·이미 가진 칭호를 판정해 `shopRes{ok,id,coins,why?}` 로 답한다(`why`: bad/far/owned/poor).
 
 ### 5.4 렌더
 

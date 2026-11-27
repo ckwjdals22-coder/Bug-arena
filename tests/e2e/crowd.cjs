@@ -4,7 +4,7 @@
  *   - 봇이 나간 뒤에는 줄어들며(출구까지 걸어가서 사라지고, 화면에서도 지워지고)
  *   - 브라우저 오류가 없는지 본다. 광장 스크린샷을 남긴다.
  *
- *   npm run build && E2E_PORT=9031 node tests/e2e/zz-crowd.cjs
+ *   npm run build && E2E_PORT=9031 node tests/e2e/crowd.cjs
  * 약 4분 걸린다(인구가 줄기 전 유예 60초 + 한 명씩 내보내는 시간).
  */
 const { spawn } = require('node:child_process')
