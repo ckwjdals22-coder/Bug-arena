@@ -21,6 +21,7 @@ import type { BubbleKind, EngineApi, OverlayApi } from '../core/contracts'
 import type { EntityView, MeView, Store } from '../core/store'
 import { titleNameOf } from '../../../shared/content/shop'
 import { inkOn, rankName } from './hud'
+import { placePopGroup, type PopArea, type PopLine, type PopPlace } from './popPlace'
 import { h, hex } from './kit'
 
 /** 머리 위 높이(m) */
@@ -146,15 +147,20 @@ interface Pop {
 interface PopGroup {
   /** 묶음이 오르기 시작한 시각: 늦게 합류한 줄도 같은 높이만큼 올라야 서로 겹치지 않는다 */
   born: number
-  /** 말풍선·다른 글자를 피해 옮긴 양(px, +면 위로). 갑자기 튀지 않게 목표값으로 서서히 다가간다 */
+  /** 말풍선·다른 글자를 피해 옮긴 양(px, +면 위로 / +면 오른쪽). 갑자기 튀지 않게 목표값으로 서서히 다가간다 */
   dodge: number
+  dodgeX: number
+  /** 지난 프레임에 정한 자리(다음 프레임에 그 자리가 아직 괜찮으면 그대로 둔다: 흔들리지 않게) */
+  place: PopPlace | null
   /** 이번 프레임에 계산을 마쳤는가(같은 묶음을 한 번만 계산) */
   frame: number
+  /** 마지막으로 자리를 옮긴 시각(옮기는 속도를 프레임 수가 아니라 시간에 맞춘다) */
+  at: number
   fresh: boolean
   /** 함께 피할 큰 카드(결과 배너)의 상자. 아래로 비킬 때 이 위에서 멈춘다 */
   avoid: number[] | null
-  /** 비킬 곳이 없어 일찍 물러났다(서서히 투명해진다) */
-  gone: boolean
+  /** 비킬 곳이 정말 없어 핵심 줄("신도 +1")만 남겼다: 나머지 줄은 서서히 투명해진다(묶음을 통째로 지우지는 않는다) */
+  trim: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -639,12 +645,14 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     if (!group) {
       // 포교 결과 배너(화면 가운데 큰 카드)가 떠 있으면 그 자리도 피한다. 묶음이 생길 때 한 번만 읽는다(매 프레임 레이아웃을 읽지 않는다)
       let avoid: number[] | null = null
-      const banner = root.querySelector('.talk-result:not(.hidden)')
-      if (banner) {
-        const r = banner.getBoundingClientRect()
-        if (r.height > 0) avoid = [r.left, r.top, r.right, r.bottom]
+      const banner = root.querySelector<HTMLElement>('.talk-result:not(.hidden)')
+      if (banner && banner.offsetHeight > 0) {
+        // 배너는 커지며 나타나는 중일 수 있다(scale 0.6→1): 변형 전 크기(offset*)로 읽고, 기울임(-2deg)만큼 넉넉히 잡는다
+        const x = banner.offsetLeft - banner.offsetWidth / 2
+        const pad = 8
+        avoid = [x - pad, banner.offsetTop - pad, x + banner.offsetWidth + pad, banner.offsetTop + banner.offsetHeight + pad]
       }
-      group = { born: now, dodge: 0, frame: -1, fresh: true, avoid, gone: false }
+      group = { born: now, dodge: 0, dodgeX: 0, place: null, frame: -1, at: now, fresh: true, avoid, trim: false }
     }
     let p = freePops.pop()
     if (!p) {
@@ -693,77 +701,37 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     freePops.push(p)
   }
 
-  /** 글자가 피해야 할 상자들: 말풍선, 내 이름표, 먼저 자리 잡은 글자 묶음 */
+  /** 글자가 피해야 할 상자들: 말풍선, 보이는 이름표, 먼저 자리 잡은 글자 묶음 */
   const popBoxes: number[] = []
   let popFrame = 0
 
-  /** 상자들과 겹치는 것 중 가장 아래쪽 끝(y). 없으면 NaN */
-  function hitBottom(x0: number, y0: number, x1: number, y1: number, boxes: number[]): number {
-    let bottom = NaN
-    for (let i = 0; i < boxes.length; i += 4) {
-      if (x1 - 4 <= boxes[i]! || x0 + 4 >= boxes[i + 2]! || y1 <= boxes[i + 1]! || y0 >= boxes[i + 3]!) continue
-      const b = boxes[i + 3]!
-      if (!(bottom >= b)) bottom = b
-    }
-    return bottom
-  }
+  /** placePopGroup 에 넘길 줄·영역(매 프레임 새로 만들지 않게 재사용) */
+  const popLines: PopLine[] = []
+  const popArea: PopArea = { top: 0, bottom: 0, left: 0, right: 0 }
 
   /**
-   * 한 묶음이 비켜야 할 양(+면 위로, -면 아래로).
+   * 한 묶음의 자리(옆·위·아래로 옮길 양, 핵심 줄만 남길지).
    * 포교 성공 순간에는 "신도 +1 / +10 영향력 / 🪙" 묶음, 헌납품 이름, 내 말풍선, 0.6초 뒤 NPC 의 대답 말풍선이 같은 자리에 몰린다.
-   * 글자끼리 포개지면 아무것도 읽을 수 없으므로, 먼저 위로 비켜 보고 HUD 에 닿으면 아래로 비킨다.
+   * 글자끼리 포개지면 아무것도 읽을 수 없고, 그렇다고 지워 버리면 첫 신도의 기쁨이 0.7초 만에 사라진다 → popPlace.ts 가 갈 곳을 찾는다.
    */
-  function groupDodge(g: PopGroup): number {
-    let up = 0
-    for (let k = 0; k < 5; k++) {
-      let moved = false
-      for (let i = 0; i < pops.length; i++) {
-        const m = pops[i]!
-        if (m.group !== g || !m.vis) continue
-        const hw = m.w / 2
-        const top = hitTop(m.bx - hw, m.by - up - POP_H, m.bx + hw, m.by - up, 0, popBoxes)
-        if (top === top) {
-          up = m.by - top + 3
-          moved = true
-        }
-      }
-      if (!moved) break
-    }
-    let minTop = Infinity
-    for (let i = 0; i < pops.length; i++) {
-      const m = pops[i]!
-      if (m.group === g && m.vis) minTop = Math.min(minTop, m.by - POP_H)
-    }
-    if (minTop - up >= hudBottom + 4) return up
-    // 위로는 HUD 에 닿는다 → 아래로 비킨다(글자가 캐릭터 몸 위에 오는 편이 글자 위에 글자가 오는 것보다 읽힌다)
-    let down = 0
-    for (let k = 0; k < 5; k++) {
-      let moved = false
-      for (let i = 0; i < pops.length; i++) {
-        const m = pops[i]!
-        if (m.group !== g || !m.vis) continue
-        const hw = m.w / 2
-        const bottom = hitBottom(m.bx - hw, m.by + down - POP_H, m.bx + hw, m.by + down, popBoxes)
-        if (bottom === bottom) {
-          down = bottom - (m.by - POP_H) + 3
-          moved = true
-        }
-      }
-      if (!moved) break
-    }
-    // 아래로도 결과 배너나 화면 아래쪽에 닿으면 비키기를 포기한다(HUD 를 덮지 않는 선까지만 위로)
-    let maxBottom = -Infinity
-    let floor = viewH - 120
+  function groupPlace(g: PopGroup): PopPlace {
+    popLines.length = 0
     for (let i = 0; i < pops.length; i++) {
       const m = pops[i]!
       if (m.group !== g || !m.vis) continue
-      maxBottom = Math.max(maxBottom, m.by)
-      const a = m.group.avoid
-      if (a && m.bx + m.w / 2 > a[0]! && m.bx - m.w / 2 < a[2]! && a[1]! > m.by - POP_H) floor = Math.min(floor, a[1]!)
+      popLines.push({ x: m.bx, y: m.by, w: m.w, h: POP_H, main: m.stack === 0 })
     }
-    if (down > 0 && maxBottom + down <= floor) return -down
-    // 위(HUD)도 아래(결과 배너)도 막혔다: 글자 위에 글자를 겹쳐 두느니 일찍 물러난다(같은 내용을 결과 배너와 HUD 숫자가 이미 보여 준다)
-    return NaN
+    const n = popBoxes.length
+    // 결과 배너도 피한다(묶음이 생길 때 읽어 둔 상자)
+    if (g.avoid) popBoxes.push(g.avoid[0]!, g.avoid[1]!, g.avoid[2]!, g.avoid[3]!)
+    popArea.top = hudBottom + 4
+    // 화면 아래쪽은 조이스틱·상황 버튼 자리
+    popArea.bottom = viewH - 120
+    popArea.left = 4
+    popArea.right = viewW - 4
+    const place = placePopGroup(popLines, popBoxes, popArea, g.place)
+    popBoxes.length = n
+    return place
   }
 
   function updatePops(now: number): void {
@@ -794,39 +762,43 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     popFrame++
     popBoxes.length = 0
     for (let i = 0; i < placedBubbles.length; i++) popBoxes.push(placedBubbles[i]!)
-    const me = store.me
-    const myTag = me ? tags.get(me.id) : undefined
-    if (myTag && myTag.shown) {
-      const hw = myTag.w / 2
-      popBoxes.push(myTag.x - hw, myTag.y - (myTag.lines === 2 ? TAG_H2 : TAG_H1), myTag.x + hw, myTag.y)
-    }
+    // 이름표: 내 것만이 아니라 화면에 보이는 것 모두(방금 신도가 된 시민의 이름표가 바로 옆에 붙어 있다). layoutTags 가 이번 프레임에 놓은 상자다
+    for (let i = 0; i < placed.length; i++) popBoxes.push(placed[i]!)
     for (let i = 0; i < pops.length; i++) {
       const g = pops[i]!.group
       if (!pops[i]!.vis || g.frame === popFrame) continue
       g.frame = popFrame
-      const target = groupDodge(g)
-      if (target !== target) {
-        // 한 번 물러나기로 한 묶음은 다시 나타나지 않는다(깜빡이지 않게)
-        g.gone = true
-      } else if (!g.gone) {
-        g.dodge = g.fresh ? target : g.dodge + (target - g.dodge) * 0.5
+      const place = groupPlace(g)
+      g.place = place
+      // 한 번 핵심 줄만 남기기로 한 묶음은 다시 늘어나지 않는다(깜빡이지 않게)
+      if (place.trim) g.trim = true
+      if (g.fresh) {
+        g.dodge = place.dy
+        g.dodgeX = place.dx
+      } else {
+        // 16ms 마다 남은 거리의 절반: 느린 기기(프레임이 드문드문)에서도 같은 시간 안에 자리를 잡는다(옮기는 동안 말풍선 위를 오래 지나가지 않게)
+        const k = 1 - Math.pow(0.5, clamp((now - g.at) / 16, 0, 8))
+        g.dodge += (place.dy - g.dodge) * k
+        g.dodgeX += (place.dx - g.dodgeX) * k
       }
+      g.at = now
       g.fresh = false
       for (let j = i; j < pops.length; j++) {
         const m = pops[j]!
         if (m.group !== g || !m.vis) continue
         const hw = m.w / 2
+        const x = Math.round(m.bx + g.dodgeX)
         const y = Math.round(m.by - g.dodge)
-        if (g.gone) {
+        if (g.trim && m.stack !== 0) {
           if (m.el.style.opacity !== '0') m.el.style.opacity = '0'
           continue
         }
-        popBoxes.push(m.bx - hw, y - POP_H, m.bx + hw, y)
+        popBoxes.push(x - hw, y - POP_H, x + hw, y)
         if (now < m.start) continue
-        if (m.bx !== m.px || y !== m.py) {
-          m.px = m.bx
+        if (x !== m.px || y !== m.py) {
+          m.px = x
           m.py = y
-          m.el.style.transform = `translate3d(${m.bx}px,${y}px,0) translate(-50%,-100%)`
+          m.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
         }
         if (!m.shown) {
           m.shown = true

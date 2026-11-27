@@ -15,7 +15,7 @@ import type { DailyState, Progress } from '../../../shared/types'
 import type { AppContext } from '../core/contracts'
 import { playSfx, rankName } from './hud'
 import { clear, fmt, h } from './kit'
-import { stagePlay } from './stage'
+import { createStageLater, stagePlay } from './stage'
 
 type Tab = 'daily' | 'ach' | 'title'
 const TABS: readonly [Tab, string][] = [
@@ -68,8 +68,7 @@ export function mountAchievements(ctx: AppContext): void {
     window.clearTimeout(hideTimer)
     banner.classList.add('hidden')
   }
-  const showOne = (def: AchievementDef): (() => void) | undefined => {
-    if (store.phase !== 'playing') return undefined
+  const showOne = (def: AchievementDef): (() => void) => {
     banner.replaceChildren(
       h('span.ach-banner-icon', def.icon),
       h('span.ach-banner-text', h('small', '🏆 업적 달성'), h('b', def.name)),
@@ -86,8 +85,23 @@ export function mountAchievements(ctx: AppContext): void {
     return hideBanner
   }
 
+  // 재접속 중에 차례가 온 배너는 맡아 두었다가 다시 게임 중이 되면 줄에 세운다.
+  // 예전에는 그냥 건너뛰어(done() 도 부르지 않아) 배너가 영영 안 보이고 무대도 2.2초 동안 비어 있었다
+  const later = createStageLater()
+  const playOne = (def: AchievementDef): void => {
+    stagePlay(2, BANNER_MS, (done) => {
+      if (store.phase !== 'playing') {
+        later.keep(() => playOne(def))
+        done()
+        return undefined
+      }
+      return showOne(def)
+    })
+  }
   bus.on('phase', (ph) => {
     if (ph !== 'playing') hideBanner()
+    if (ph === 'playing') later.flush()
+    else if (ph !== 'reconnecting' && ph !== 'connecting') later.drop()
   })
 
   // 새 업적이 왔는데 아직 패널을 안 열어 봤는가(메뉴 점 표시)
@@ -97,7 +111,7 @@ export function mountAchievements(ctx: AppContext): void {
     if (Array.isArray(m.ach) && m.ach.length > 0) {
       for (const id of m.ach) {
         const def = ACHIEVEMENT_BY_ID.get(id)
-        if (def) stagePlay(2, BANNER_MS, () => showOne(def))
+        if (def) playOne(def)
       }
       unseenAch = true
       if (ui.openPanelId === 'achievements') rerender()

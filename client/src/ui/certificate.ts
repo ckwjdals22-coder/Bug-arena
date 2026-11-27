@@ -19,10 +19,10 @@ import { CARD_SIZE, canvasToBlob, cardFileName, renderCard, type CardType, type 
 import { placeholderPortrait } from '../share/kit'
 import { playSfx, rankName } from './hud'
 import { h } from './kit'
-import { stagePlay } from './stage'
+import { createStageLater, stagePlay } from './stage'
 
 const SNAP_MS = 6000
-/** 승급 토스트가 떠 있는 시간. 무대도 이만큼 잡는다: 위쪽의 업적 배너·다음 승급 카드가 토스트에 포개지지 않게 */
+/** 승급 토스트가 떠 있는 시간. 무대도 이만큼 잡지만 뒤에 다른 카드가 줄을 서면 비켜 준다(stage.ts soft): 위쪽의 업적 배너·헌납 카드가 토스트에 포개지지 않게 */
 const RANK_TOAST_MS = 7000
 const RANK_TOAST_OUT_MS = 400
 const SUMMARY_HINT_MS = 5 * 60 * 1000
@@ -158,19 +158,43 @@ export function mountCertificate(ctx: AppContext): void {
   })
 
   // ───────── 승급 토스트(행동 버튼) ─────────
-  bus.on('rankUp', (rank) => {
-    // 승급 카드(system 모듈, 무대 순서 3) 바로 뒤에 무대 줄을 서서 띄운다: 헌납 카드·업적 배너와 겹치지 않고, 무엇을 축하하는지 이어진다.
-    // 토스트가 떠 있는 내내 무대를 잡고, [임명장 받기]를 누르면 바로 돌려준다
-    stagePlay(3.5, RANK_TOAST_MS + RANK_TOAST_OUT_MS, (done) => {
-      if (store.phase === 'playing') rankToast(rank, done)
-      else done()
-    })
+  // 재접속 중에 차례가 온 토스트는 맡아 두었다가 다시 게임 중이 되면 줄에 세운다(조용히 버리지 않는다)
+  const later = createStageLater()
+  bus.on('phase', (ph) => {
+    if (ph === 'playing') later.flush()
+    else if (ph !== 'reconnecting' && ph !== 'connecting') later.drop()
   })
-  function rankToast(rank: number, done: () => void): void {
+  bus.on('rankUp', (rank) => playRankToast(rank))
+  function playRankToast(rank: number): void {
+    // 승급 카드(system 모듈, 무대 순서 3) 바로 뒤에 무대 줄을 서서 띄운다: 헌납 카드·업적 배너와 겹치지 않고, 무엇을 축하하는지 이어진다.
+    // 토스트는 7초 동안 떠 있지만 그동안 무대를 붙잡지는 않는다(soft): 뒤에 업적 배너나 플레이어가 직접 부른 헌납 카드가 줄을 서면
+    // 곧바로 비켜 주고(같은 윗자리에 포개지지 않게), 덜 보였으면 그 카드들이 지나간 뒤 다시 뜬다.
+    // 예전에는 7.4초 내내 무대를 잡아 [헌납 타임]을 눌러도 6~7초 동안 아무 반응이 없었다.
+    // [임명장 받기]를 누르면 바로 돌려준다
+    stagePlay(
+      3.5,
+      RANK_TOAST_MS + RANK_TOAST_OUT_MS,
+      (done) => {
+        if (store.phase !== 'playing') {
+          later.keep(() => playRankToast(rank))
+          done()
+          return
+        }
+        return rankToast(rank, done)
+      },
+      { soft: true },
+    )
+  }
+  function rankToast(rank: number, done: () => void): (() => void) | undefined {
     const box = ui.root.querySelector('.toasts')
     if (!box) {
       done()
-      return
+      return undefined
+    }
+    const timers: number[] = []
+    const remove = (): void => {
+      for (const t of timers) clearTimeout(t)
+      el.remove()
     }
     const el = h(
       'div.toast.gold.cert-toast',
@@ -181,7 +205,7 @@ export function mountCertificate(ctx: AppContext): void {
           type: 'button',
           onclick: () => {
             playSfx(ctx, 'click')
-            el.remove()
+            remove()
             done()
             openTab('certificate')
           },
@@ -190,8 +214,10 @@ export function mountCertificate(ctx: AppContext): void {
       ),
     )
     box.append(el)
-    window.setTimeout(() => el.classList.add('out'), RANK_TOAST_MS)
-    window.setTimeout(() => el.remove(), RANK_TOAST_MS + RANK_TOAST_OUT_MS)
+    timers.push(window.setTimeout(() => el.classList.add('out'), RANK_TOAST_MS))
+    timers.push(window.setTimeout(remove, RANK_TOAST_MS + RANK_TOAST_OUT_MS))
+    // 무대가 비키라고 하면(뒤에 카드가 줄을 섰다, 결과 배너가 떴다) 바로 내려간다
+    return remove
   }
 
   // ───────── 메뉴 ─────────

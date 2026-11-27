@@ -14,15 +14,19 @@ import { WORLD } from '../../../shared/world'
 import type { AppContext } from '../core/contracts'
 import { playSfx } from './hud'
 import { clear, fmt, h } from './kit'
-import { stagePlay } from './stage'
+import { createStageLater, stagePlay } from './stage'
 import './offering.css'
 
 const RARITY_NAME = ['', '흔함', '드묾', '희귀', '전설'] as const
+/** [헌납 타임]을 누른 뒤 이 안에 온 응답을 '방금 누른 것의 결과'로 본다(왕복 지연 여유) */
+const OFFER_REPLY_MS = 4000
 const NOTE = '가상 코인과 헌납품은 게임 속 장식입니다. 실제 돈과 무관하며, 돈으로 살 수도 돈으로 바꿀 수도 없습니다. 코인은 천막의 가상 매점에서 쓸모없는 칭호와 바꿀 수 있어요.'
 
 export function mountOffering(ctx: AppContext): void {
   const { store, bus, ui } = ctx
   let readyAt = 0
+  /** 플레이어가 [헌납 타임]을 직접 누른 시각: 그 응답으로 오는 공개 카드는 기다리게 하지 않는다(stage.ts urgent) */
+  let pressedAt = -Infinity
   /** 도감을 마지막으로 연 뒤 새로 얻은 것이 있는가(메뉴 배지) */
   let fresh = false
   /** 이번 접속에서 본 적 있는 물건(NEW 표시 판단) */
@@ -46,6 +50,7 @@ export function mountOffering(ctx: AppContext): void {
       onClick() {
         if (performance.now() < readyAt) return
         readyAt = performance.now() + OFFER_COOLDOWN_MS
+        pressedAt = performance.now()
         playSfx(ctx, 'click')
         ctx.net.send({ t: 'offer' })
         ui.refreshContext()
@@ -110,6 +115,8 @@ export function mountOffering(ctx: AppContext): void {
       timers.push(
         setTimeout(() => {
           list.append(itemRow(item, isNew))
+          // 목록이 카드 높이를 넘어 스크롤되면 방금 나온 물건이 보이게 내린다
+          list.scrollTop = list.scrollHeight
           playSfx(ctx, item.rarity >= 3 ? 'ach' : 'item')
         }, 180 + i * 320),
       )
@@ -142,22 +149,48 @@ export function mountOffering(ctx: AppContext): void {
       fresh = true
       const ids = m.items.map((x) => x[1])
       // 늘 무대 줄에 선다: 포교 성공 직후라면 결과 배너·자막이 지나간 뒤에 뜨고, 카드가 떠 있는 내내 업적·승급 카드가 기다린다.
-      // 헌금함에서 직접 [헌납 타임]을 누른 경우처럼 무대가 비어 있으면 곧바로(40ms 뒤) 뜬다
+      // 헌금함에서 직접 [헌납 타임]을 누른 응답이면 줄 맨 앞에 서고, 떠 있는 승급 카드·토스트·업적 배너가 비켜 준다(urgent):
+      // 눌렀는데 몇 초 동안 아무 반응이 없으면 버튼이 고장 난 것처럼 보인다
       // 처음 보는 물건(NEW)은 지금 정해 둔다: 결과 배너에 밀려 카드가 다시 나와도 NEW 표시가 사라지지 않게
       const newIds = new Set(ids.filter((id) => !seen.has(id)))
-      stagePlay(1.5, revealMs(ids.length), (done) => {
+      const urgent = performance.now() - pressedAt < OFFER_REPLY_MS
+      pressedAt = -Infinity
+      playReveal(ids, m.coins, newIds, urgent)
+    }
+  })
+  // 재접속 중에 차례가 온 카드는 맡아 두었다가 다시 게임 중이 되면 줄에 세운다(조용히 버리지 않는다)
+  const later = createStageLater()
+  /** 지금 떠 있는 공개 카드(끊겼을 때 다시 보여 줄 수 있게) */
+  let showing: { replay: () => void; until: number } | null = null
+  bus.on('phase', (p) => {
+    if (p === 'playing') later.flush()
+    else if (p !== 'reconnecting' && p !== 'connecting') later.drop()
+  })
+  function playReveal(ids: string[], coins: number, newIds: ReadonlySet<string>, urgent: boolean): void {
+    stagePlay(
+      1.5,
+      revealMs(ids.length),
+      (done) => {
         if (store.phase !== 'playing') {
+          later.keep(() => playReveal(ids, coins, newIds, false))
           done()
           return
         }
-        showReveal(ids, m.coins, done, newIds)
+        showReveal(ids, coins, done, newIds)
+        showing = { replay: () => playReveal(ids, coins, newIds, false), until: performance.now() + revealMs(ids.length) * 0.6 }
         // 카드가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(무대가 숨기고, 덜 보였으면 다시 줄 세운다)
         return closeReveal
-      })
-    }
-  })
+      },
+      { urgent },
+    )
+  }
   bus.on('phase', (p) => {
-    if (p !== 'playing') closeReveal()
+    if (p === 'playing') return
+    // 짧게 끊긴 사이에 카드가 반도 못 보였으면 돌아온 뒤 다시 보여 준다(맡겨 두고 flush 를 기다린다)
+    const cur = showing
+    if (cur && !reveal.classList.contains('hidden') && performance.now() < cur.until && (p === 'reconnecting' || p === 'connecting')) later.keep(cur.replay)
+    showing = null
+    closeReveal()
   })
 
   // ───────── 도감 ─────────

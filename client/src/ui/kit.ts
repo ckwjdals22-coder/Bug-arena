@@ -5,6 +5,7 @@
  */
 import type { Bus } from '../core/bus'
 import type { ContextProvider, MenuItem, PanelDef, UiApi } from '../core/contracts'
+import { pauseStage } from './stage'
 
 type Child = Node | string | number | null | undefined | false
 type Attrs = Record<string, unknown>
@@ -214,7 +215,47 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
     openId = null
     clear(panelLayer)
     panelLayer.classList.add('hidden')
+    placeToasts()
+    // 패널이 열려 있는 동안 기다리던 업적·승급·헌납 카드를 이어서 띄운다
+    pauseStage(false)
   }
+
+  /**
+   * 패널이 열려 있으면 토스트 줄을 패널의 제목·닫기 버튼·탭 줄과 겹치지 않는 곳으로 옮긴다.
+   * 토스트의 기본 자리(HUD 바로 아래 가운데)는 패널 머리 줄과 같은 높이라, "「…」 창설!" 같은 확인 문구가 닫기 버튼과 탭을 가렸다.
+   * 확인 문구는 여전히 보여야 하므로(눌러서 된 건지 알아야 한다) 숨기지 않고 자리만 바꾼다:
+   *  1) 패널 위에 토스트가 들어갈 틈이 있으면 패널 바로 위(아래에서 위로 쌓인다)
+   *  2) 패널 아래에 틈이 있으면 패널 바로 아래
+   *  3) 둘 다 없으면(휴대폰 세로처럼 패널이 화면을 거의 채우면) 화면 아래 가장자리(안전 영역 위). 패널 본문 끝자락을 잠깐 가리지만
+   *     토스트는 입력을 통과시키므로 아래 버튼은 그대로 눌린다
+   * 패널이 닫히면 인라인 값을 지워 CSS 기본 자리로 돌아간다. 레이아웃은 토스트가 뜨거나 패널이 열리고 닫힐 때만 읽는다.
+   */
+  function placeToasts(): void {
+    const st = toastBox.style
+    const win = openId ? panelLayer.querySelector<HTMLElement>('.panel') : null
+    if (!win || toastBox.children.length === 0) {
+      st.top = ''
+      st.bottom = ''
+      return
+    }
+    const r = win.getBoundingClientRect()
+    const need = Math.max(toastBox.offsetHeight, 40) + 8
+    const vh = window.innerHeight
+    if (r.top >= need + 4) {
+      st.top = 'auto'
+      st.bottom = `${Math.round(vh - r.top + 8)}px`
+    } else if (vh - r.bottom >= need + 4) {
+      st.top = `${Math.round(r.bottom + 8)}px`
+      st.bottom = 'auto'
+    } else {
+      st.top = 'auto'
+      st.bottom = 'calc(12px + var(--safe-b))'
+    }
+  }
+  // 패널 크기가 바뀌거나(탭 전환, 내용 로딩) 화면이 돌면 다시 맞춘다
+  const toastRo = typeof ResizeObserver === 'function' ? new ResizeObserver(() => placeToasts()) : null
+  toastRo?.observe(toastBox)
+  window.addEventListener('resize', () => placeToasts())
 
   function openPanel(id: string): void {
     const def = panels.get(id)
@@ -233,12 +274,20 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
     )
     panelLayer.append(win)
     panelLayer.classList.remove('hidden')
+    // 업적 배너·승급 카드·헌납 카드는 패널 머리 줄 자리에 뜬다 → 패널이 닫힐 때까지 기다리게 한다
+    pauseStage(true)
+    if (toastRo) {
+      toastRo.disconnect()
+      toastRo.observe(toastBox)
+      toastRo.observe(win)
+    }
     try {
       cleanup = def.render(body, closePanel)
     } catch (err) {
       console.error('[ui] panel render error', id, err)
       body.append(h('p.muted', '화면을 여는 중 문제가 생겼습니다.'))
     }
+    placeToasts()
   }
 
   panelLayer.addEventListener('pointerdown', (e) => {
@@ -256,6 +305,7 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
     const el = h('div.toast', { class: kind }, text)
     toastBox.append(el)
     while (toastBox.children.length > 4) toastBox.firstElementChild?.remove()
+    placeToasts()
     setTimeout(() => el.classList.add('out'), ms)
     setTimeout(() => el.remove(), ms + 350)
   }

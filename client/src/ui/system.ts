@@ -9,7 +9,7 @@ import { roomFromUrl } from '../core/config'
 import type { AppContext } from '../core/contracts'
 import { playSfx, rankDef } from './hud'
 import { clear, h } from './kit'
-import { stagePlay } from './stage'
+import { createStageLater, stagePlay } from './stage'
 
 interface Notice {
   icon: string
@@ -330,12 +330,20 @@ export function mountSystem(ctx: AppContext): void {
     if (name) pushFeed('🚇', `${name}님이 지하철을 탔습니다`, true)
   })
 
-  bus.on('rankUp', (rank) => {
+  // 재접속 중에 차례가 온 승급 카드는 맡아 두었다가 다시 게임 중이 되면 줄에 세운다(조용히 버리지 않는다)
+  const later = createStageLater()
+  bus.on('phase', (ph) => {
+    if (ph === 'playing') later.flush()
+    else if (ph !== 'reconnecting' && ph !== 'connecting') later.drop()
+  })
+  bus.on('rankUp', (rank) => playRank(rank))
+  function playRank(rank: number): void {
     const def = rankDef(rank)
     // 첫 신도를 얻는 순간에는 승급(영향력 30)도 같이 오는 일이 많다 → 결과 배너·헌납 카드·업적 배너가 지나간 뒤 마지막에 띄운다.
     // 소리·불꽃도 카드가 뜰 때 같이 나야 "무엇을 축하하는지" 이어진다
     stagePlay(3, RANK_MS, (done) => {
       if (store.phase !== 'playing') {
+        later.keep(() => playRank(rank))
         done()
         return
       }
@@ -352,7 +360,7 @@ export function mountSystem(ctx: AppContext): void {
       // 카드가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(stage.ts)
       return hideRank
     })
-  })
+  }
 
   resetNames()
   applyPhase()

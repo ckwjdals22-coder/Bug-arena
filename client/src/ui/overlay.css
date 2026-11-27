@@ -199,7 +199,7 @@
 /* ── 떠오르는 글자 ── */
 .overlay-pop {
   z-index: 9800;
-  /* 비킬 곳이 없을 때 일찍 물러나는 연출(overlay.ts 가 opacity 를 0 으로 둔다) */
+  /* 비킬 곳이 정말 없어 핵심 줄("신도 +1")만 남길 때 나머지 줄이 물러나는 연출(overlay.ts 가 opacity 를 0 으로 둔다) */
   transition: opacity 0.18s ease-out;
 }
 .overlay-pop-body {
