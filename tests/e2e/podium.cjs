@@ -195,6 +195,21 @@ async function main() {
         await B.locator('.podium-resp').tap()
         await A.locator('.podium-resp.done').waitFor({ timeout: 3000 })
         await B.locator('.podium-resp.done').waitFor({ timeout: 3000 })
+        // 모바일: 응답 버튼이 둥근 버튼(말풍선/이모트/도망)·상황 버튼을 덮지 않고, 그 버튼들의 가운데를 누르면 그 버튼이 눌린다
+        const cover = await B.evaluate(() => {
+          const R = (el) => el.getBoundingClientRect()
+          const rr = R(document.querySelector('.podium-resp'))
+          const bad = []
+          for (const el of document.querySelectorAll('.emotes-tbtn, .hud-action')) {
+            if (!el.getClientRects().length) continue
+            const r = R(el)
+            const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)
+            const ov = !(r.right <= rr.left || rr.right <= r.left || r.bottom <= rr.top || rr.bottom <= r.top)
+            if (ov || !hit || !el.contains(hit)) bad.push(el.getAttribute('aria-label'))
+          }
+          return bad
+        })
+        assert(cover.length === 0, `모바일 응답 버튼이 가리는 버튼: ${cover.join(', ')}`)
         if (round === 1) await shot(A, 'desktop-sermon-call.png')
         return callText
       })

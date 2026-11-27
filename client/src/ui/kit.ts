@@ -84,8 +84,10 @@ export function fmt(n: number): string {
  * 누름 처리. 터치는 손가락을 떼는 순간(pointerup) 바로 실행한다: 다른 손가락(조이스틱)이 화면에 닿아 있는 동안에는
  * 브라우저가 click 을 만들어 주지 않아, 달리면서 [도망]·[말 걸기]를 누를 수 없기 때문이다.
  * 마우스·키보드(Enter/Space)는 평소처럼 click 으로 처리한다.
+ * 터치로 눌렀을 때 브라우저가 뒤따라 보내는 click 은 armGhostClickGuard 가 화면 전체에서 버린다(아래 설명).
  */
 export function onPress(el: HTMLElement, fn: () => void): void {
+  installGhostClickGuard()
   let downId = -1
   let firedAt = -1e9
   el.addEventListener('pointerdown', (e) => {
@@ -102,6 +104,7 @@ export function onPress(el: HTMLElement, fn: () => void): void {
     const r = el.getBoundingClientRect()
     if (e.clientX < r.left - 10 || e.clientX > r.right + 10 || e.clientY < r.top - 10 || e.clientY > r.bottom + 10) return
     firedAt = performance.now()
+    armGhostClickGuard(e.clientX, e.clientY)
     fn()
   })
   el.addEventListener('click', () => {
@@ -109,6 +112,65 @@ export function onPress(el: HTMLElement, fn: () => void): void {
     if (performance.now() - firedAt < 700) return
     fn()
   })
+}
+
+/** 터치 누름 뒤 이 시간 안에, 이 거리 안에서 오는 click 은 그 누름이 남긴 '유령 click' 으로 본다 */
+export const GHOST_CLICK_MS = 600
+export const GHOST_CLICK_PX = 40
+
+export interface GhostGuard {
+  at: number
+  x: number
+  y: number
+}
+
+/**
+ * 이 click 을 버려야 하나? (순수 함수: 단위 테스트용)
+ * - 키보드(Enter/Space)·코드가 만든 click 은 detail 이 0 이다 → 손가락과 상관없으니 통과
+ * - 누른 자리에서 멀리 떨어진 click, 시간이 지난 click 은 다른 손가락의 진짜 누름이다 → 통과
+ */
+export function isGhostClick(g: GhostGuard | null, now: number, detail: number, x: number, y: number): boolean {
+  if (!g || detail === 0) return false
+  if (now - g.at > GHOST_CLICK_MS || now < g.at) return false
+  return Math.hypot(x - g.x, y - g.y) <= GHOST_CLICK_PX
+}
+
+let ghost: GhostGuard | null = null
+let ghostInstalled = false
+
+/**
+ * 왜 필요한가: onPress 는 터치를 pointerup 에서 처리하는데, 그 안에서 시트(말풍선·이모트)가 열리면
+ * 브라우저가 곧이어 보내는 호환용 click 이 '지금 손가락 밑에 새로 생긴' 타일에 떨어진다.
+ * 그러면 고르지도 않은 말풍선이 방 전체에 나가거나 잠긴 동작 안내가 뜬다.
+ * 그래서 터치 누름의 시각·위치를 기억해 두고, 그 자리로 곧바로 오는 click 을 캡처 단계에서 통째로 버린다.
+ * 각 버튼이 따로 막는 대신 여기 한 곳에서 막으면, 누름의 결과로 손가락 밑에 무엇이 나타나든(onclick 만 쓰는 버튼 포함) 안전하다.
+ * 새 손가락이 화면에 닿으면(pointerdown) 그 뒤의 click 은 새 누름의 것이므로 기억을 지운다.
+ */
+function installGhostClickGuard(): void {
+  if (ghostInstalled || typeof window === 'undefined') return
+  ghostInstalled = true
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.pointerType !== 'mouse') ghost = null
+    },
+    true,
+  )
+  window.addEventListener(
+    'click',
+    (e) => {
+      if (!e.isTrusted) return
+      if (!isGhostClick(ghost, performance.now(), e.detail, e.clientX, e.clientY)) return
+      ghost = null
+      e.preventDefault()
+      e.stopImmediatePropagation()
+    },
+    true,
+  )
+}
+
+function armGhostClickGuard(x: number, y: number): void {
+  ghost = { at: performance.now(), x, y }
 }
 
 /** 버튼 쿨타임 표시: readyAt(performance.now 기준) 까지 비활성 + 남은 초 표시 */
@@ -201,10 +263,20 @@ export function createUi(root: HTMLElement, bus: Bus): UiApi {
   function confirm(text: string, okLabel = '확인', cancelLabel = '취소'): Promise<boolean> {
     return new Promise((resolve) => {
       const layer = h('div.panel-layer.confirm-layer')
+      // Esc 는 '취소'다. 캡처 단계에서 먼저 받아 전파를 끊는다: 그러지 않으면 아래 패널의 Esc 처리기가 패널만 닫고
+      // 확인 창은 주인 없이 화면에 남는다(Esc 한 번에는 맨 위의 것 하나만 닫는다)
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key !== 'Escape') return
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        done(false)
+      }
       const done = (v: boolean): void => {
+        window.removeEventListener('keydown', onKey, true)
         layer.remove()
         resolve(v)
       }
+      window.addEventListener('keydown', onKey, true)
       layer.append(
         h(
           'div.panel.confirm',

@@ -234,6 +234,7 @@ export function mountPodium(ctx: AppContext): void {
       respLabel.textContent = m.resp
       respBtn.classList.remove('hidden', 'done')
       respBtn.disabled = false
+      placeResp()
     }
     playSfx(ctx, 'chant')
     // 교주는 구호마다 다시 설교 자세(이동했다가 돌아왔어도)
@@ -268,11 +269,31 @@ export function mountPodium(ctx: AppContext): void {
         if (left < -350) return hideCall()
       }
       const frac = Math.max(0, Math.min(1, left / c.total))
+      placeResp()
       ringFg.setAttribute('stroke-dashoffset', String(RING_LEN * (1 - frac)))
       ringRaf = requestAnimationFrame(step)
     }
     step()
   }
+  /**
+   * 터치: 응답 버튼을 오른쪽 아래 버튼 묶음(상황 버튼 + 말풍선/이모트/도망) 바로 위에 올린다.
+   * 고정 높이로 두면 그 묶음을 덮어, 구호를 외치는 동안 [도망]·[이모트]를 누를 수 없고 엉뚱한 버튼이 눌린다.
+   * 묶음의 높이는 상황 버튼 줄 수에 따라 변하므로 구호가 떠 있는 동안 매 프레임 실제 위치를 잰다.
+   * 묶음이 안 보이면(대화 중 등) CSS 기본 자리로 둔다.
+   */
+  let respBottom = ''
+  function placeResp(): void {
+    let want = ''
+    if (ui.root.classList.contains('hud-touch') && !respBtn.classList.contains('hidden')) {
+      const dock = ui.root.querySelector<HTMLElement>('.hud-dock')
+      const r = dock?.getBoundingClientRect()
+      if (r && r.height > 0) want = Math.round(window.innerHeight - r.top + 12) + 'px'
+    }
+    if (want === respBottom) return
+    respBottom = want
+    respBtn.style.bottom = want
+  }
+
   function hideCall(): void {
     cancelAnimationFrame(ringRaf)
     call = null
