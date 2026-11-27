@@ -157,11 +157,12 @@ export class RoomTable {
    * 들어갈 방 고르기 — Node Lobby.pick 과 같은 규칙.
    * 요청한 방에 자리가 있으면 그 방, 아니면 자리 있는 방 중 사람이 가장 많은 방(동률이면 번호가 빠른 방). 전부 가득이면 null.
    */
-  pick(requested: string | null, now: number): string | null {
+  pick(requested: string | null, now: number, resume = false): string | null {
     let chosen: Occupancy | undefined
     if (requested !== null && requested !== 'auto') {
       const r = this.rows.get(requested)
-      if (r && this.hasSeat(r, now)) chosen = r
+      // resume: 끊겼다 있던 방으로 돌아오는 사람. 가득 차 보여도 그 방으로 보낸다(그 자리 하나가 본인일 수 있다 — 방이 판정한다)
+      if (r && (resume || this.hasSeat(r, now))) chosen = r
     }
     if (!chosen) {
       this.growIfCrowded(now)
@@ -176,6 +177,8 @@ export class RoomTable {
       }
     }
     if (!chosen) return null
+    // 가득 찬 방으로 돌아가는 재접속은 새 자리를 차지하지 않는다(이미 그 방에 서 있는 사람이다) → 예약으로 세지 않는다
+    if (resume && !this.hasSeat(chosen, now)) return chosen.id
     if (now - chosen.reservedAt > RESERVE_MS) chosen.reserved = 0
     chosen.reserved++
     chosen.reservedAt = now

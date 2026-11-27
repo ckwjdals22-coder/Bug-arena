@@ -81,11 +81,11 @@ export class LobbyDO extends DurableObject<Env> {
   }
 
   /** 들어갈 방 id. 전부 가득이면 null(그때 Worker 가 full 안내를 보낸다) */
-  pick(requested: string | null): string | null {
+  pick(requested: string | null, resume = false): string | null {
     const now = Date.now()
     this.sweep(now)
     const req = typeof requested === 'string' && /^[\w-]{1,16}$/.test(requested) ? requested : null
-    return this.table.pick(req, now)
+    return this.table.pick(req, now, resume === true)
   }
 
   health(): Health {

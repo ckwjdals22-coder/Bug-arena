@@ -76,6 +76,10 @@ export function createNet(store: Store, bus: Bus): Net {
   let lastRecvAt = 0
   /** 끊기는 순간 하고 있던 것(다시 들어왔을 때 사라졌으면 알려 주기 위해) */
   let before: { id: number; room: string; battle: boolean; sermon: boolean; talk: boolean; idle: boolean } | null = null
+  /** 지금 연결을 '있던 방으로 돌아가는 재접속'(resume=1)으로 열었는가 */
+  let openedAsResume = false
+  /** 있던 방이 나를 이어 붙여 주지 못했다(자리가 이미 넘어갔다): 다음 연결은 평소처럼 자리 있는 방을 찾는다 */
+  let resumeDenied = false
 
   /** 게임 중 연결이 끊겼다: 그 순간의 상태를 적어 둔다(재접속 뒤 비교용). 이미 적어 뒀으면 그대로 둔다 */
   function noteInterrupted(idle = false): void {
@@ -148,7 +152,11 @@ export function createNet(store: Store, bus: Bus): Net {
     closeSocket()
     let sock: WebSocket
     try {
-      sock = new WebSocket(wsUrl('/ws?room=' + encodeURIComponent(wantRoom)))
+      // 게임 중 끊겼다가 있던 방으로 돌아가는 재접속임을 알린다: 방이 가득 차 보여도 그 방으로 보내 준다
+      // (가득 찬 자리 하나가 잠깐 끊긴 나 자신일 수 있다). 누구인지는 hello 로 증명하므로 여기에는 신원을 싣지 않는다.
+      const resuming = everPlayed && before !== null && before.room === wantRoom && !resumeDenied
+      openedAsResume = resuming
+      sock = new WebSocket(wsUrl('/ws?room=' + encodeURIComponent(wantRoom) + (resuming ? '&resume=1' : '')))
     } catch (err) {
       console.error('[net] WebSocket 생성 실패', err)
       scheduleRetry()
@@ -296,6 +304,7 @@ export function createNet(store: Store, bus: Bus): Net {
     countEntourage()
     attempts = 0
     everPlayed = true
+    resumeDenied = false
     clearTimeout(connectTimer)
     clearInterval(pingTimer)
     lastRecvAt = performance.now()
@@ -339,6 +348,13 @@ export function createNet(store: Store, bus: Bus): Net {
         onWelcome(msg)
         break
       case 'full':
+        if (openedAsResume) {
+          // 있던 방으로 돌아가려 했는데 그사이 내 자리가 다른 사람에게 넘어갔다(오래 끊겨 있었다).
+          // '가득 참' 화면에 세우지 않고, 평소 규칙대로 자리 있는 방을 바로 다시 찾는다(바뀌면 안내가 뜬다).
+          resumeDenied = true
+          open()
+          break
+        }
         store.rooms = msg.rooms
         intentional = true
         clearTimers()

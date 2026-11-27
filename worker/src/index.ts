@@ -60,7 +60,8 @@ async function handleWs(request: Request, env: Env, url: URL): Promise<Response>
   }
   const requested = url.searchParams.get('room')
   const lobby = lobbyStub(env)
-  const id = await lobby.pick(requested)
+  // resume=1: 끊겼다가 있던 방으로 돌아오는 재접속(가득 차 보여도 그 방이 직접 판정하게 보낸다)
+  const id = await lobby.pick(requested, url.searchParams.get('resume') === '1')
   if (id === null) {
     const { rooms } = await lobby.list()
     return fullResponse(rooms)

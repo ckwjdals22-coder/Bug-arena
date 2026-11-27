@@ -155,6 +155,34 @@ describe('Lobby', () => {
     expect(t.lobby.pick('constructor')?.id).toBe('3')
   })
 
+  it('끊겼다 돌아오는 사람(resume)은 가득 찬 방이어도 있던 방으로 보내고, 방이 본인만 이어 붙인다', () => {
+    const t = makeLobby(2, 2)
+    const [c1] = t.fill('1', 2)
+    const room = t.lobby.get('1')!
+    const me = [...room.players.values()].find((p) => p.conn === c1)!
+    // 망이 끊겼다(비정상 종료): 방에는 잠깐 그대로 서 있다 → 로비가 보기에는 여전히 가득 찬 방
+    room.disconnect(c1!, false)
+    expect(room.players.size).toBe(2)
+    expect(t.lobby.pick('1')?.id).toBe('2') // 처음 오는 사람은 다른 방으로
+    expect(t.lobby.pick('1', true)?.id).toBe('1') // 돌아오는 사람은 있던 방으로
+    // 남의 자리를 노리고 resume 을 붙여도 방이 '가득 참'으로 돌려보낸다
+    const stranger = 9001
+    room.connect(stranger)
+    room.message(stranger, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: 'lobby-stranger-1', name: '낯선이', look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t.closed.has(stranger)).toBe(true)
+    expect(room.players.size).toBe(2)
+    // 본인은 같은 번호로 이어 붙는다
+    const back = 9002
+    room.connect(back)
+    room.message(back, JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, pid: me.pid, name: me.name, look: [0, 0, 0, 0, 0, 0, 0] }))
+    expect(t.closed.has(back)).toBe(false)
+    expect(room.players.size).toBe(2)
+    expect(room.players.get(me.id)?.conn).toBe(back)
+    // 없는 방·auto 에는 resume 이 아무 효과가 없다
+    expect(t.lobby.pick('99', true)?.id).toBe('2')
+    expect(t.lobby.pick('auto', true)?.id).toBe('2')
+  })
+
   it('전부 가득이면 undefined, 자리가 나면 다시 배정된다', () => {
     const t = makeLobby(2, 2)
     const first = t.fill('1', 2)

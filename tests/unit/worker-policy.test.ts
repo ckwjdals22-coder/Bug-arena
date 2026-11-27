@@ -24,6 +24,20 @@ describe('Workers 로비 자리 계산', () => {
     t.report({ id: '2', inst: 'b', seq: 1, players: 4, pending: 3, cap: 5, npcs: 0, tickP95: 0 }, now)
     expect(t.pick('1', now)).toBe(null)
   })
+  it('끊겼다 돌아오는 재접속(resume)은 가득 찬 방이어도 있던 방으로 보낸다(예약 자리는 늘리지 않는다)', () => {
+    const t = new RoomTable(policy)
+    const now = 1_000_000
+    t.report({ id: '1', inst: 'a', seq: 1, players: 5, pending: 0, cap: 5, npcs: 0, tickP95: 0 }, now)
+    t.report({ id: '2', inst: 'b', seq: 1, players: 1, pending: 0, cap: 5, npcs: 0, tickP95: 0 }, now)
+    expect(t.pick('1', now)).toBe('2') // 처음 오는 사람은 자리 있는 방으로
+    expect(t.pick('1', now, true)).toBe('1')
+    expect(t.pick('1', now, true)).toBe('1')
+    // 없는 방을 대며 resume 을 붙여도 평소 규칙대로
+    expect(t.pick('zz', now, true)).toBe('2')
+    // 자리가 나면 평소처럼 들어갈 수 있다(재접속이 예약을 쌓아 두지 않았다)
+    t.report({ id: '1', inst: 'a', seq: 2, players: 4, pending: 0, cap: 5, npcs: 0, tickP95: 0 }, now)
+    expect(t.pick('1', now)).toBe('1')
+  })
   it('방금 배정한 자리(reserved)는 그대로 세어 몰린 접속을 나눈다', () => {
     const t = new RoomTable(policy)
     const now = 1_000_000

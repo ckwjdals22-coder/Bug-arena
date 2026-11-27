@@ -698,7 +698,8 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
   }
   const requested = url.searchParams.get('room')
   wss.handleUpgrade(req, socket, head, (ws) => {
-    const room = lobby.pick(requested)
+    // resume=1: 끊겼다가 있던 방으로 돌아오는 재접속(가득 찬 방이어도 그 방이 직접 판정하게 보낸다)
+    const room = lobby.pick(requested, url.searchParams.get('resume') === '1')
     if (!room) {
       // 전부 가득: 연결은 받아서 사유와 방 목록을 알려 준 뒤 닫는다(클라이언트가 안내를 띄울 수 있게)
       ws.on('error', () => {})

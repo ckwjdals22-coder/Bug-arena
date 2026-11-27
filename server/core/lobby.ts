@@ -124,10 +124,13 @@ export class Lobby {
    * 자리 계산에는 아직 hello 를 보내지 않은 연결도 넣는다. 한꺼번에 몰릴 때 같은 방으로 정원보다 많이
    * 보내 놓고 뒤늦게 '가득 참'으로 튕기는 일을 줄이기 위해서다.
    */
-  pick(requested: string | null): Room | undefined {
+  pick(requested: string | null, resume = false): Room | undefined {
     if (requested !== null && requested !== 'auto') {
       const room = this.byId.get(requested)
-      if (room && hasSeat(room)) return room
+      // 끊겼다 돌아오는 사람(resume)은 방이 가득 차 보여도 그 방으로 보낸다. 가득 찬 방의 자리 하나는 바로 그 사람이
+      // 잠깐 끊긴 채 차지하고 있는 자리일 수 있기 때문이다(누구인지는 hello 가 와야 안다 → 방이 그때 판정한다:
+      // 그 방에 남아 있던 사람이면 이어 붙이고, 아니면 평소처럼 '가득 참'으로 돌려보낸다).
+      if (room && (resume || hasSeat(room))) return room
     }
     // 자리가 모자라기 전에 다음 방을 준비해 둔다. 새 방은 비어 있으므로 아래 규칙상 기존 방이 다 찬 뒤에야 쓰인다
     this.growIfCrowded()
