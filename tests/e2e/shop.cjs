@@ -70,7 +70,8 @@ function profileWithCoins(pid, coins) {
         .split('\n')
         .pop(),
     )
-    await walkTo(A, tent.x - 0.4, tent.z - tent.r - 1.1, 1.3, 60000)
+    // 헌금함 바로 앞(중심에서 1.5m)까지 0.6m 안으로 다가간다: 버튼이 뜨는 범위(약 2.2m) 안에 확실히 들어가도록
+    await walkTo(A, tent.x, tent.z - 1.5, 0.6, 60000)
     await waitState(A, (s) => s.near.poi === 'offering', 8000, 'at tent')
     const openBtn = A.locator('.hud-action[aria-label="가상 매점"]')
     await openBtn.waitFor({ state: 'visible', timeout: 4000 })
