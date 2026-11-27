@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Prisma } from "@/generated/prisma/client";
+import { MIN_SIGNUP_AGE, POLICY_VERSIONS } from "@/lib/policy";
 import { kstParts } from "@/lib/time";
 import {
   MAX_FAILED_LOGINS,
   PASSWORD_RESET_TEMPLATE_KEY,
+  WITHDRAW_CONFIRM_TEXT,
   authenticate,
   authenticateAdmin,
   beginTotpSetup,
@@ -12,6 +14,7 @@ import {
   disableTotp,
   enableTotp,
   getAccount,
+  getMyPrivacyOverview,
   requestPasswordReset,
   resetPassword,
   signUp,
@@ -143,6 +146,42 @@ describe("signUp", () => {
     const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
     expect(user.marketingConsentAt).toBeNull();
     expect(user.phone).toBeNull();
+  });
+
+  it("가입할 때의 동의를 문서 버전·IP 와 함께 기록한다(약관·개인정보는 항상, 광고성·야간은 동의했을 때만)", async () => {
+    const ip = nextIp();
+    const { userId } = await signUp(signUpInput({ agreeMarketing: true, agreeNightAlert: true, ip }));
+    const records = await prisma.consentRecord.findMany({ where: { userId } });
+    expect(records.map((r) => r.kind).sort()).toEqual(["MARKETING", "NIGHT_ALERT", "PRIVACY", "TERMS"]);
+    for (const record of records) {
+      expect(record).toMatchObject({ agreed: true, version: POLICY_VERSIONS[record.kind], ip, bookingId: null });
+    }
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(user.marketingConsentAt).toBeInstanceOf(Date);
+    expect(user.nightAlertConsentAt).toBeInstanceOf(Date);
+
+    // 선택 동의를 하지 않으면 필수 두 건만 남고, IP 를 모르면 비워 둔다.
+    const plain = await signUp(signUpInput({ email: "plain@example.com", ip: "unknown" }));
+    const plainRecords = await prisma.consentRecord.findMany({ where: { userId: plain.userId } });
+    expect(plainRecords.map((r) => r.kind).sort()).toEqual(["PRIVACY", "TERMS"]);
+    expect(plainRecords.every((r) => r.ip === null)).toBe(true);
+
+    // 야간 알림만 따로 동의할 수는 없다.
+    const error = await failure(signUp(signUpInput({ email: "night@example.com", agreeNightAlert: true })));
+    expect(error.code).toBe("VALIDATION");
+    expect(error.fieldErrors?.agreeNightAlert).toMatch(/광고성 정보 수신/);
+    expect(await prisma.user.count()).toBe(2);
+    expect(await prisma.consentRecord.count()).toBe(6);
+  });
+
+  it("출생 연도를 넣으면 가입 가능 나이(MIN_SIGNUP_AGE)를 확인한다", async () => {
+    const thisYear = kstParts(new Date()).year;
+    const tooYoung = await failure(signUp(signUpInput({ birthYear: thisYear - MIN_SIGNUP_AGE + 1 })));
+    expect(tooYoung.fieldErrors?.birthYear).toContain(`만 ${MIN_SIGNUP_AGE}세`);
+    expect(await prisma.user.count()).toBe(0);
+
+    const { userId } = await signUp(signUpInput({ birthYear: thisYear - MIN_SIGNUP_AGE }));
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: userId } })).birthYear).toBe(thisYear - MIN_SIGNUP_AGE);
   });
 
   it("형식·정책·필수 동의를 지키지 않은 가입을 거절한다", async () => {
@@ -630,6 +669,85 @@ describe("프로필 · 수신 동의", () => {
     expect(row.nightAlertConsentAt).toBeNull();
     expect(await prisma.auditLog.count({ where: { action: "user.marketing_consent", actorId: user.id } })).toBe(2);
   });
+
+  it("수신 동의와 철회는 실제로 바뀔 때마다 동의 기록에 쌓인다", async () => {
+    const user = await member();
+    const records = () =>
+      prisma.consentRecord.findMany({ where: { userId: user.id }, orderBy: [{ createdAt: "asc" }, { kind: "asc" }] });
+
+    await updateConsents(user.id, { marketing: true }, { ip: "203.0.113.7" });
+    // 이미 같은 상태면 기록을 더 남기지 않는다.
+    await updateConsents(user.id, { marketing: true }, { ip: "203.0.113.7" });
+    await updateConsents(user.id, { nightAlert: true }, { ip: "203.0.113.8" });
+    // 광고 수신을 철회하면 야간 동의의 철회도 따로 남는다.
+    await updateConsents(user.id, { marketing: false }, { ip: "203.0.113.9" });
+
+    expect((await records()).map((r) => [r.kind, r.agreed, r.ip, r.version])).toEqual([
+      ["MARKETING", true, "203.0.113.7", POLICY_VERSIONS.MARKETING],
+      ["NIGHT_ALERT", true, "203.0.113.8", POLICY_VERSIONS.NIGHT_ALERT],
+      ["MARKETING", false, "203.0.113.9", POLICY_VERSIONS.MARKETING],
+      ["NIGHT_ALERT", false, "203.0.113.9", POLICY_VERSIONS.NIGHT_ALERT],
+    ]);
+
+    // IP 없이 불러도(내부 호출) 기록은 남는다.
+    await updateConsents(user.id, { marketing: true });
+    const last = (await records()).at(-1);
+    expect(last).toMatchObject({ kind: "MARKETING", agreed: true, ip: null });
+  });
+
+  it("동시에 들어온 같은 동의는 한 번만 기록된다", async () => {
+    const user = await member();
+    const results = await Promise.all(Array.from({ length: 6 }, () => updateConsents(user.id, { marketing: true, nightAlert: true })));
+    expect(results.every((r) => r.marketingConsentAt instanceof Date && r.nightAlertConsentAt instanceof Date)).toBe(true);
+    const records = await prisma.consentRecord.findMany({ where: { userId: user.id } });
+    expect(records.map((r) => r.kind).sort()).toEqual(["MARKETING", "NIGHT_ALERT"]);
+    expect(await prisma.auditLog.count({ where: { action: "user.marketing_consent", actorId: user.id } })).toBe(1);
+  });
+
+  it("getMyPrivacyOverview: 동의 이력, 수신 동의 상태, 내 연락처를 제공받은 판매자를 돌려준다", async () => {
+    const { userId } = await signUp(signUpInput({ agreeMarketing: true }));
+    const other = await createUser();
+    const [recent, older, unpaid] = [await createListing(), await createListing(), await createListing()];
+    const day = 86_400_000;
+    const at = (daysAgo: number) => new Date(Date.now() - daysAgo * day);
+
+    // older: 지난 예약 두 건(이용 완료 + 취소) — 판매자에게 연락처가 전달된 예약
+    await createBooking(userId, older, { status: "COMPLETED", createdAt: at(40) });
+    const olderLast = await createBooking(userId, older, { status: "CANCELLED", createdAt: at(20) });
+    // recent: 확정 예약 한 건
+    const recentBooking = await createBooking(userId, recent, { createdAt: at(1) });
+    // unpaid: 결제를 끝내지 않은 예약만 — 판매자에게 보이지 않았으므로 세지 않는다
+    await createBooking(userId, unpaid, { status: "EXPIRED", createdAt: at(3) });
+    await createBooking(userId, unpaid, { status: "PENDING_PAYMENT", createdAt: at(0) });
+    // 다른 회원의 예약은 섞이지 않는다
+    await createBooking(other.id, unpaid, { createdAt: at(2) });
+
+    const overview = await getMyPrivacyOverview(userId);
+    expect(overview.consents.map((c) => c.kind).sort()).toEqual(["MARKETING", "PRIVACY", "TERMS"]);
+    expect(overview.consents.every((c) => c.agreed && !("ip" in c))).toBe(true);
+    expect(overview.marketingConsentAt).toBeInstanceOf(Date);
+    expect(overview.nightAlertConsentAt).toBeNull();
+    expect(overview.thirdPartyRecipients).toEqual([
+      { businessId: recent.business.id, businessName: recent.business.name, bookingCount: 1, lastBookingAt: recentBooking.createdAt },
+      { businessId: older.business.id, businessName: older.business.name, bookingCount: 2, lastBookingAt: olderLast.createdAt },
+    ]);
+
+    // 남의 내역은 볼 수 없다(본인 ID 로만 조회) — 예약이 없는 회원은 빈 목록
+    expect((await getMyPrivacyOverview(other.id)).thirdPartyRecipients.map((r) => r.businessId)).toEqual([unpaid.business.id]);
+    expect((await failure(getMyPrivacyOverview("missing-user"))).code).toBe("NOT_FOUND");
+  });
+
+  it("카카오로만 가입한 계정은 비밀번호가 없다고 알려 주고, 비밀번호 변경 대신 재설정을 안내한다", async () => {
+    const social = await createUser({ passwordHash: "social$not-a-real-hash", kakaoId: "3141592653" });
+    expect(await getAccount(social.id)).toMatchObject({ hasPassword: false, kakaoLinked: true });
+    const regular = await member();
+    expect(await getAccount(regular.id)).toMatchObject({ hasPassword: true, kakaoLinked: false });
+
+    const error = await failure(changePassword({ userId: social.id, currentPassword: "anything-1234", newPassword: NEW_PASSWORD }));
+    expect(error.code).toBe("VALIDATION");
+    expect(error.fieldErrors?.currentPassword).toMatch(/비밀번호 재설정/);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: social.id } })).passwordHash).toBe("social$not-a-real-hash");
+  });
 });
 
 describe("withdrawAccount", () => {
@@ -790,5 +908,116 @@ describe("withdrawAccount", () => {
     await withdrawAccount({ userId: staff.id, password: PASSWORD });
     expect(await prisma.businessMember.count({ where: { userId: staff.id } })).toBe(0);
     expect((await prisma.business.findUniqueOrThrow({ where: { id: business.id } })).status).toBe("APPROVED");
+  });
+
+  it("끝나지 않은 환불(처리 중·실패)이 있으면 탈퇴할 수 없고, 환불이 끝나면 탈퇴할 수 있다", async () => {
+    const user = await member();
+    const listing = await createListing([{ capacity: 4 }], { startsInHours: -48 });
+    const booking = await createBooking(user.id, listing, { status: "CANCELLED", cancelledBy: "SELLER", paymentState: "PAID" });
+    const payment = await prisma.payment.create({
+      data: { bookingId: booking.id, provider: "MOCK", orderId: `nj_test_${randomBytes(6).toString("hex")}`, amount: 30000, status: "PAID" },
+    });
+    const refund = await prisma.refund.create({
+      data: { paymentId: payment.id, bookingId: booking.id, amount: 30000, reason: "회차 취소", status: "FAILED", requestedBy: "SELLER" },
+    });
+
+    for (const status of ["FAILED", "REQUESTED"] as const) {
+      await prisma.refund.update({ where: { id: refund.id }, data: { status } });
+      const error = await failure(withdrawAccount({ userId: user.id, password: PASSWORD }));
+      expect(error.code, status).toBe("CONFLICT");
+      expect(error.message, status).toMatch(/끝나지 않은 환불이 있어 탈퇴할 수 없어요/);
+      expect(error.message, status).toMatch(/고객센터/);
+    }
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).status).toBe("ACTIVE");
+
+    // 다른 회원의 환불은 상관없다.
+    const other = await member();
+    await withdrawAccount({ userId: other.id, password: PASSWORD });
+
+    await prisma.refund.update({ where: { id: refund.id }, data: { status: "DONE", processedAt: new Date() } });
+    await withdrawAccount({ userId: user.id, password: PASSWORD });
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).status).toBe("WITHDRAWN");
+    // 예약에 남긴 이름·연락처는 거래 기록이라 그대로 둔다.
+    expect(await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).toMatchObject({ guestName: "김하늘", guestPhone: "01012345678", userId: user.id });
+  });
+
+  it("탈퇴하면 남는자리로 생긴 고객 카드는 가리고, 사업자가 직접 등록·가져온 카드는 연결만 끊는다", async () => {
+    const user = await member({ name: "김하늘", phone: "01012345678" });
+    const bystander = await createUser({ name: "이바다", phone: "01099998888" });
+    const [marketplace, direct, manual, imported] = [await createBusiness(), await createBusiness(), await createBusiness(), await createBusiness()];
+    const card = (businessId: string, source: "MARKETPLACE" | "DIRECT" | "MANUAL" | "IMPORTED", overrides: Partial<Prisma.BusinessCustomerUncheckedCreateInput> = {}) =>
+      prisma.businessCustomer.create({
+        data: {
+          businessId,
+          userId: user.id,
+          name: "김하늘",
+          phone: "01012345678",
+          source,
+          memo: "창가 자리 선호",
+          tags: ["단골"],
+          bookingCount: 3,
+          completedCount: 2,
+          cancelCount: 1,
+          noShowCount: 0,
+          totalSpent: 90000,
+          lastBookingAt: new Date(),
+          ...overrides,
+        },
+      });
+    const viaMarket = await card(marketplace.business.id, "MARKETPLACE");
+    // 같은 사업장에 예전 번호로 만든 카드가 하나 더 있어도 가린 값끼리 겹치지 않는다.
+    const viaMarketOldPhone = await card(marketplace.business.id, "MARKETPLACE", { phone: "01011112222" });
+    const viaDirect = await card(direct.business.id, "DIRECT");
+    const byHand = await card(manual.business.id, "MANUAL");
+    const fromFile = await card(imported.business.id, "IMPORTED");
+    const others = await card(marketplace.business.id, "MARKETPLACE", { userId: bystander.id, name: "이바다", phone: "01099998888" });
+
+    await withdrawAccount({ userId: user.id, password: PASSWORD });
+
+    const find = (id: string) => prisma.businessCustomer.findUniqueOrThrow({ where: { id } });
+    const masked = [await find(viaMarket.id), await find(viaMarketOldPhone.id), await find(viaDirect.id)];
+    for (const row of masked) {
+      expect(row).toMatchObject({
+        name: "탈퇴한 고객",
+        memo: null,
+        userId: null,
+        // 사업자의 통계를 위해 이용 횟수와 분류는 남긴다.
+        bookingCount: 3,
+        completedCount: 2,
+        cancelCount: 1,
+        totalSpent: 90000,
+        tags: ["단골"],
+      });
+      // 전화번호로 읽히지 않는 값(숫자가 하나도 없음)
+      expect(row.phone).toMatch(/^withdrawn-[A-Za-z]+$/);
+    }
+    expect(new Set(masked.map((row) => row.phone)).size).toBe(3);
+
+    // 사업자가 직접 등록했거나 가져온 카드는 사업자의 자료다.
+    for (const row of [await find(byHand.id), await find(fromFile.id)]) {
+      expect(row).toMatchObject({ name: "김하늘", phone: "01012345678", memo: "창가 자리 선호", userId: null });
+    }
+    expect(await find(others.id)).toMatchObject({ name: "이바다", phone: "01099998888", userId: bystander.id, memo: "창가 자리 선호" });
+  });
+
+  it("비밀번호가 없는 카카오 계정은 확인 문구로 탈퇴하고, 탈퇴하면 카카오 연결이 끊긴다", async () => {
+    const social = await createUser({ passwordHash: "social$not-a-real-hash", kakaoId: "2718281828" });
+
+    for (const input of [{}, { password: "Whatever!2026" }, { confirmText: "탈퇴" }]) {
+      const error = await failure(withdrawAccount({ userId: social.id, ...input }));
+      expect(error.code).toBe("VALIDATION");
+      expect(error.fieldErrors?.confirmText).toContain(WITHDRAW_CONFIRM_TEXT);
+    }
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: social.id } })).status).toBe("ACTIVE");
+
+    await withdrawAccount({ userId: social.id, confirmText: ` ${WITHDRAW_CONFIRM_TEXT} ` });
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: social.id } });
+    expect(row).toMatchObject({ status: "WITHDRAWN", kakaoId: null });
+
+    // 비밀번호가 있는 계정은 확인 문구만으로는 탈퇴할 수 없다.
+    const regular = await member();
+    const noPassword = await failure(withdrawAccount({ userId: regular.id, confirmText: WITHDRAW_CONFIRM_TEXT }));
+    expect(noPassword.fieldErrors?.password).toMatch(/비밀번호를 입력/);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: regular.id } })).status).toBe("ACTIVE");
   });
 });

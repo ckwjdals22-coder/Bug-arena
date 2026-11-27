@@ -4,8 +4,32 @@
  * 문서 안의 글자에는 치환 자리표시자가 들어 있다(src/content/render.ts 의 resolveText 로 바꾼다).
  *   {{operator.companyName}}            운영자(회사) 정보 — 값이 없으면 "[운영자 정보 입력 필요: 상호]" 로 보인다
  *   {{settings.holdMinutes|min}}        운영 설정값 — 뒤의 |min 은 표시 형식
+ *   [[if settings.cancelGraceMinutes]]…[[else]]…[[end]]   설정값이 0 보다 클 때와 0 일 때 문장을 바꾼다
  * 요율·시간·횟수는 운영자가 바꿀 수 있는 값이므로 문서에 숫자를 직접 적지 않는다.
  */
+
+/**
+ * 외부 연동의 키. 연동이 실제로 켜졌을 때만 처리방침의 표에 나타나야 하고,
+ * "아직 연동 전" 안내는 그 연동이 켜지면 사라져야 한다.
+ * - always: 항상(호스팅)
+ * - payment:toss: 토스페이먼츠 실결제 연동
+ * - sms:solapi: 문자 발송 연동
+ * - email:resend: 이메일 발송 연동
+ * - storage:s3: 외부 이미지 저장소 사용
+ * - kakaoLogin: 카카오 로그인 연동
+ * - identity: 본인확인 서비스 연동
+ */
+export type ProcessorEnabledKey = "always" | "payment:toss" | "sms:solapi" | "email:resend" | "storage:s3" | "kakaoLogin" | "identity";
+
+export const PROCESSOR_ENABLED_KEYS: readonly ProcessorEnabledKey[] = [
+  "always",
+  "payment:toss",
+  "sms:solapi",
+  "email:resend",
+  "storage:s3",
+  "kakaoLogin",
+  "identity",
+];
 
 export type LegalBlock =
   /** 문단 */
@@ -14,12 +38,15 @@ export type LegalBlock =
   | { type: "ul" | "ol"; items: string[] }
   /** 표 — rows 의 각 행은 head 와 칸 수가 같다 */
   | { type: "table"; head: string[]; rows: string[][] }
-  /** 강조 안내(info: 알아 둘 점, warn: 주의) */
-  | { type: "note"; tone?: "info" | "warn"; text: string }
   /**
-   * 개인정보 처리 수탁자 표. 내용은 문서가 아니라 PROCESSORS 데이터에서 그린다
-   * (실제로 켜진 연동만 보여 주기 위해 — visibleProcessors 참고).
-   * scope 가 "overseas" 면 국외에서 처리하는 수탁자(country 가 있는 항목)만 그린다. 생략하면 전체.
+   * 강조 안내(info: 알아 둘 점, warn: 주의).
+   * until 이 있으면 그 연동이 켜지기 전까지만 보여 준다("연동 전" 안내) — src/content/render.ts 의 visibleBlocks 참고.
+   */
+  | { type: "note"; tone?: "info" | "warn"; text: string; until?: ProcessorEnabledKey }
+  /**
+   * 개인정보 처리를 맡긴 회사의 표. 내용은 문서가 아니라 PROCESSORS 데이터에서 그린다
+   * (실제로 켜진 연동만 보여 주기 위해 — processorsForBlock 참고).
+   * scope 가 "overseas" 면 국외에서 처리하는 곳(처리 국가가 국내로 확인되지 않은 곳 포함)만 그린다. 생략하면 전체.
    */
   | { type: "processors"; scope?: "all" | "overseas" };
 
@@ -73,29 +100,14 @@ export interface LegalDoc {
 }
 
 /**
- * 수탁자를 화면에 보여 줄 조건. 연동이 실제로 켜졌을 때만 처리방침에 나타나야 한다.
- * - always: 항상(호스팅)
- * - payment:toss: 토스페이먼츠 실결제 연동
- * - sms:solapi: 문자·알림톡 발송 연동
- * - email:resend: 이메일 발송 연동
- * - storage:s3: 외부 이미지 저장소 사용
- * - kakaoLogin: 카카오 로그인 연동
- * - identity: 본인확인 서비스 연동
+ * 처리 국가를 운영자가 계약·설정에 맞게 입력해야 하는 곳(어느 나라의 서버를 쓰는지는 계약과 설정에 따라 달라진다).
+ * 값은 src/content/operator.ts 의 getProcessorRegions 가 환경 변수에서 읽는다.
  */
-export type ProcessorEnabledKey = "always" | "payment:toss" | "sms:solapi" | "email:resend" | "storage:s3" | "kakaoLogin" | "identity";
-
-export const PROCESSOR_ENABLED_KEYS: readonly ProcessorEnabledKey[] = [
-  "always",
-  "payment:toss",
-  "sms:solapi",
-  "email:resend",
-  "storage:s3",
-  "kakaoLogin",
-  "identity",
-];
+export const PROCESSOR_REGION_KEYS = ["hosting", "storage", "email"] as const;
+export type ProcessorRegionKey = (typeof PROCESSOR_REGION_KEYS)[number];
 
 export interface Processor {
-  /** 수탁자 이름(자리표시자 가능) */
+  /** 회사 이름(자리표시자 가능) */
   name: string;
   /** 맡기는 일 */
   purpose: string;
@@ -103,7 +115,14 @@ export interface Processor {
   items: string;
   /** 보유·이용 기간 */
   retention: string;
-  /** 국외에서 처리하는 경우 그 나라. 없으면 국내 처리 */
+  /**
+   * 국외에서 처리하는 경우 그 나라. 없으면 국내 처리.
+   * regionKey 가 있는 항목은 여기에 직접 적지 않고 applyProcessorRegions 가 운영자 입력값으로 채운다.
+   */
   country?: string;
+  /** 국외에서 처리하는 경우 그 회사의 연락처(국외 이전 고지 항목). applyProcessorRegions 가 채운다 */
+  contact?: string;
+  /** 처리 국가와 연락처를 운영자 입력값에서 가져오는 항목 */
+  regionKey?: ProcessorRegionKey;
   enabledWhen: ProcessorEnabledKey;
 }

@@ -24,6 +24,22 @@ export const QUOTA_EXCEEDED_ERROR = "월 발송 한도를 넘었어요";
 const CONSENT_MISSING_ERROR = "수신 동의가 없어 보내지 않았어요";
 const ATTEMPTS_EXHAUSTED_ERROR = "발송을 끝내지 못하고 시도 횟수를 넘겼어요";
 
+/**
+ * 본문 자체가 인증 수단인 템플릿(일회용 링크·인증번호). 이 목록 한곳만 고치면
+ * 발송 내역 화면의 본문 가림(listOutbox)과 발송 후 본문 지우기(scrubSensitiveOutbox)에 함께 반영된다.
+ */
+export const CREDENTIAL_TEMPLATE_KEYS = {
+  PASSWORD_RESET: "PLATFORM_PASSWORD_RESET",
+  EMAIL_VERIFY: "PLATFORM_EMAIL_VERIFY",
+  PHONE_OTP: "PLATFORM_PHONE_OTP",
+} as const;
+const CREDENTIAL_KEY_LIST: string[] = Object.values(CREDENTIAL_TEMPLATE_KEYS);
+export const isCredentialTemplateKey = (templateKey: string) => CREDENTIAL_KEY_LIST.includes(templateKey);
+/** 가리거나 지운 본문 자리에 넣는 문구 */
+export const CREDENTIAL_BODY_PLACEHOLDER = "(보안상 본문을 표시하지 않아요)";
+/** 발송이 끝난 인증 메시지의 본문을 지우기까지 두는 시간 */
+const CREDENTIAL_SCRUB_AFTER_MS = 60 * MINUTE;
+
 export const MAX_SEND_ATTEMPTS = 3;
 /** 발송기가 한 건을 붙잡고 있는 시간. 이 안에 결과를 기록하지 못하면(프로세스 종료 등) 다시 발송 대상이 된다. */
 const CLAIM_LEASE_MS = 5 * MINUTE;
@@ -404,6 +420,26 @@ export async function dispatchOutbox(options: { limit?: number } = {}): Promise<
   return result;
 }
 
+// ── 인증 메시지 본문 지우기 ───────────────────────────
+
+/**
+ * 비밀번호 재설정 링크·인증번호처럼 본문이 곧 인증 수단인 메시지는, 발송이 끝났고(대기 상태가 아님)
+ * 만든 지 1시간이 지나면 본문을 지운다(주기 작업용, 여러 번 불러도 결과가 같다).
+ * 발송 여부·시각·수신처 같은 이력은 그대로 남긴다. 이번에 지운 건수를 돌려준다.
+ */
+export async function scrubSensitiveOutbox(now: Date = new Date()): Promise<number> {
+  const result = await prisma.messageOutbox.updateMany({
+    where: {
+      templateKey: { in: CREDENTIAL_KEY_LIST },
+      status: { not: "QUEUED" },
+      createdAt: { lt: new Date(now.getTime() - CREDENTIAL_SCRUB_AFTER_MS) },
+      body: { not: CREDENTIAL_BODY_PLACEHOLDER },
+    },
+    data: { body: CREDENTIAL_BODY_PLACEHOLDER },
+  });
+  return result.count;
+}
+
 // ── 조회(사업자 발송 내역·운영자 콘솔) ─────────────────
 
 const MESSAGE_STATUSES = ["QUEUED", "SENT", "SIMULATED", "FAILED", "SKIPPED"] as const satisfies readonly MessageStatus[];
@@ -454,9 +490,6 @@ export interface OutboxPage {
  * 발송 내역 목록(최신순, 커서 페이지). 수신처는 가려서 돌려준다.
  * 권한 확인이 없으므로 운영자 콘솔·내부 작업에서만 직접 쓰고, 사업자 화면은 listBusinessOutbox 를 쓴다.
  */
-/** 본문에 일회용 인증 링크·코드가 들어가는 템플릿 */
-const SENSITIVE_TEMPLATE_KEYS = new Set(["PLATFORM_PASSWORD_RESET", "PLATFORM_EMAIL_VERIFY", "PLATFORM_PHONE_OTP"]);
-
 export async function listOutbox(filter: OutboxFilter = {}): Promise<OutboxPage> {
   const f = listSchema.parse(filter);
   const rows = await prisma.messageOutbox.findMany({
@@ -476,7 +509,7 @@ export async function listOutbox(filter: OutboxFilter = {}): Promise<OutboxPage>
       templateKey: r.templateKey,
       subject: r.subject,
       // 비밀번호 재설정 링크처럼 본문 자체가 인증 수단인 메시지는 운영 화면에 내보내지 않는다.
-      body: SENSITIVE_TEMPLATE_KEYS.has(r.templateKey) ? "(보안상 본문을 표시하지 않아요)" : r.body,
+      body: isCredentialTemplateKey(r.templateKey) ? CREDENTIAL_BODY_PLACEHOLDER : r.body,
       isAdvertising: r.isAdvertising,
       status: r.status,
       provider: r.provider,

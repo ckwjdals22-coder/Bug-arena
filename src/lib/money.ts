@@ -21,10 +21,10 @@ export function applyBps(amount: number, bps: number): number {
   return Math.floor((amount * bps) / 10_000);
 }
 
-/** 550 → "5.5%" */
+/** 550 → "5.5%", 374 → "3.74%", 1000 → "10%" (소수 둘째 자리까지, 끝의 0 은 뗀다) */
 export function formatBps(bps: number): string {
-  const pct = bps / 100;
-  return `${Number.isInteger(pct) ? pct : pct.toFixed(1)}%`;
+  const pct = (bps / 100).toFixed(2).replace(/\.?0+$/, "");
+  return `${pct}%`;
 }
 
 /** 할인율(%) — 정가가 없거나 할인 아님이면 null */

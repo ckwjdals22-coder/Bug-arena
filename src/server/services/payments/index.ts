@@ -12,6 +12,7 @@ import {
   assertPaymentConfigured,
   currentProviderName,
   getPaymentProviderByName,
+  type ProviderCancelResult,
   type ProviderPaymentState,
 } from "./provider";
 
@@ -677,19 +678,49 @@ export async function refundPayment(input: RefundPaymentInput): Promise<Refund |
   return result;
 }
 
-/** PG 취소를 요청하고 결과를 Refund·Payment 에 반영한다. 실패해도 던지지 않고 FAILED 로 남긴다. */
+/**
+ * 환불 한 건의 PG 멱등 키. 첫 시도(attempts = 0)는 환불 ID 그대로이고,
+ * PG 가 확정적으로 거절한 뒤의 재시도부터는 "환불ID-r1", "환불ID-r2" … 로 바뀐다.
+ *
+ * 키를 바꾸는 조건이 중요하다.
+ * - 결과를 모르는 실패(시간 초과·5xx·처리 도중 끊김): 첫 요청이 PG 에서는 성공했을 수 있으므로 반드시 같은 키로 다시 보낸다.
+ * - PG 가 확정적으로 거절한 실패: PG 는 같은 키에 처음 응답(거절)을 그대로 되돌려 주므로, 원인을 고친 뒤에도
+ *   같은 키로는 성공할 수 없다. 이때만 retryRefund 가 attempts 를 올려 새 키를 쓴다.
+ */
+export function refundIdempotencyKey(refund: Pick<Refund, "id" | "attempts">): string {
+  return refund.attempts > 0 ? `${refund.id}-r${refund.attempts}` : refund.id;
+}
+
+/**
+ * PG 가 확정적으로 거절한 환불의 오류 문구(Refund.error) 맨 앞에 붙는 표시.
+ * 운영자 화면에는 "원인을 고친 뒤 재시도해야 하는 실패"로 보이고, retryRefund 는 이 표시가 있는 환불만 새 멱등 키로 다시 보낸다.
+ */
+export const REFUND_REJECTED_TAG = "[PG 거절]";
+
+/**
+ * PG 취소를 요청하고 결과를 Refund·Payment 에 반영한다. 실패해도 던지지 않고 FAILED 로 남긴다.
+ * PG 가 이 요청을 확정적으로 거절했을 때만 오류 문구에 REFUND_REJECTED_TAG 를 붙인다.
+ * 결과를 모르는 실패와 우리 쪽 확인에서 걸린 실패(금액 불일치 등)에는 붙이지 않는다 — 그런 환불은 같은 키로 다시 보내야 한다.
+ */
 async function executeRefund(refund: Refund, payment: Payment): Promise<Refund> {
+  let rejectedByProvider = false;
   try {
     if (!payment.paymentKey) {
       throw new PaymentProviderError({ code: "MISSING_PAYMENT_KEY", userMessage: "결제 키가 없어 PG 취소를 요청할 수 없어요.", retryable: false });
     }
-    // 멱등 키는 환불 ID 로 고정한다: 응답을 못 받은 뒤 다시 요청해도 PG 에서는 한 번만 취소된다.
-    const result = await getPaymentProviderByName(payment.provider).cancel({
-      paymentKey: payment.paymentKey,
-      amount: refund.amount,
-      reason: refund.reason,
-      idempotencyKey: refund.id,
-    });
+    let result: ProviderCancelResult;
+    try {
+      // 같은 멱등 키로는 응답을 못 받은 뒤 다시 요청해도 PG 에서 한 번만 취소된다.
+      result = await getPaymentProviderByName(payment.provider).cancel({
+        paymentKey: payment.paymentKey,
+        amount: refund.amount,
+        reason: refund.reason,
+        idempotencyKey: refundIdempotencyKey(refund),
+      });
+    } catch (e) {
+      rejectedByProvider = e instanceof PaymentProviderError && !e.retryable;
+      throw e;
+    }
     if (result.cancelledAmount !== refund.amount) {
       throw new PaymentProviderError({
         code: "CANCEL_AMOUNT_MISMATCH",
@@ -707,7 +738,12 @@ async function executeRefund(refund: Refund, payment: Payment): Promise<Refund> 
       console.error("[payments] 환불 처리 중 예기치 못한 오류", payment.orderId, e);
       error = "환불을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.";
     }
-    await prisma.refund.updateMany({ where: { id: refund.id, status: "REQUESTED" }, data: { status: "FAILED", error: error.slice(0, 500) } });
+    if (rejectedByProvider) error = `${REFUND_REJECTED_TAG} ${error}`;
+    // 같은 시도(attempts)의 결과만 기록한다 — 그사이 새 키로 다시 시도 중이면 건드리지 않는다.
+    await prisma.refund.updateMany({
+      where: { id: refund.id, status: "REQUESTED", attempts: refund.attempts },
+      data: { status: "FAILED", error: error.slice(0, 500) },
+    });
   }
   return prisma.refund.findUniqueOrThrow({ where: { id: refund.id } });
 }
@@ -745,9 +781,11 @@ async function assertRefundOperator(adminId: string): Promise<void> {
 }
 
 /**
- * 실패한 환불(또는 처리 도중 끊겨 REQUESTED 로 남은 환불)을 다시 시도한다.
- * 같은 멱등 키(환불 ID)로 요청하므로, 첫 시도가 PG 에서는 성공했던 경우에도 이중으로 취소되지 않는다.
- * 이미 끝난 환불은 그대로 돌려준다.
+ * 실패한 환불(또는 처리 도중 끊겨 REQUESTED 로 남은 환불)을 다시 시도한다. 이미 끝난 환불은 그대로 돌려준다.
+ * - PG 가 확정적으로 거절했던 환불(오류 문구가 REFUND_REJECTED_TAG 로 시작): attempts 를 1 올리고 새 멱등 키로 요청한다.
+ *   거절된 요청은 PG 에서 아무것도 취소하지 않았으므로 새 키로 보내도 이중 환불이 되지 않는다.
+ * - 결과를 모르는 실패와 끊긴 요청: attempts 를 그대로 두고 같은 멱등 키로 요청한다.
+ *   첫 시도가 PG 에서는 성공했던 경우에도 이중으로 취소되지 않는다.
  */
 export async function retryRefund(refundId: string, actor: RefundRetryActor = { type: "SYSTEM" }): Promise<Refund> {
   const id = idSchema.parse(refundId);
@@ -758,24 +796,40 @@ export async function retryRefund(refundId: string, actor: RefundRetryActor = { 
   const { payment, ...current } = refund;
   if (current.status === "DONE") return current;
 
-  const claimed = await prisma.refund.updateMany({
-    where: { id, OR: [{ status: "FAILED" }, { status: "REQUESTED", createdAt: { lt: new Date(Date.now() - REFUND_STALE_MS) } }] },
-    data: { status: "REQUESTED", error: null },
+  // 1) 확정 거절 건: 새 키로 넘어간다(동시에 들어온 재시도 중 하나만 attempts 를 올린다).
+  const rotated = await prisma.refund.updateMany({
+    where: { id, status: "FAILED", error: { startsWith: REFUND_REJECTED_TAG } },
+    data: { status: "REQUESTED", error: null, attempts: { increment: 1 } },
   });
-  if (claimed.count === 0) {
-    const latest = await prisma.refund.findUniqueOrThrow({ where: { id } });
-    if (latest.status === "DONE") return latest;
-    throw err.conflict("이미 처리 중인 환불이에요. 잠시 후 다시 확인해 주세요.");
-  }
+  // 2) 그 밖의 재시도 대상(결과를 모르는 실패, 처리 도중 끊긴 요청): 같은 키로 다시 보낸다.
+  const claimed =
+    rotated.count === 1
+      ? rotated
+      : await prisma.refund.updateMany({
+          where: { id, OR: [{ status: "FAILED" }, { status: "REQUESTED", createdAt: { lt: new Date(Date.now() - REFUND_STALE_MS) } }] },
+          data: { status: "REQUESTED", error: null },
+        });
+  // 점유한 뒤의 최신 행(attempts 포함)으로 멱등 키를 정한다.
+  const latest = await prisma.refund.findUniqueOrThrow({ where: { id } });
+  if (latest.status === "DONE") return latest;
+  if (claimed.count === 0) throw err.conflict("이미 처리 중인 환불이에요. 잠시 후 다시 확인해 주세요.");
 
-  const result = await executeRefund({ ...current, status: "REQUESTED", error: null }, payment);
+  const result = await executeRefund(latest, payment);
   await audit({
     actorId: actor.type === "ADMIN" ? actor.adminId : null,
     actorType: actor.type,
     action: "payment.refund_retry",
     targetType: "Refund",
     targetId: id,
-    meta: { bookingId: result.bookingId, paymentId: result.paymentId, orderId: payment.orderId, amount: result.amount, status: result.status },
+    meta: {
+      bookingId: result.bookingId,
+      paymentId: result.paymentId,
+      orderId: payment.orderId,
+      amount: result.amount,
+      status: result.status,
+      attempts: result.attempts,
+      newKey: rotated.count === 1,
+    },
   });
   return result;
 }
@@ -839,4 +893,17 @@ export async function getPaymentForBooking(bookingId: string): Promise<PaymentWi
     payments[0] ??
     null
   );
+}
+
+/**
+ * 예약의 환불 내역 전체(요청한 순서). 한 예약에 환불이 여러 번 있을 수 있다(부분 환불, 재판매 연동 추가 환불 등).
+ * 권한(예약의 주인·사업장) 확인은 예약을 조회하는 호출자가 한다.
+ * status: REQUESTED = 처리 중, DONE = 완료(processedAt = 완료 시각), FAILED = 실패(운영자 재시도 대상).
+ * error 는 운영자용 문구이므로 고객 화면에는 내보내지 않는다.
+ */
+export async function getRefundsForBooking(bookingId: string): Promise<Refund[]> {
+  return prisma.refund.findMany({
+    where: { bookingId: idSchema.parse(bookingId) },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+  });
 }

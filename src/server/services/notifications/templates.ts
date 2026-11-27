@@ -1,5 +1,6 @@
 import "server-only";
 import { z } from "zod";
+import { BOOKING_SAFETY_TIPS } from "@/content/help/safety";
 import type { MessageChannel } from "@/generated/prisma/client";
 import { env } from "@/lib/env";
 import { fmtDateTime } from "@/lib/time";
@@ -139,6 +140,8 @@ export const DEFAULT_TEMPLATES: Record<SellerTemplateKey, DefaultTemplate> = {
       "인원: #{인원}",
       "예약번호: #{예약번호}",
       "",
+      // 오프라인 모임 안전 수칙 한 줄(도움말의 문구를 그대로 쓴다)
+      ...(BOOKING_SAFETY_TIPS[0] ? [BOOKING_SAFETY_TIPS[0]] : []),
       "예약 확인·취소: #{링크}",
     ].join("\n"),
   },
@@ -153,15 +156,22 @@ export const DEFAULT_TEMPLATES: Record<SellerTemplateKey, DefaultTemplate> = {
       "일시: #{일시}",
       "장소: #{장소}",
       "",
-      "못 오시게 되면 미리 취소해 주세요. 기다리는 분께 자리가 돌아가요.",
-      "#{링크}",
+      "못 오시게 되면 미리 취소해 주세요. 다른 분이 자리를 이어받을 수 있어요.",
+      "참석 확정·취소: #{링크}",
     ].join("\n"),
   },
   REMINDER_HOURS_BEFORE: {
     channel: "SMS",
     isEnabled: true,
     offsetMinutes: 180,
-    body: ["[#{상호}] #{고객명}님, 곧 만나요.", "#{상품명} · #{일시}", "장소: #{장소}", "예약 확인: #{링크}"].join("\n"),
+    body: [
+      "[#{상호}] #{고객명}님, 곧 만나요.",
+      "#{상품명} · #{일시}",
+      "장소: #{장소}",
+      "",
+      "못 오시게 되면 미리 취소해 주세요. 다른 분이 자리를 이어받을 수 있어요.",
+      "참석 확정·취소: #{링크}",
+    ].join("\n"),
   },
   REVIEW_REQUEST: {
     channel: "SMS",

@@ -3,16 +3,20 @@ import type { Prisma } from "@/generated/prisma/client";
 import { newBookingCode, newToken } from "@/lib/ids";
 import { prisma } from "@/server/db";
 import {
+  PaymentProviderError,
+  REFUND_REJECTED_TAG,
   confirmPayment,
   createPaymentOrder,
   getPaymentByOrderId,
   getPaymentClientConfig,
   getPaymentForBooking,
+  getRefundsForBooking,
   listFailedRefunds,
   listPaymentsNeedingReconcile,
   markPaymentAbandoned,
   newMockPaymentKey,
   reconcilePayment,
+  refundIdempotencyKey,
   refundPayment,
   retryRefund,
 } from "@/server/services/payments";
@@ -356,8 +360,127 @@ describe("환불 — 테스트 결제", () => {
 
     await prisma.refund.update({ where: { id: stuck.id }, data: { createdAt: new Date(Date.now() - 20 * 60_000) } });
     expect((await listFailedRefunds()).map((r) => r.id)).toEqual([stuck.id]);
-    expect(await retryRefund(stuck.id)).toMatchObject({ status: "DONE", providerRef: `mock_cancel_${stuck.id}` });
+    // 결과를 모르는 요청이었으므로 같은 멱등 키(환불 ID)로 다시 보내고, 시도 횟수는 올리지 않는다.
+    expect(await retryRefund(stuck.id)).toMatchObject({ status: "DONE", providerRef: `mock_cancel_${stuck.id}`, attempts: 0 });
     expect(await findPayment(payment.id)).toMatchObject({ status: "CANCELLED", cancelledAmount: 30_000 });
+  });
+
+  it("PG 가 확정적으로 거절한 환불은 재시도할 때 시도 횟수를 올리고 새 멱등 키로 요청한다", async () => {
+    const { booking, payment } = await createPaidBooking(30_000);
+    const keys: string[] = [];
+    const reject = () => new PaymentProviderError({ code: "INVALID_REFUND_ACCOUNT_INFO", userMessage: "환불 계좌를 확인해 주세요.", retryable: false });
+    const cancelSpy = vi.spyOn(mockPaymentProvider, "cancel");
+    cancelSpy.mockImplementation(async ({ idempotencyKey }) => {
+      keys.push(idempotencyKey);
+      throw reject();
+    });
+
+    const failed = await refundPayment({ bookingId: booking.id, amount: 30_000, reason: "고객 취소", requestedBy: "CUSTOMER" });
+    expect(failed).toMatchObject({ status: "FAILED", attempts: 0, providerRef: null, processedAt: null });
+    // 확정 거절은 오류 문구 앞에 표시가 붙는다(다음 재시도에 새 키가 필요하다는 뜻).
+    expect(failed?.error).toBe(`${REFUND_REJECTED_TAG} [INVALID_REFUND_ACCOUNT_INFO] 환불 계좌를 확인해 주세요.`);
+    expect(keys).toEqual([failed!.id]);
+    expect(refundIdempotencyKey(failed!)).toBe(failed!.id);
+
+    // 다시 거절돼도 시도마다 키가 달라진다.
+    const again = await retryRefund(failed!.id);
+    expect(again).toMatchObject({ status: "FAILED", attempts: 1, processedAt: null });
+    expect(again.error?.startsWith(REFUND_REJECTED_TAG)).toBe(true);
+    expect(refundIdempotencyKey(again)).toBe(`${failed!.id}-r1`);
+    expect(keys).toEqual([failed!.id, `${failed!.id}-r1`]);
+
+    // 원인이 풀린 뒤의 재시도: 세 번째 키로 성공한다.
+    cancelSpy.mockRestore();
+    const realCancel = vi.spyOn(mockPaymentProvider, "cancel");
+    const done = await retryRefund(failed!.id);
+    expect(done).toMatchObject({ status: "DONE", attempts: 2, error: null, providerRef: `mock_cancel_${failed!.id}-r2` });
+    expect(realCancel).toHaveBeenCalledTimes(1);
+    expect(realCancel.mock.calls[0]![0]).toMatchObject({ idempotencyKey: `${failed!.id}-r2`, amount: 30_000 });
+    expect(await findPayment(payment.id)).toMatchObject({ status: "CANCELLED", cancelledAmount: 30_000 });
+
+    const log = await prisma.auditLog.findFirst({ where: { action: "payment.refund_retry", targetId: failed!.id }, orderBy: { createdAt: "desc" } });
+    expect(log?.meta).toMatchObject({ status: "DONE", attempts: 2, newKey: true });
+  });
+
+  it("결과를 모르는 실패와 우리 쪽 확인에서 걸린 실패는 재시도해도 같은 멱등 키를 쓴다(이중 환불 방지)", async () => {
+    const { booking, payment } = await createPaidBooking(30_000);
+    const keys: string[] = [];
+    const cancelSpy = vi.spyOn(mockPaymentProvider, "cancel");
+
+    // 1) 시간 초과: PG 에서는 처리됐을 수도 있다.
+    cancelSpy.mockImplementationOnce(async ({ idempotencyKey }) => {
+      keys.push(idempotencyKey);
+      throw new PaymentProviderError({ code: "TIMEOUT", userMessage: "잠시 후 다시 시도해 주세요.", retryable: true });
+    });
+    const unknown = await refundPayment({ bookingId: booking.id, amount: 10_000, reason: "부분 환불", requestedBy: "ADMIN" });
+    expect(unknown).toMatchObject({ status: "FAILED", attempts: 0, processedAt: null });
+    expect(unknown?.error).not.toContain(REFUND_REJECTED_TAG);
+
+    // 2) 요청과 다른 금액이 취소됐다는 응답: PG 에서는 무언가 취소됐으므로 새 키로 다시 보내면 안 된다.
+    cancelSpy.mockImplementationOnce(async ({ idempotencyKey }) => {
+      keys.push(idempotencyKey);
+      return { cancelledAmount: 4_000, providerRef: "odd", raw: {} };
+    });
+    const mismatch = await retryRefund(unknown!.id);
+    expect(mismatch).toMatchObject({ status: "FAILED", attempts: 0, processedAt: null });
+    expect(mismatch.error).toContain("CANCEL_AMOUNT_MISMATCH");
+    expect(mismatch.error).not.toContain(REFUND_REJECTED_TAG);
+
+    cancelSpy.mockImplementation(async ({ idempotencyKey, amount }) => {
+      keys.push(idempotencyKey);
+      return { cancelledAmount: amount, providerRef: `mock_cancel_${idempotencyKey}`, raw: {} };
+    });
+    const done = await retryRefund(unknown!.id);
+    expect(done).toMatchObject({ status: "DONE", attempts: 0, providerRef: `mock_cancel_${unknown!.id}` });
+    expect(keys).toEqual([unknown!.id, unknown!.id, unknown!.id]);
+    expect(await findPayment(payment.id)).toMatchObject({ status: "PARTIAL_CANCELLED", cancelledAmount: 10_000 });
+  });
+
+  it("확정 거절된 환불을 동시에 재시도해도 키는 한 번만 바뀌고 금액은 한 번만 빠진다", async () => {
+    const { booking, payment } = await createPaidBooking(30_000);
+    const failed = await prisma.refund.create({
+      data: {
+        paymentId: payment.id,
+        bookingId: booking.id,
+        amount: 12_000,
+        reason: "고객 취소",
+        status: "FAILED",
+        error: `${REFUND_REJECTED_TAG} [REFUND_REJECTED] 환불 거절`,
+        requestedBy: "CUSTOMER",
+        // 오래된 요청이라, 새 키를 차지하지 못한 재시도도 "끊긴 요청 이어받기"로 같은 키를 쓴다.
+        createdAt: new Date(Date.now() - 30 * 60_000),
+      },
+    });
+    const cancelSpy = vi.spyOn(mockPaymentProvider, "cancel");
+
+    const settled = await Promise.allSettled(Array.from({ length: 5 }, () => retryRefund(failed.id)));
+    for (const s of settled) {
+      if (s.status === "rejected") expect(s.reason).toMatchObject({ name: "AppError", code: "CONFLICT" });
+      else expect(s.value).toMatchObject({ id: failed.id, status: "DONE" });
+    }
+    expect(settled.some((s) => s.status === "fulfilled")).toBe(true);
+
+    const row = await prisma.refund.findUniqueOrThrow({ where: { id: failed.id } });
+    expect(row).toMatchObject({ status: "DONE", attempts: 1, error: null });
+    // PG 로 나간 요청은 모두 같은 새 키였다.
+    expect(new Set(cancelSpy.mock.calls.map((c) => c[0].idempotencyKey))).toEqual(new Set([`${failed.id}-r1`]));
+    expect(await findPayment(payment.id)).toMatchObject({ status: "PARTIAL_CANCELLED", cancelledAmount: 12_000 });
+  });
+
+  it("getRefundsForBooking 은 그 예약의 환불만 요청한 순서로 돌려준다", async () => {
+    const { booking } = await createPaidBooking(30_000);
+    const { booking: other } = await createPaidBooking(20_000);
+    const first = await refundPayment({ bookingId: booking.id, amount: 5_000, reason: "부분 환불", requestedBy: "SELLER" });
+    const second = await refundPayment({ bookingId: booking.id, amount: 7_000, reason: "재판매 연동 환불", requestedBy: "SYSTEM" });
+    await refundPayment({ bookingId: other.id, amount: 20_000, reason: "회차 취소", requestedBy: "SELLER" });
+
+    const refunds = await getRefundsForBooking(booking.id);
+    expect(refunds.map((r) => r.id)).toEqual([first!.id, second!.id]);
+    expect(refunds.map((r) => [r.amount, r.status, r.attempts])).toEqual([
+      [5_000, "DONE", 0],
+      [7_000, "DONE", 0],
+    ]);
+    expect(await getRefundsForBooking("no-such-booking")).toEqual([]);
   });
 });
 
@@ -904,6 +1027,27 @@ describe("토스페이먼츠", () => {
       expect(await findPayment(payment.id)).toMatchObject({ status: "CANCELLED", cancelledAmount: 30_000 });
       expect(calls.filter((c) => isCancel(c, "tpk_refund")).map((c) => c.headers["Idempotency-Key"])).toEqual([failed!.id, failed!.id]);
       expect(await payments.listFailedRefunds()).toHaveLength(0);
+    });
+
+    it("PG 가 확정적으로 거절한 환불은 재시도 때 새 멱등 키(환불ID-r1)로 요청한다", async () => {
+      const { booking, payment } = await createTossPaid("tpk_reject");
+      let cancelResponse = () => json(400, { code: "INVALID_REFUND_ACCOUNT_INFO", message: "환불 계좌번호와 예금주명이 일치하지 않습니다." });
+      const calls = stubFetch((call) => (isCancel(call, "tpk_reject") ? cancelResponse() : json(500, {})));
+
+      const failed = await payments.refundPayment({ bookingId: booking.id, amount: 30_000, reason: "회차 취소", requestedBy: "SELLER" });
+      expect(failed).toMatchObject({ status: "FAILED", attempts: 0, providerRef: null, processedAt: null });
+      expect(failed?.error?.startsWith(payments.REFUND_REJECTED_TAG)).toBe(true);
+      expect(failed?.error).toContain("INVALID_REFUND_ACCOUNT_INFO");
+      expect(await findPayment(payment.id)).toMatchObject({ status: "PAID", cancelledAmount: 0 });
+
+      // 같은 키로 다시 보내면 PG 는 처음의 거절 응답을 되돌려 줄 뿐이므로 새 키로 보낸다.
+      cancelResponse = () =>
+        json(200, tossPayment(payment.orderId, { paymentKey: "tpk_reject", status: "CANCELED", balanceAmount: 0, cancels: [{ cancelAmount: 30_000, transactionKey: "txn_retry_1", cancelStatus: "DONE" }] }));
+      const retried = await payments.retryRefund(failed!.id);
+
+      expect(retried).toMatchObject({ id: failed!.id, status: "DONE", attempts: 1, providerRef: "txn_retry_1", error: null });
+      expect(calls.filter((c) => isCancel(c, "tpk_reject")).map((c) => c.headers["Idempotency-Key"])).toEqual([failed!.id, `${failed!.id}-r1`]);
+      expect(await findPayment(payment.id)).toMatchObject({ status: "CANCELLED", cancelledAmount: 30_000 });
     });
 
     it("PG 가 요청과 다른 금액을 취소했다고 답하면 완료로 처리하지 않는다", async () => {

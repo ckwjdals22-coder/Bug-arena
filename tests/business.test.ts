@@ -6,10 +6,12 @@ import { AppError } from "@/server/errors";
 import { decrypt } from "@/server/security/crypto";
 import {
   MAX_OWNED_BUSINESSES,
+  SLUG_HOLD_DAYS,
   addMember,
   applyForBusiness,
   changeMemberRole,
   changeSlug,
+  findSlugRedirect,
   getBankAccountMasked,
   getBusinessForMember,
   getPublicBusiness,
@@ -302,6 +304,80 @@ describe("updateBusinessProfile", () => {
     expect(resent).toMatchObject({ coverImage: "/demo/cover-1.jpg", tagline: "새 소개" });
     expect((await failure(updateBusinessProfile(owner.id, business.id, { logoImage: "/demo/cover-1.jpg" }))).fieldErrors?.logoImage).toMatch(/남는자리에 올린 파일만/);
   });
+
+  it("판매자 신원정보(상호·대표자·연락처·주소)는 바꿀 수는 있어도 비울 수는 없다", async () => {
+    const { business, owner } = await createBusiness({
+      phone: "0421234567",
+      address: "대전 서구 둔산로 123",
+      representativeName: "김대표",
+      businessRegNo: regNo("123456789"),
+    });
+    expect(business.status).toBe("APPROVED");
+
+    const blanks: [Record<string, string | null>, string][] = [
+      [{ name: "" }, "name"],
+      [{ phone: "" }, "phone"],
+      [{ phone: null }, "phone"],
+      [{ address: "  " }, "address"],
+      [{ address: null }, "address"],
+      [{ representativeName: "" }, "representativeName"],
+      [{ representativeName: null }, "representativeName"],
+    ];
+    for (const [patch, field] of blanks) {
+      const error = await failure(updateBusinessProfile(owner.id, business.id, patch as Parameters<typeof updateBusinessProfile>[2]));
+      expect(error.code, field).toBe("VALIDATION");
+      expect(error.fieldErrors?.[field], field).toBeTruthy();
+    }
+    // 사업자등록번호는 프로필 수정으로 바꾸거나 지울 수 없다(넘겨도 무시된다).
+    await updateBusinessProfile(owner.id, business.id, { businessRegNo: "", tagline: "소개" } as Parameters<typeof updateBusinessProfile>[2]);
+    expect(await prisma.business.findUniqueOrThrow({ where: { id: business.id } })).toMatchObject({
+      name: business.name,
+      phone: "0421234567",
+      address: "대전 서구 둔산로 123",
+      representativeName: "김대표",
+      businessRegNo: regNo("123456789"),
+      tagline: "소개",
+    });
+
+    const updated = await updateBusinessProfile(owner.id, business.id, { representativeName: " 이대표 ", phone: "042-987-6543", address: "대전 유성구 대학로 99" });
+    expect(updated).toMatchObject({ representativeName: "이대표", phone: "0429876543", address: "대전 유성구 대학로 99" });
+    expect((await getPublicBusiness(business.slug))?.legal).toMatchObject({ representativeName: "이대표", phone: "0429876543" });
+  });
+
+  it("대표자 이름과 통신판매업 신고번호는 대표만 바꿀 수 있고, 승인된 뒤에는 신고번호를 지울 수 없다", async () => {
+    const { business, owner } = await createBusiness({ status: "PENDING", representativeName: "김대표" });
+    const { user: manager } = await addMemberRow(business.id, "MANAGER");
+
+    for (const patch of [{ representativeName: "박매니저" }, { mailOrderRegNo: "2026-대전서구-0123" }]) {
+      const error = await failure(updateBusinessProfile(manager.id, business.id, patch));
+      expect(error.code).toBe("FORBIDDEN");
+      expect(error.message).toMatch(/대표만/);
+    }
+    expect((await failure(updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: "신고 예정" }))).fieldErrors?.mailOrderRegNo).toMatch(/통신판매업 신고번호/);
+
+    // 심사 전에는 넣었다가 지울 수 있다.
+    expect(await updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: " 제2026-대전서구-0123호 " })).toMatchObject({ mailOrderRegNo: "제2026-대전서구-0123호" });
+    expect(await updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: "" })).toMatchObject({ mailOrderRegNo: null });
+
+    await updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: "2026-대전서구-0123" });
+    for (const status of ["APPROVED", "SUSPENDED"] as const) {
+      await prisma.business.update({ where: { id: business.id }, data: { status } });
+      for (const cleared of [null, ""]) {
+        const error = await failure(updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: cleared, tagline: "함께 보낸 다른 항목" }));
+        expect(error.code, status).toBe("VALIDATION");
+        expect(error.fieldErrors?.mailOrderRegNo, status).toMatch(/지울 수 없어요/);
+      }
+    }
+    // 거절된 요청과 함께 온 다른 항목도 반영되지 않는다.
+    expect(await prisma.business.findUniqueOrThrow({ where: { id: business.id } })).toMatchObject({ mailOrderRegNo: "2026-대전서구-0123", tagline: null });
+
+    // 새 번호로 바꾸는 것은 승인 뒤에도 된다. 번호가 없던 승인 사업장은 빈 값을 다시 보내도 된다.
+    await prisma.business.update({ where: { id: business.id }, data: { status: "APPROVED" } });
+    expect(await updateBusinessProfile(owner.id, business.id, { mailOrderRegNo: "2027-대전유성-0045" })).toMatchObject({ mailOrderRegNo: "2027-대전유성-0045" });
+    expect((await getPublicBusiness(business.slug))?.legal.mailOrderRegNo).toBe("2027-대전유성-0045");
+    const { business: noNumber, owner: noNumberOwner } = await createBusiness();
+    expect(await updateBusinessProfile(noNumberOwner.id, noNumber.id, { mailOrderRegNo: null, tagline: "소개" })).toMatchObject({ mailOrderRegNo: null, tagline: "소개" });
+  });
 });
 
 describe("changeSlug · updateBusinessSettings", () => {
@@ -333,6 +409,79 @@ describe("changeSlug · updateBusinessSettings", () => {
     await changeSlug(owner.id, business.id, "dunsan-social-2");
     await changeSlug(owner.id, business.id, "dunsan-social-3");
     expect((await failure(changeSlug(owner.id, business.id, "dunsan-social-4"))).code).toBe("RATE_LIMITED");
+  });
+
+  it("바꾸기 전 주소는 30일 동안 다른 사업장이 쓸 수 없고, 원래 사업장은 되돌아갈 수 있다", async () => {
+    const { business, owner } = await createBusiness({ slug: "old-home" });
+    const { business: rival, owner: rivalOwner } = await createBusiness({ slug: "rival-shop" });
+
+    await changeSlug(owner.id, business.id, "new-home");
+    const hold = await prisma.rateLimit.findFirstOrThrow({ where: { key: `slug-hold:old-home:${business.id}` } });
+    const days = (hold.windowStart.getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(SLUG_HOLD_DAYS - 0.01);
+    expect(days).toBeLessThanOrEqual(SLUG_HOLD_DAYS);
+
+    // 다른 사업장은 방금 비워진 주소를 가져갈 수 없다(변경 횟수도 쓰지 않는다).
+    const held = await failure(changeSlug(rivalOwner.id, rival.id, "old-home"));
+    expect(held.code).toBe("CONFLICT");
+    expect(held.fieldErrors?.slug).toMatch(/얼마 전까지 다른 사업장이 쓰던 주소/);
+    expect((await prisma.business.findUniqueOrThrow({ where: { id: rival.id } })).slug).toBe("rival-shop");
+    expect(await prisma.rateLimit.count({ where: { key: `business-slug:${rival.id}` } })).toBe(0);
+    // 이름이 비슷한 다른 주소는 막지 않는다.
+    await expect(changeSlug(rivalOwner.id, rival.id, "old-home-2")).resolves.toEqual({ slug: "old-home-2" });
+
+    // 예전 주소로 들어온 방문은 새 주소로 보낼 수 있다.
+    expect(await findSlugRedirect("old-home")).toBe("new-home");
+    expect(await findSlugRedirect("new-home")).toBeNull();
+    expect(await findSlugRedirect("never-used")).toBeNull();
+    expect(await findSlugRedirect("Not A Slug")).toBeNull();
+    await prisma.business.update({ where: { id: business.id }, data: { status: "SUSPENDED" } });
+    expect(await findSlugRedirect("old-home")).toBeNull();
+    await prisma.business.update({ where: { id: business.id }, data: { status: "APPROVED" } });
+
+    // 원래 사업장은 예전 주소로 되돌아갈 수 있고, 그러면 방금 떠난 주소가 대신 보류된다.
+    await expect(changeSlug(owner.id, business.id, "old-home")).resolves.toEqual({ slug: "old-home" });
+    expect(await prisma.rateLimit.count({ where: { key: `slug-hold:old-home:${business.id}` } })).toBe(0);
+    expect(await prisma.rateLimit.count({ where: { key: `slug-hold:new-home:${business.id}` } })).toBe(1);
+    expect(await findSlugRedirect("new-home")).toBe("old-home");
+
+    // 보류 기간이 지나면 누구나 쓸 수 있다.
+    await prisma.rateLimit.updateMany({ where: { key: `slug-hold:new-home:${business.id}` }, data: { windowStart: new Date(Date.now() - 1000) } });
+    expect(await findSlugRedirect("new-home")).toBeNull();
+    await expect(changeSlug(rivalOwner.id, rival.id, "new-home")).resolves.toEqual({ slug: "new-home" });
+  });
+
+  it("같은 주소를 동시에 차지하려는 변경은 하나만 성공한다", async () => {
+    const shops = await Promise.all(Array.from({ length: 5 }, () => createBusiness()));
+    const settled = await Promise.allSettled(shops.map(({ business, owner }) => changeSlug(owner.id, business.id, "hot-spot")));
+
+    expect(settled.filter((s) => s.status === "fulfilled")).toHaveLength(1);
+    for (const s of settled) {
+      if (s.status === "rejected") expect(s.reason).toMatchObject({ code: "CONFLICT" });
+    }
+    const slugs = (await prisma.business.findMany({ where: { id: { in: shops.map((s) => s.business.id) } }, select: { slug: true } })).map((b) => b.slug);
+    expect(slugs.filter((slug) => slug === "hot-spot")).toHaveLength(1);
+    // 성공한 한 곳의 예전 주소만 보류된다.
+    expect(await prisma.rateLimit.count({ where: { key: { startsWith: "slug-hold:" } } })).toBe(1);
+  });
+
+  it("주소를 비우는 변경과 그 주소를 가져가려는 변경이 겹쳐도 보류가 지켜진다", async () => {
+    for (let round = 0; round < 5; round++) {
+      const from = `leaving-${round}`;
+      const { business, owner } = await createBusiness({ slug: from });
+      const { business: taker, owner: takerOwner } = await createBusiness();
+      const [leave, take] = await Promise.allSettled([
+        changeSlug(owner.id, business.id, `moved-${round}`),
+        changeSlug(takerOwner.id, taker.id, from),
+      ]);
+
+      expect(leave.status).toBe("fulfilled");
+      // 가져가려던 쪽은 "아직 쓰이는 주소" 또는 "얼마 전까지 쓰이던 주소"로 거절된다.
+      expect(take.status).toBe("rejected");
+      expect((take as PromiseRejectedResult).reason).toMatchObject({ code: "CONFLICT" });
+      expect((await prisma.business.findUniqueOrThrow({ where: { id: taker.id } })).slug).toBe(taker.slug);
+      expect(await findSlugRedirect(from)).toBe(`moved-${round}`);
+    }
   });
 
   it("운영 설정은 매니저 이상이 범위 안에서만 바꿀 수 있다", async () => {

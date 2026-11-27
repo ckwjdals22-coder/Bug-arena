@@ -1,9 +1,13 @@
 import "server-only";
+import { HELP_FACTS } from "@/content/help/faq";
+import { BOOKING_SAFETY_TIPS } from "@/content/help/safety";
 import type { Prisma } from "@/generated/prisma/client";
+import { computeRefundRate, type CancellationTier } from "@/lib/domain";
 import { env } from "@/lib/env";
 import { formatKRW } from "@/lib/money";
-import { HOUR, MINUTE, fmtDateTime, fmtDayLabel, fmtTime, isNightKst, kstDayDiff } from "@/lib/time";
+import { HOUR, MINUTE, fmtDate, fmtDateTime, fmtDayLabel, fmtTime, isNightKst, kstDayDiff } from "@/lib/time";
 import { prisma } from "@/server/db";
+import { getSettings } from "@/server/settings";
 import { getNotificationPrefs, isExternalAllowed, notify, notifyMany, type NotificationType } from "./index";
 import { enqueueMessageDetailed, nextMorningKst } from "./outbox";
 import {
@@ -190,11 +194,72 @@ async function notifyCustomer(booking: LoadedBooking, message: CustomerMessage):
 
 const smsLines = (...lines: (string | null | false | undefined)[]) => lines.filter(Boolean).join("\n");
 
+/** 처음 만나는 사람들과의 자리이므로 확정 안내에 한 줄 넣는 안전 수칙(도움말의 문구를 그대로 쓴다) */
+const SAFETY_LINE = BOOKING_SAFETY_TIPS[0] ?? null;
+
+// ── 환불 안내 문구 ────────────────────────────────────
+
+/**
+ * 예약 시점의 정책 스냅샷에서 환불 구간을 꺼낸다(구간 배열 그대로이거나 { tiers: [...] } 형태).
+ * 읽을 수 없으면 null — 기본 정책으로 추측한 환불율을 고객에게 보여 주지 않기 위함이다.
+ */
+function snapshotTiers(snapshot: unknown): CancellationTier[] | null {
+  const nested = typeof snapshot === "object" && snapshot !== null ? (snapshot as { tiers?: unknown }).tiers : undefined;
+  const raw: unknown = Array.isArray(snapshot) ? snapshot : nested;
+  if (!Array.isArray(raw)) return null;
+  const tiers: CancellationTier[] = [];
+  for (const item of raw as unknown[]) {
+    if (typeof item !== "object" || item === null) return null;
+    const { hoursBefore, refundRate } = item as { hoursBefore?: unknown; refundRate?: unknown };
+    if (typeof hoursBefore !== "number" || typeof refundRate !== "number" || hoursBefore < 0 || refundRate < 0 || refundRate > 100) return null;
+    tiers.push({ hoursBefore, refundRate: Math.round(refundRate) });
+  }
+  return tiers.length > 0 ? tiers : null;
+}
+
+/**
+ * "지금 취소하면 얼마나 환불되는지" 한 줄. 예약 엔진과 같은 계산(computeRefundRate)을 쓴다.
+ * 온라인으로 결제한 금액이 없거나 정책을 읽을 수 없으면 null.
+ */
+async function currentRefundLine(booking: LoadedBooking, now: Date): Promise<string | null> {
+  if (booking.paymentMethod !== "ONLINE" || booking.paymentState === "UNPAID" || booking.payNowAmount <= 0) return null;
+  const tiers = snapshotTiers(booking.policySnapshot);
+  if (!tiers) return null;
+  const settings = await getSettings();
+  const rate = computeRefundRate({
+    tiers,
+    startAt: booking.slot.startAt,
+    bookedAt: booking.createdAt,
+    now,
+    graceMinutes: settings.cancelGraceMinutes,
+    graceMinLeadMinutes: settings.cancelGraceMinLeadMinutes,
+  });
+  if (rate >= 100) return "지금 취소하면 결제 금액을 전액 돌려드려요.";
+  const resale =
+    booking.resaleRefundRate !== null && booking.resaleRefundRate > rate
+      ? ` 자리가 다시 예약되면 ${booking.resaleRefundRate}%까지 돌려드려요.`
+      : "";
+  return rate > 0 ? `지금 취소하면 결제 금액의 ${rate}%를 돌려드려요.${resale}` : `지금은 취소해도 환불되지 않아요.${resale}`;
+}
+
+/**
+ * 재판매 연동 환불 대기 중인 취소 건의 안내 한 줄(docs/02-architecture.md 6.4).
+ * 실제 추가 환불은 회차 시작 시각에 다시 팔린 좌석 수로 정해지므로 "최대" 금액으로 알린다.
+ */
+function resalePendingLine(booking: LoadedBooking): string | null {
+  const { resalePendingQty, resaleRefundRate, refundRate, payNowAmount, quantity } = booking;
+  if (resalePendingQty <= 0 || resaleRefundRate === null || refundRate === null || resaleRefundRate <= refundRate) return null;
+  const extra = Math.floor((payNowAmount * (resaleRefundRate - refundRate) * resalePendingQty) / (100 * quantity));
+  return extra > 0 ? `자리가 다시 예약되면 회차 시작 후 최대 ${formatKRW(extra)}을 더 돌려드려요.` : null;
+}
+
 // ── 예약 이벤트 ───────────────────────────────────────
 
 /**
  * 예약 확정. approved 가 true 면 승인제 예약을 사업자가 승인한 경우다
  * (고객 문구가 달라지고, 방금 승인한 사업자에게는 새 예약 알림을 보내지 않는다).
+ * 확정 안내에는 판매자 이름·일시·장소와 오프라인 모임 안전 수칙 한 줄이 들어간다.
+ * 정확한 주소는 확정된 고객에게만 보여 주는 정보이므로(6.10) 이 안내에서 처음 알려 준다.
  */
 export async function onBookingConfirmed(bookingId: string, options: { approved?: boolean } = {}): Promise<void> {
   await safely("onBookingConfirmed", bookingId, undefined, async () => {
@@ -202,11 +267,12 @@ export async function onBookingConfirmed(bookingId: string, options: { approved?
     // 호출 사이에 상태가 바뀐 예약(곧바로 취소된 경우 등)에는 확정 알림을 보내지 않는다.
     if (!booking || (booking.status !== "CONFIRMED" && booking.status !== "COMPLETED")) return;
     const approved = options.approved === true;
+    const place = buildBookingTemplateVars(booking).장소;
 
     await notifyCustomer(booking, {
       type: approved ? "BOOKING_APPROVED" : "BOOKING_CONFIRMED",
       title: approved ? "예약이 승인됐어요" : "예약이 확정됐어요",
-      body: `${bookingLine(booking)}\n${booking.business.name}에서 만나요.`,
+      body: smsLines(bookingLine(booking), `${booking.business.name}에서 만나요.`, place ? `장소: ${place}` : null, SAFETY_LINE),
       dedupeKey: `BOOKING_CONFIRMED:${booking.id}`,
       sms: {
         sellerTemplate: "BOOKING_CONFIRMED",
@@ -216,7 +282,9 @@ export async function onBookingConfirmed(bookingId: string, options: { approved?
             "[남는자리] 예약이 확정됐어요.",
             `${booking.business.name} · ${booking.product.title}`,
             `${fmtDateTime(booking.slot.startAt)} · ${booking.quantity}명`,
+            place ? `장소: ${place}` : null,
             `예약번호 ${booking.code}`,
+            SAFETY_LINE,
             bookingPublicUrl(booking),
           ),
         },
@@ -314,6 +382,50 @@ export async function onBookingExpired(bookingId: string): Promise<void> {
   });
 }
 
+const cancelReasonLine = (reason: string | null | undefined) => (reason?.trim() ? `사유: ${reason.trim().slice(0, 120)}` : null);
+
+interface ForcedCancelMessage {
+  type: NotificationType;
+  title: string;
+  /** 남는자리 기본 문자의 첫 줄 */
+  smsHead: string;
+  /** "사유: …" 한 줄(없으면 null) */
+  reason: string | null;
+}
+
+/**
+ * 고객이 아닌 쪽(사업자·운영자·시스템)의 취소를 예약 고객에게 알린다. 결제한 금액이 있으면 전액 환불 안내를 붙인다.
+ * 예약 취소(onBookingCancelled)와 회차 취소(onSlotCancelled)가 같은 중복 방지 키를 쓰므로,
+ * 두 이벤트가 모두 불려도 고객은 먼저 온 안내 하나만 받는다.
+ */
+async function notifyForcedCancel(booking: LoadedBooking, message: ForcedCancelMessage): Promise<boolean> {
+  const by = booking.cancelledBy ?? "SYSTEM";
+  const refund = fullRefundLine(booking);
+  return notifyCustomer(booking, {
+    type: message.type,
+    title: message.title,
+    // 운영자가 남긴 사유는 내부 메모일 수 있어 고객에게는 보여 주지 않는다.
+    body: smsLines(bookingLine(booking), by === "ADMIN" ? null : message.reason, refund),
+    data: { cancelledBy: by, refundAmount: booking.refundAmount },
+    dedupeKey: `BOOKING_CANCELLED:${booking.id}`,
+    sms: {
+      // 고객이 헛걸음하지 않도록 수신 설정과 무관하게 보낸다.
+      essential: true,
+      sellerTemplate: by === "SELLER" ? "BOOKING_CANCELLED_BY_SELLER" : undefined,
+      platform: {
+        templateKey: "PLATFORM_BOOKING_CANCELLED",
+        text: smsLines(
+          message.smsHead,
+          `${booking.business.name} · ${booking.product.title}`,
+          `${fmtDateTime(booking.slot.startAt)} · 예약번호 ${booking.code}`,
+          refund,
+          bookingPublicUrl(booking),
+        ),
+      },
+    },
+  });
+}
+
 /** 취소 알림. 누가 취소했는지(booking.cancelledBy)에 따라 문구와 받는 사람이 달라진다. */
 export async function onBookingCancelled(bookingId: string): Promise<void> {
   await safely("onBookingCancelled", bookingId, undefined, async () => {
@@ -333,7 +445,7 @@ export async function onBookingCancelled(bookingId: string): Promise<void> {
       await notifyCustomer(booking, {
         type: "BOOKING_CANCELLED",
         title: "예약을 취소했어요",
-        body: smsLines(bookingLine(booking), refund),
+        body: smsLines(bookingLine(booking), refund, resalePendingLine(booking)),
         data: { cancelledBy: by, refundAmount: booking.refundAmount },
         dedupeKey: `BOOKING_CANCELLED:${booking.id}`,
       });
@@ -348,31 +460,13 @@ export async function onBookingCancelled(bookingId: string): Promise<void> {
       return;
     }
 
-    const refund = fullRefundLine(booking);
-    const reason = booking.cancelReason?.trim() ? `사유: ${booking.cancelReason.trim().slice(0, 120)}` : null;
+    const reason = cancelReasonLine(booking.cancelReason);
     const bySeller = by === "SELLER";
-    await notifyCustomer(booking, {
+    await notifyForcedCancel(booking, {
       type: "BOOKING_CANCELLED",
       title: bySeller ? "사업장 사정으로 예약이 취소됐어요" : "예약이 취소됐어요",
-      // 운영자가 남긴 사유는 내부 메모일 수 있어 고객에게는 보여 주지 않는다.
-      body: smsLines(bookingLine(booking), by === "ADMIN" ? null : reason, refund),
-      data: { cancelledBy: by, refundAmount: booking.refundAmount },
-      dedupeKey: `BOOKING_CANCELLED:${booking.id}`,
-      sms: {
-        // 고객이 헛걸음하지 않도록 수신 설정과 무관하게 보낸다.
-        essential: true,
-        sellerTemplate: bySeller ? "BOOKING_CANCELLED_BY_SELLER" : undefined,
-        platform: {
-          templateKey: "PLATFORM_BOOKING_CANCELLED",
-          text: smsLines(
-            bySeller ? "[남는자리] 사업장 사정으로 예약이 취소됐어요." : "[남는자리] 예약이 취소됐어요.",
-            `${booking.business.name} · ${booking.product.title}`,
-            `${fmtDateTime(booking.slot.startAt)} · 예약번호 ${booking.code}`,
-            refund,
-            bookingPublicUrl(booking),
-          ),
-        },
-      },
+      smsHead: bySeller ? "[남는자리] 사업장 사정으로 예약이 취소됐어요." : "[남는자리] 예약이 취소됐어요.",
+      reason,
     });
 
     // 사업자가 직접 취소한 건은 사업자에게 다시 알리지 않는다.
@@ -410,6 +504,243 @@ export async function onRefundDone(bookingId: string, amount: number): Promise<v
             `[남는자리] ${formatKRW(amount)} 환불이 완료됐어요.`,
             `${booking.product.title} · 예약번호 ${booking.code}`,
             "카드사에 따라 반영까지 영업일 기준 3~5일 걸릴 수 있어요.",
+          ),
+        },
+      },
+    });
+  });
+}
+
+/**
+ * 재판매 연동 환불이 확정됐을 때(회차 시작 시각의 판정에서 취소한 자리가 다시 팔린 것으로 정해진 뒤, 6.4).
+ * extraAmount 는 이번 판정으로 더 돌려주는 금액. 취소된 예약에만 알리고, 같은 누적 환불액에 대해서는 한 번만 간다
+ * (추가 환불액을 예약에 반영한 트랜잭션이 끝난 뒤에 부른다). PG 환불이 끝났을 때의 안내는 onRefundDone 이 따로 맡는다.
+ */
+export async function onResaleRefund(bookingId: string, extraAmount: number): Promise<void> {
+  await safely("onResaleRefund", bookingId, undefined, async () => {
+    if (!Number.isInteger(extraAmount) || extraAmount <= 0) return;
+    const booking = await loadBooking(bookingId);
+    if (!booking || booking.status !== "CANCELLED") return;
+    const key = `RESALE_REFUND:${booking.id}:${booking.refundAmount}`;
+    const what = `${booking.product.title} · 예약번호 ${booking.code}`;
+    const total = booking.refundAmount >= extraAmount ? `이 예약의 환불 금액은 모두 ${formatKRW(booking.refundAmount)}이에요.` : null;
+
+    await notifyCustomer(booking, {
+      type: "REFUND_DONE",
+      title: "취소한 자리가 다시 예약돼 더 돌려드려요",
+      body: smsLines(what, `${formatKRW(extraAmount)}을 결제 수단으로 더 돌려드릴게요.`, total, "환불이 끝나면 다시 알려 드려요."),
+      data: { kind: "RESALE", extraAmount, refundAmount: booking.refundAmount },
+      dedupeKey: key,
+      sms: {
+        platform: {
+          templateKey: "PLATFORM_RESALE_REFUND",
+          dedupeKey: key,
+          text: smsLines("[남는자리] 취소한 자리가 다시 예약됐어요.", what, `${formatKRW(extraAmount)}을 결제 수단으로 더 돌려드릴게요.`, total),
+        },
+      },
+    });
+  });
+}
+
+// ── 회차 이벤트 ───────────────────────────────────────
+
+/**
+ * 개최 확정(6.7): 최소 인원을 채웠거나 사업자가 직접 확정했을 때, 그 회차의 확정 예약 고객과 사업장 구성원에게 알린다.
+ * 개최가 확정된(goConfirmedAt) 시작 전 회차에만 보낸다. 최소 인원 조건이 없는 회차는 고객 화면에
+ * "모으는 중" 표시가 없었으므로 알리지 않는다. 사업자가 직접 넣은 예약(MANUAL)의 손님에게는 보내지 않는다.
+ */
+export async function onSlotGoConfirmed(slotId: string): Promise<void> {
+  await safely("onSlotGoConfirmed", slotId, undefined, async () => {
+    const slot = await prisma.slot.findUnique({
+      where: { id: slotId },
+      select: {
+        id: true,
+        status: true,
+        startAt: true,
+        goConfirmedAt: true,
+        seats: { select: { minCount: true } },
+        product: { select: { title: true } },
+        business: { select: { name: true, members: { select: { userId: true } } } },
+      },
+    });
+    if (!slot || slot.status === "CANCELLED" || !slot.goConfirmedAt || slot.startAt.getTime() <= Date.now()) return;
+    if (!slot.seats.some((seat) => seat.minCount > 0)) return;
+
+    const bookings = await prisma.booking.findMany({
+      where: { slotId: slot.id, status: "CONFIRMED", channel: { not: "MANUAL" } },
+      include: bookingInclude,
+      orderBy: { createdAt: "asc" },
+    });
+    for (const booking of bookings) {
+      const key = `SLOT_GO_CONFIRMED:${slot.id}:${booking.id}`;
+      await notifyCustomer(booking, {
+        type: "SLOT_GO_CONFIRMED",
+        title: "개최가 확정됐어요",
+        body: smsLines(bookingLine(booking), `${booking.business.name}에서 예정대로 열려요. 그날 만나요.`),
+        dedupeKey: key,
+        sms: {
+          platform: {
+            templateKey: "PLATFORM_SLOT_GO_CONFIRMED",
+            dedupeKey: key,
+            text: smsLines(
+              "[남는자리] 개최가 확정됐어요.",
+              `${booking.business.name} · ${booking.product.title}`,
+              `${fmtDateTime(booking.slot.startAt)} · ${booking.quantity}명`,
+              "예정대로 열려요. 그날 만나요.",
+              bookingPublicUrl(booking),
+            ),
+          },
+        },
+      });
+    }
+
+    await sendToMembers(slot.business.members, {
+      type: "SLOT_GO_CONFIRMED",
+      title: "개최가 확정됐어요",
+      body: `${slot.product.title} · ${fmtDateTime(slot.startAt)}\n예약한 고객에게도 알렸어요.`,
+      linkUrl: notificationLinks.sellerSlot(slot.id),
+      data: { slotId: slot.id },
+      dedupeKey: `SLOT_GO_CONFIRMED:${slot.id}:seller`,
+    });
+  });
+}
+
+/**
+ * 회차 취소(사업자·운영자 취소, 최소 인원 미달 등). 취소된(CANCELLED) 회차에만 보낸다.
+ * - 회차와 함께 취소된 예약의 고객: 사유와 전액 환불 안내(앱 + 문자, 수신 설정과 무관).
+ *   예약별로 onBookingCancelled 를 함께 불러도 안내는 한 번만 나간다.
+ * - 그 회차를 기다리던 대기자: 대기가 끝났다는 앱 알림
+ * - 사업장 구성원: 취소 사유와 함께 취소된 예약 수. options.excludeUserId 로 직접 취소한 구성원은 뺄 수 있다.
+ * reason 은 고객에게 보이는 사유다(운영자가 취소한 예약에는 보여 주지 않는다).
+ */
+export async function onSlotCancelled(slotId: string, reason: string, options: { excludeUserId?: string } = {}): Promise<void> {
+  await safely("onSlotCancelled", slotId, undefined, async () => {
+    const slot = await prisma.slot.findUnique({
+      where: { id: slotId },
+      select: {
+        id: true,
+        status: true,
+        startAt: true,
+        cancelledAt: true,
+        cancelReason: true,
+        product: { select: { title: true } },
+        business: { select: { name: true, members: { select: { userId: true } } } },
+      },
+    });
+    if (!slot || slot.status !== "CANCELLED") return;
+    const why = cancelReasonLine(typeof reason === "string" && reason.trim() ? reason : slot.cancelReason);
+    const what = `${slot.product.title} · ${fmtDateTime(slot.startAt)}`;
+
+    // 회차 취소와 함께 취소된 예약만 고른다(그 전에 따로 취소된 예약은 이미 안내를 받았다).
+    const bookings = await prisma.booking.findMany({
+      where: {
+        slotId: slot.id,
+        status: "CANCELLED",
+        cancelledBy: { in: ["SELLER", "ADMIN", "SYSTEM"] },
+        ...(slot.cancelledAt ? { cancelledAt: { gte: new Date(slot.cancelledAt.getTime() - MINUTE) } } : {}),
+      },
+      include: bookingInclude,
+      orderBy: { createdAt: "asc" },
+    });
+    for (const booking of bookings) {
+      await notifyForcedCancel(booking, {
+        type: "SLOT_CANCELLED",
+        title: "회차가 취소돼 예약도 함께 취소됐어요",
+        smsHead: "[남는자리] 회차가 취소돼 예약도 함께 취소됐어요.",
+        reason: why,
+      });
+    }
+
+    const waiters = await prisma.waitlistEntry.findMany({
+      where: { slotId: slot.id, status: { in: ["WAITING", "OFFERED", "CLOSED"] } },
+      select: { userId: true },
+      distinct: ["userId"],
+    });
+    await notifyMany(
+      waiters.map((w) => ({
+        userId: w.userId,
+        type: "SLOT_CANCELLED" as const,
+        title: "기다리던 회차가 취소됐어요",
+        body: `${slot.business.name} · ${what}\n대기는 자동으로 끝났어요. 다른 날짜의 자리를 살펴보세요.`,
+        linkUrl: notificationLinks.slot(slot.id),
+        data: { slotId: slot.id },
+        dedupeKey: `SLOT_CANCELLED:${slot.id}:waitlist:${w.userId}`,
+      })),
+    );
+
+    await sendToMembers(slot.business.members, {
+      type: "SLOT_CANCELLED",
+      title: "회차가 취소됐어요",
+      body: smsLines(what, why, bookings.length > 0 ? `예약 ${bookings.length}건이 함께 취소됐고, 결제한 금액은 전액 환불돼요.` : null),
+      linkUrl: notificationLinks.sellerSlot(slot.id),
+      data: { slotId: slot.id, cancelledBookings: bookings.length },
+      dedupeKey: `SLOT_CANCELLED:${slot.id}:seller`,
+      excludeUserIds: options.excludeUserId ? [options.excludeUserId] : undefined,
+    });
+  });
+}
+
+// ── 노쇼 ──────────────────────────────────────────────
+
+export interface NoShowNotice {
+  /** 이번 노쇼로 예약이 제한됐다면 그 기한 */
+  restrictedUntil?: Date | null;
+  /** 최근 noShowWindowDays 동안의 노쇼 횟수(이번 건 포함) */
+  countInWindow: number;
+  /** 예약이 제한되는 횟수(noShowLimit) */
+  limit: number;
+}
+
+/**
+ * 노쇼 처리 안내(6.8). 노쇼(NO_SHOW) 상태인 회원 예약에만 보낸다.
+ * - 한도 전이면 경고(몇 회가 되면 얼마 동안 제한되는지), 제한이 걸렸으면 기한을 알린다. 제한 안내 문자는 수신 설정과 무관하게 보낸다.
+ * - 잘못 처리된 경우를 위해 이의제기 기한(72시간)을 함께 알린다.
+ * 사업자가 노쇼를 되돌렸다가 다시 처리하면(noShowAt 이 달라짐) 새로 알린다.
+ */
+export async function onNoShowMarked(bookingId: string, info: NoShowNotice): Promise<void> {
+  await safely("onNoShowMarked", bookingId, undefined, async () => {
+    const booking = await loadBooking(bookingId);
+    // 사업자가 직접 넣은 비회원 예약에는 계정 제한이 없으므로 알리지 않는다.
+    if (!booking || booking.status !== "NO_SHOW" || !booking.userId) return;
+    const now = new Date();
+    const settings = await getSettings();
+    const count = Math.max(1, Math.floor(Number(info.countInWindow) || 1));
+    const limit = Math.max(1, Math.floor(Number(info.limit) || settings.noShowLimit));
+    const restrictedUntil = info.restrictedUntil instanceof Date && info.restrictedUntil.getTime() > now.getTime() ? info.restrictedUntil : null;
+    const markedAt = booking.noShowAt ?? now;
+    const disputeUntil = new Date(markedAt.getTime() + HELP_FACTS.noShowDisputeHours * HOUR);
+
+    const status = restrictedUntil
+      ? `최근 ${settings.noShowWindowDays}일 동안 노쇼가 ${count}회가 되어 ${fmtDate(restrictedUntil)}까지 새 예약을 할 수 없어요.`
+      : count < limit
+        ? `최근 ${settings.noShowWindowDays}일 동안 노쇼 ${count}회예요. ${limit}회가 되면 ${settings.noShowRestrictDays}일 동안 새 예약이 제한돼요.`
+        : `최근 ${settings.noShowWindowDays}일 동안 노쇼 ${count}회예요.`;
+    const dispute = `참석하셨거나 처리가 잘못됐다면 ${HELP_FACTS.noShowDisputeHours}시간 안에 예약 상세에서 이의를 제기해 주세요.`;
+    const key = `NO_SHOW:${booking.id}:${markedAt.getTime()}`;
+
+    await notifyCustomer(booking, {
+      type: "NO_SHOW_NOTICE",
+      title: restrictedUntil ? "노쇼로 처리돼 새 예약이 잠시 제한돼요" : "예약이 노쇼로 처리됐어요",
+      body: smsLines(bookingLine(booking), status, dispute),
+      data: {
+        countInWindow: count,
+        limit,
+        restrictedUntil: restrictedUntil ? restrictedUntil.toISOString() : null,
+        disputeUntil: disputeUntil.toISOString(),
+      },
+      dedupeKey: key,
+      sms: {
+        essential: restrictedUntil !== null,
+        platform: {
+          templateKey: "PLATFORM_NO_SHOW_NOTICE",
+          dedupeKey: key,
+          text: smsLines(
+            "[남는자리] 예약이 노쇼로 처리됐어요.",
+            `${booking.business.name} · ${booking.product.title}`,
+            fmtDateTime(booking.slot.startAt),
+            status,
+            dispute,
+            bookingPublicUrl(booking),
           ),
         },
       },
@@ -570,9 +901,14 @@ const REMINDER_TEMPLATE: Record<ReminderKind, "REMINDER_DAY_BEFORE" | "REMINDER_
   HOURS_BEFORE: "REMINDER_HOURS_BEFORE",
 };
 
+/** 리마인드에 넣는 이른 취소 권유 — 사업자 기본 문자 템플릿(templates.ts)과 같은 문장이다. */
+const CANCEL_EARLY_LINE = "못 오시게 되면 미리 취소해 주세요. 다른 분이 자리를 이어받을 수 있어요.";
+
 /**
  * 예약 리마인드(종류별로 예약당 한 번). 확정 상태이고 아직 시작 전인 예약에만 보낸다.
  * 언제 부를지는 호출부(주기 작업)가 정한다 — 사업자별 발송 시점까지 반영하려면 sendDueReminders 를 쓴다.
+ * 앱 알림에는 참석 확정 권유(아직 확정하지 않았을 때), 이른 취소 권유, 지금 취소할 때의 환불 기준을 함께 넣는다(6.8).
+ * 알림을 누르면 예약 상세로 가고, 그 화면에서 참석 확정·취소를 한다(data.attendanceConfirmed 로 버튼 상태를 정한다).
  * 이번 호출로 새로 보낸 것이 있으면 true.
  */
 export async function sendBookingReminder(bookingId: string, kind: ReminderKind): Promise<boolean> {
@@ -585,11 +921,19 @@ export async function sendBookingReminder(bookingId: string, kind: ReminderKind)
     const morning = kind === "DAY_BEFORE" && isNightKst(now) ? nextMorningKst(now) : null;
     const smsAt = morning && morning.getTime() <= booking.slot.startAt.getTime() - 2 * HOUR ? morning : undefined;
 
+    const attendanceConfirmed = booking.attendanceConfirmedAt !== null;
+
     const delivered = await notifyCustomer(booking, {
       type: "BOOKING_REMINDER",
       title: kind === "DAY_BEFORE" ? `${fmtDayLabel(booking.slot.startAt, now)} 예약이 있어요` : "곧 예약 시간이에요",
-      body: smsLines(bookingLine(booking), place ? `장소: ${place}` : null, "못 오시게 되면 미리 취소해 주세요."),
-      data: { kind },
+      body: smsLines(
+        bookingLine(booking),
+        place ? `장소: ${place}` : null,
+        attendanceConfirmed ? null : "오실 수 있다면 '참석 확정'을 눌러 주세요.",
+        CANCEL_EARLY_LINE,
+        await currentRefundLine(booking, now),
+      ),
+      data: { kind, attendanceConfirmed },
       dedupeKey: `REMINDER:${kind}:${booking.id}`,
       sms: { sellerTemplate: REMINDER_TEMPLATE[kind], platform: null, scheduledAt: smsAt },
     });

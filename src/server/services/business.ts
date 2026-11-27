@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Prisma, type BusinessStatus, type MemberRole, type PlanTier } from "@/generated/prisma/client";
 import { MEMBER_ROLE_LABEL } from "@/lib/domain";
 import { isValidBusinessRegNo, maskEmail, slugify } from "@/lib/format";
+import { DAY } from "@/lib/time";
 import { audit } from "@/server/audit";
 import { assertBusinessAccess } from "@/server/auth/guards";
 import { prisma } from "@/server/db";
@@ -180,6 +181,15 @@ const kakaoChannelSchema = z
 
 const imageSchema = z.string().max(500, "이미지 주소를 확인해 주세요.").transform(emptyToNull);
 
+/** 통신판매업 신고번호(예: 2026-대전서구-0123, 제2026-대전서구-0123호). 지자체마다 표기가 달라 모양만 느슨하게 확인한다. */
+const mailOrderRegNoSchema = z
+  .string()
+  .trim()
+  .max(40, "통신판매업 신고번호는 40자까지 쓸 수 있어요.")
+  .regex(SINGLE_LINE, "통신판매업 신고번호에 쓸 수 없는 문자가 있어요.")
+  .refine((value) => value === "" || /[0-9]{4}/.test(value), "통신판매업 신고번호를 확인해 주세요. (예: 2026-대전서구-0123)")
+  .transform(emptyToNull);
+
 const applySchema = z.object({
   name: nameSchema,
   categoryId: z.string("업종을 골라 주세요.").min(1, "업종을 골라 주세요.").max(64),
@@ -209,6 +219,9 @@ const profileSchema = z
     website: websiteSchema.nullable(),
     coverImage: imageSchema.nullable(),
     logoImage: imageSchema.nullable(),
+    // 판매자 신원정보(법정 표시 사항). 사업자등록번호는 심사 대상이라 여기서 바꿀 수 없다(반려 건 재신청으로만).
+    representativeName: representativeSchema,
+    mailOrderRegNo: mailOrderRegNoSchema.nullable(),
   })
   .partial();
 
@@ -542,11 +555,24 @@ export async function reapplyForBusiness(actorUserId: string, businessId: string
 
 // ── 프로필 · 운영 설정 ────────────────────────────────
 
-/** 사업장 프로필 수정(매니저 이상). 넘어온 항목만 바꾸고, null·빈 문자열은 선택 항목을 지운다. */
+const MAIL_ORDER_LOCKED = "승인된 사업장은 통신판매업 신고번호를 지울 수 없어요. 번호가 바뀌었다면 새 번호를 입력해 주세요.";
+
+/**
+ * 사업장 프로필 수정(매니저 이상). 넘어온 항목만 바꾸고, null·빈 문자열은 선택 항목을 지운다.
+ *
+ * 판매자 신원정보(상호·대표자·사업자등록번호·통신판매업 신고번호·연락처·주소)는 전자상거래법상 공개해야 하는 정보다.
+ * - 상호·대표자·연락처·주소는 값을 바꿀 수는 있어도 비울 수는 없다(빈 값은 검증에서 거절).
+ * - 대표자 이름과 통신판매업 신고번호는 대표만 바꿀 수 있다.
+ * - 승인을 받은 사업장(승인·이용 정지 상태)은 등록해 둔 통신판매업 신고번호를 지울 수 없다(새 번호로 바꾸는 것은 가능).
+ * - 사업자등록번호는 여기서 바꿀 수 없다.
+ */
 export async function updateBusinessProfile(actorUserId: string, businessId: string, patch: BusinessProfilePatch): Promise<MemberBusiness> {
   const role = await assertBusinessAccess(actorUserId, businessId, "MANAGER");
   const data = parseInput(profileSchema, patch);
   if (data.areaId) await assertActiveArea(data.areaId);
+  if ((data.representativeName !== undefined || data.mailOrderRegNo !== undefined) && role !== "OWNER") {
+    throw err.forbidden("대표자 이름과 통신판매업 신고번호는 대표만 바꿀 수 있어요.");
+  }
   if (data.coverImage || data.logoImage) {
     // 새로 넣는 이미지는 우리 저장소 주소여야 한다. 이미 저장돼 있던 값을 그대로 다시 보내는 것은 허용한다.
     const current = await prisma.business.findUnique({ where: { id: businessId }, select: { coverImage: true, logoImage: true } });
@@ -559,7 +585,7 @@ export async function updateBusinessProfile(actorUserId: string, businessId: str
     }
   }
 
-  const update: Prisma.BusinessUncheckedUpdateInput = {};
+  const update: Prisma.BusinessUncheckedUpdateManyInput = {};
   if (data.name !== undefined) update.name = data.name;
   if (data.tagline !== undefined) update.tagline = data.tagline;
   if (data.description !== undefined) update.description = data.description;
@@ -572,10 +598,25 @@ export async function updateBusinessProfile(actorUserId: string, businessId: str
   if (data.website !== undefined) update.website = data.website;
   if (data.coverImage !== undefined) update.coverImage = data.coverImage;
   if (data.logoImage !== undefined) update.logoImage = data.logoImage;
+  if (data.representativeName !== undefined) update.representativeName = data.representativeName;
+  if (data.mailOrderRegNo !== undefined) update.mailOrderRegNo = data.mailOrderRegNo;
   const fields = Object.keys(update);
   if (fields.length === 0) return getBusinessForMember(actorUserId, businessId);
 
-  const business = await prisma.business.update({ where: { id: businessId }, data: update, include: businessInclude });
+  // 신고번호를 지우는 요청은 아직 승인 전이거나 원래 번호가 없을 때만 반영한다.
+  // 조건을 UPDATE 문에 넣어, 확인과 저장 사이에 승인이 끝나더라도 표시 의무가 있는 번호가 지워지지 않게 한다.
+  const clearsMailOrder = data.mailOrderRegNo === null;
+  const updated = await prisma.business.updateMany({
+    where: clearsMailOrder
+      ? { id: businessId, OR: [{ mailOrderRegNo: null }, { status: { in: ["PENDING", "REJECTED"] } }] }
+      : { id: businessId },
+    data: update,
+  });
+  if (updated.count === 0) {
+    if (clearsMailOrder) throw err.validation(MAIL_ORDER_LOCKED, { mailOrderRegNo: MAIL_ORDER_LOCKED });
+    throw err.notFound("사업장을 찾을 수 없어요.");
+  }
+  const business = await prisma.business.findUniqueOrThrow({ where: { id: businessId }, include: businessInclude });
   await audit({
     actorId: actorUserId,
     actorType: "SELLER",
@@ -596,8 +637,48 @@ const slugSchema = z
   .refine((slug) => !RESERVED_SLUGS.has(slug), "쓸 수 없는 주소예요. 다른 주소를 골라 주세요.");
 
 const SLUG_TAKEN = "이미 쓰이고 있는 주소예요. 다른 주소를 골라 주세요.";
+const SLUG_HELD = "얼마 전까지 다른 사업장이 쓰던 주소라 지금은 쓸 수 없어요. 다른 주소를 골라 주세요.";
 
-/** 공개 주소(/b/{slug}) 변경(대표만). 예전 주소는 더 이상 열리지 않으므로 하루 3번까지만 바꿀 수 있다. */
+/** 주소를 바꾼 뒤 예전 주소를 다른 사업장이 쓰지 못하게 잡아 두는 기간(일) */
+export const SLUG_HOLD_DAYS = 30;
+
+/**
+ * 예전 주소 보류 기록.
+ * 따로 테이블을 두지 않고 범용 키 저장소인 RateLimit 행 하나로 남긴다:
+ *   key = "slug-hold:{예전 주소}:{사업장 ID}", windowStart = 보류가 끝나는 시각.
+ * 주소 변경과 같은 트랜잭션에서 쓰므로 변경과 보류가 함께 반영되고, 끝난 기록은 요청 제한 정리 작업(purgeRateLimits)이 지운다.
+ * 주소에는 영문 소문자·숫자·하이픈만 들어가므로 ":" 로 나눈 키가 다른 주소와 겹치지 않는다.
+ */
+const slugHoldPrefix = (slug: string) => `slug-hold:${slug}:`;
+const slugHoldKey = (slug: string, businessId: string) => `${slugHoldPrefix(slug)}${businessId}`;
+
+/** 지금 이 주소를 잡아 두고 있는 사업장의 ID(보류 중이 아니면 null) */
+async function findSlugHolder(db: Prisma.TransactionClient | typeof prisma, slug: string, now: Date): Promise<string | null> {
+  const hold = await db.rateLimit.findFirst({
+    where: { key: { startsWith: slugHoldPrefix(slug) }, windowStart: { gt: now } },
+    orderBy: { windowStart: "desc" },
+    select: { key: true },
+  });
+  return hold ? hold.key.slice(slugHoldPrefix(slug).length) : null;
+}
+
+/**
+ * 주소를 바꾼 사업장의 예전 주소로 들어온 방문을 새 주소로 보내기 위한 조회.
+ * 보류 기간(30일) 안의 예전 주소이고 그 사업장이 지금 공개(승인) 상태면 현재 주소를, 아니면 null 을 돌려준다.
+ */
+export async function findSlugRedirect(slug: string): Promise<string | null> {
+  if (typeof slug !== "string" || !SLUG_PATTERN.test(slug)) return null;
+  const holderId = await findSlugHolder(prisma, slug, new Date());
+  if (!holderId) return null;
+  const business = await prisma.business.findFirst({ where: { id: holderId, status: "APPROVED" }, select: { slug: true } });
+  return business && business.slug !== slug ? business.slug : null;
+}
+
+/**
+ * 공개 주소(/b/{slug}) 변경(대표만). 하루 3번까지만 바꿀 수 있다.
+ * 예전 주소는 30일 동안 다른 사업장이 쓸 수 없고(사칭·잘못된 유입 방지), 그동안 원래 사업장은 그 주소로 되돌아갈 수 있다.
+ * 예전 주소로 들어온 방문은 findSlugRedirect 로 새 주소를 찾아 보낼 수 있다.
+ */
 export async function changeSlug(actorUserId: string, businessId: string, slug: string): Promise<{ slug: string }> {
   await assertBusinessAccess(actorUserId, businessId, "OWNER");
   const next = parseInput(slugSchema, slug);
@@ -605,13 +686,32 @@ export async function changeSlug(actorUserId: string, businessId: string, slug: 
   if (!current) throw err.notFound("사업장을 찾을 수 없어요.");
   if (current.slug === next) return { slug: next };
 
+  const slugTaken = () => new AppError("CONFLICT", SLUG_TAKEN, { slug: SLUG_TAKEN });
+  const slugHeld = () => new AppError("CONFLICT", SLUG_HELD, { slug: SLUG_HELD });
+  // 쓸 수 없는 주소는 변경 횟수를 쓰기 전에 알려 준다(아래 트랜잭션에서 한 번 더 확인한다).
   const taken = await prisma.business.findUnique({ where: { slug: next }, select: { id: true } });
-  if (taken) throw new AppError("CONFLICT", SLUG_TAKEN, { slug: SLUG_TAKEN });
+  if (taken) throw slugTaken();
+  const holder = await findSlugHolder(prisma, next, new Date());
+  if (holder && holder !== businessId) throw slugHeld();
   await enforceRateLimit(`business-slug:${businessId}`, 3, 86_400, "주소는 하루에 3번까지 바꿀 수 있어요.");
+
   try {
-    await prisma.business.update({ where: { id: businessId }, data: { slug: next } });
+    await prisma.$transaction(async (tx) => {
+      // 같은 주소를 두고 겨루는 변경(내 예전 주소를 남이 가져가려는 경우 포함)을 주소 단위로 줄 세운다.
+      for (const key of [current.slug, next].sort()) await lockKey(tx, `business-slug-change:${key}`);
+      const now = new Date();
+      const holderNow = await findSlugHolder(tx, next, now);
+      if (holderNow && holderNow !== businessId) throw slugHeld();
+      const updated = await tx.business.updateMany({ where: { id: businessId, slug: current.slug }, data: { slug: next } });
+      if (updated.count === 0) throw err.conflict("주소가 방금 바뀌었어요. 화면을 새로 고친 뒤 다시 시도해 주세요.");
+      // 되돌아온 주소의 보류는 풀고, 방금 떠난 주소를 새로 잡아 둔다.
+      await tx.rateLimit.deleteMany({ where: { key: { in: [slugHoldKey(next, businessId), slugHoldKey(current.slug, businessId)] } } });
+      await tx.rateLimit.create({
+        data: { key: slugHoldKey(current.slug, businessId), windowStart: new Date(now.getTime() + SLUG_HOLD_DAYS * DAY), count: 1 },
+      });
+    });
   } catch (e) {
-    if (isUniqueViolation(e)) throw new AppError("CONFLICT", SLUG_TAKEN, { slug: SLUG_TAKEN });
+    if (isUniqueViolation(e)) throw slugTaken();
     throw e;
   }
   await audit({

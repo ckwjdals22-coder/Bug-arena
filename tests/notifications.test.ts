@@ -1,17 +1,24 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HELP_FACTS } from "@/content/help/faq";
+import { BOOKING_SAFETY_TIPS } from "@/content/help/safety";
 import type { Prisma } from "@/generated/prisma/client";
-import { fmtDateTime, kstDate } from "@/lib/time";
+import { CANCELLATION_PRESETS, computeRefundRate } from "@/lib/domain";
+import { POLICY_VERSIONS } from "@/lib/policy";
+import { fmtDate, fmtDateTime, kstDate } from "@/lib/time";
 import { prisma } from "@/server/db";
 import { AppError } from "@/server/errors";
 import {
   DEFAULT_NOTIFICATION_PREFS,
+  NOTIFICATION_RETENTION_DAYS,
+  OUTBOX_RETENTION_DAYS,
   countUnread,
   getNotificationPrefs,
   getNotificationSettings,
   listNotifications,
   markNotificationsRead,
   notify,
+  purgeOldNotifications,
   updateMarketingConsent,
   updateNotificationPrefs,
 } from "@/server/services/notifications";
@@ -24,8 +31,12 @@ import {
   onBookingPendingApproval,
   onBookingRejected,
   onBusinessReviewed,
+  onNoShowMarked,
   onRefundDone,
+  onResaleRefund,
   onSeatReleasedForSeller,
+  onSlotCancelled,
+  onSlotGoConfirmed,
   onWaitlistExpired,
   onWaitlistOffer,
   sendBookingReminder,
@@ -35,6 +46,8 @@ import {
 import {
   ADVERTISING_OPT_OUT,
   ADVERTISING_PREFIX,
+  CREDENTIAL_BODY_PLACEHOLDER,
+  CREDENTIAL_TEMPLATE_KEYS,
   QUOTA_EXCEEDED_ERROR,
   dispatchOutbox,
   enqueueMessage,
@@ -45,6 +58,7 @@ import {
   listBusinessOutbox,
   listOutbox,
   nextMorningKst,
+  scrubSensitiveOutbox,
 } from "@/server/services/notifications/outbox";
 import { buildSolapiAuthHeader, smsByteLength } from "@/server/services/notifications/providers/solapi";
 import {
@@ -60,7 +74,7 @@ import {
   renderTemplate,
   saveBusinessTemplate,
 } from "@/server/services/notifications/templates";
-import { resetSettingsCache } from "@/server/settings";
+import { DEFAULT_SETTINGS, resetSettingsCache } from "@/server/settings";
 import { createBusiness, createListing, createSlot, createUser, resetDb } from "./helpers";
 
 type Listing = Awaited<ReturnType<typeof createListing>>;
@@ -493,6 +507,27 @@ describe("수신 설정", () => {
     expect(await prisma.auditLog.count()).toBe(0);
     expect(await prisma.notification.count()).toBe(0);
     expect(await getNotificationSettings(user.id)).toMatchObject({ marketingConsentAt: null, nightAlertConsentAt: null });
+    // 바뀐 것이 없으면 동의 기록도 남기지 않는다.
+    expect(await prisma.consentRecord.count()).toBe(0);
+  });
+
+  it("동의와 철회를 문서 버전·IP 와 함께 기록한다(야간 동의가 함께 꺼질 때도 따로 남긴다)", async () => {
+    const user = await createUser();
+    await updateMarketingConsent(user.id, { marketing: true, night: true }, { ip: "198.51.100.4" });
+    await updateMarketingConsent(user.id, { night: false }, { ip: "198.51.100.5" });
+    await updateMarketingConsent(user.id, { night: true });
+    await updateMarketingConsent(user.id, { marketing: false }, { ip: "unknown" });
+
+    const records = await prisma.consentRecord.findMany({ where: { userId: user.id }, orderBy: [{ createdAt: "asc" }, { kind: "asc" }] });
+    expect(records.map((r) => [r.kind, r.agreed, r.ip])).toEqual([
+      ["MARKETING", true, "198.51.100.4"],
+      ["NIGHT_ALERT", true, "198.51.100.4"],
+      ["NIGHT_ALERT", false, "198.51.100.5"],
+      ["NIGHT_ALERT", true, null],
+      ["MARKETING", false, null],
+      ["NIGHT_ALERT", false, null],
+    ]);
+    expect(records.every((r) => r.version === POLICY_VERSIONS[r.kind] && r.bookingId === null)).toBe(true);
   });
 });
 
@@ -1025,6 +1060,94 @@ describe("발송 내역 조회", () => {
   });
 });
 
+// ───────────────────────── 보관 기한·정리 ─────────────────────────
+
+describe("인증 메시지 본문 지우기 · 보관 기한 정리", () => {
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * HOUR_MS);
+  const daysAgo = (days: number) => hoursAgo(days * 24);
+
+  const outboxRow = (templateKey: string, status: "QUEUED" | "SENT" | "SIMULATED" | "FAILED" | "SKIPPED", createdAt: Date, body = "본문") =>
+    prisma.messageOutbox.create({ data: { channel: "EMAIL", recipient: "haneul@example.com", templateKey, body, status, createdAt } });
+  const bodyOfRow = async (id: string) => (await prisma.messageOutbox.findUniqueOrThrow({ where: { id } })).body;
+
+  it("scrubSensitiveOutbox: 발송이 끝난 인증 메시지는 한 시간이 지나면 본문을 지운다", async () => {
+    const link = "http://localhost:3000/reset-password?token=SECRET-TOKEN";
+    const sent = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET, "SENT", hoursAgo(2), link);
+    const simulated = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.PHONE_OTP, "SIMULATED", hoursAgo(3), "인증번호 123456");
+    const failed = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.EMAIL_VERIFY, "FAILED", hoursAgo(30), link);
+    const skipped = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET, "SKIPPED", hoursAgo(1.5), link);
+    // 지우지 않는 것: 한 시간이 안 된 것, 아직 보내지 않은 것, 인증 메시지가 아닌 것
+    const fresh = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET, "SENT", hoursAgo(0.5), link);
+    const queued = await outboxRow(CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET, "QUEUED", hoursAgo(2), link);
+    const ordinary = await outboxRow("PLATFORM_BOOKING_CONFIRMED", "SENT", daysAgo(3), "예약이 확정됐어요");
+
+    expect(await scrubSensitiveOutbox()).toBe(4);
+    for (const row of [sent, simulated, failed, skipped]) expect(await bodyOfRow(row.id)).toBe(CREDENTIAL_BODY_PLACEHOLDER);
+    expect(await bodyOfRow(fresh.id)).toBe(link);
+    expect(await bodyOfRow(queued.id)).toBe(link);
+    expect(await bodyOfRow(ordinary.id)).toBe("예약이 확정됐어요");
+    // 발송 이력은 그대로 남는다.
+    expect(await prisma.messageOutbox.findUniqueOrThrow({ where: { id: sent.id } })).toMatchObject({
+      status: "SENT",
+      recipient: "haneul@example.com",
+      templateKey: CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET,
+    });
+
+    // 다시 돌려도 더 지울 것이 없고, 기준 시각을 넘기면 그 시각으로 판단한다.
+    expect(await scrubSensitiveOutbox()).toBe(0);
+    expect(await scrubSensitiveOutbox(new Date(Date.now() + HOUR_MS))).toBe(1);
+    expect(await bodyOfRow(fresh.id)).toBe(CREDENTIAL_BODY_PLACEHOLDER);
+
+    // 아직 지우지 않은 인증 메시지도 발송 내역 화면에서는 같은 문구로 가려진다(목록은 한곳에서 관리).
+    const listed = (await listOutbox()).items;
+    expect(listed.find((item) => item.id === queued.id)?.body).toBe(CREDENTIAL_BODY_PLACEHOLDER);
+    expect(listed.find((item) => item.id === ordinary.id)?.body).toBe("예약이 확정됐어요");
+  });
+
+  it("비밀번호 재설정 메일도 발송 뒤에는 본문(링크)이 지워진다", async () => {
+    const user = await createUser({ email: "haneul@example.com" });
+    await enqueueMessage({
+      userId: user.id,
+      channel: "EMAIL",
+      recipient: user.email,
+      templateKey: CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET,
+      subject: "[남는자리] 비밀번호 재설정 안내",
+      body: "http://localhost:3000/reset-password?token=ONE-TIME-TOKEN",
+    });
+    expect(await dispatchOutbox()).toEqual({ sent: 0, simulated: 1, failed: 0 });
+    expect(await scrubSensitiveOutbox()).toBe(0);
+    expect(await scrubSensitiveOutbox(new Date(Date.now() + 61 * 60_000))).toBe(1);
+    const row = await prisma.messageOutbox.findFirstOrThrow({ where: { userId: user.id } });
+    expect(row.body).not.toContain("ONE-TIME-TOKEN");
+    expect(row).toMatchObject({ status: "SIMULATED", subject: "[남는자리] 비밀번호 재설정 안내" });
+  });
+
+  it("purgeOldNotifications: 읽은 알림은 180일, 발송 내역은 365일이 지나면 지운다", async () => {
+    const user = await createUser();
+    const notice = (createdAt: Date, readAt: Date | null) =>
+      prisma.notification.create({ data: { userId: user.id, type: "SYSTEM", title: "안내", body: "내용", createdAt, readAt } });
+    const oldRead = await notice(daysAgo(NOTIFICATION_RETENTION_DAYS + 1), daysAgo(NOTIFICATION_RETENTION_DAYS));
+    const oldUnread = await notice(daysAgo(NOTIFICATION_RETENTION_DAYS + 60), null);
+    const recentRead = await notice(daysAgo(NOTIFICATION_RETENTION_DAYS - 1), new Date());
+    const oldSent = await outboxRow("PLATFORM_NOTICE", "SENT", daysAgo(OUTBOX_RETENTION_DAYS + 1));
+    const oldQueued = await outboxRow("PLATFORM_NOTICE", "QUEUED", daysAgo(OUTBOX_RETENTION_DAYS + 1));
+    const recentSent = await outboxRow("PLATFORM_NOTICE", "SENT", daysAgo(OUTBOX_RETENTION_DAYS - 1));
+
+    expect(await purgeOldNotifications()).toEqual({ notifications: 1, outbox: 1 });
+    const noticeIds = (await prisma.notification.findMany({ select: { id: true } })).map((n) => n.id).sort();
+    expect(noticeIds).toEqual([oldUnread.id, recentRead.id].sort());
+    expect(noticeIds).not.toContain(oldRead.id);
+    const outboxIds = (await prisma.messageOutbox.findMany({ select: { id: true } })).map((m) => m.id).sort();
+    expect(outboxIds).toEqual([oldQueued.id, recentSent.id].sort());
+    expect(outboxIds).not.toContain(oldSent.id);
+
+    // 다시 돌려도 결과가 같고, 기준 시각을 넘기면 그 시각으로 판단한다.
+    expect(await purgeOldNotifications()).toEqual({ notifications: 0, outbox: 0 });
+    expect(await purgeOldNotifications(new Date(Date.now() + 2 * 24 * HOUR_MS))).toEqual({ notifications: 1, outbox: 1 });
+    expect(await prisma.notification.count()).toBe(1);
+  });
+});
+
 // ───────────────────────── 사업자 템플릿 ─────────────────────────
 
 describe("템플릿", () => {
@@ -1405,6 +1528,284 @@ describe("예약 이벤트 알림", () => {
     expect((await inbox(listing.owner.id))[0]).toMatchObject({ type: "SELLER_BOOKING_CANCELLED", title: "운영자가 예약을 취소했어요" });
   });
 
+  it("예약 확정 안내에는 판매자 이름·일시·장소와 안전 수칙 한 줄이 들어간다", async () => {
+    const listing = await createListing([{ capacity: 4 }], { product: { placeName: "둔산 라운지", address: "대전 서구 둔산로 123, 2층" } });
+    const customer = await createUser({ name: "김하늘", phone: "01022223333" });
+    const safety = BOOKING_SAFETY_TIPS[0]!;
+
+    // 1) 사업자 기본 템플릿
+    const booking = await createBooking(listing, customer);
+    await onBookingConfirmed(booking.id);
+    const [mine] = await inbox(customer.id);
+    for (const part of [listing.business.name, fmtDateTime(listing.slot.startAt), "둔산 라운지", "대전 서구 둔산로 123, 2층", safety]) {
+      expect(mine!.body).toContain(part);
+    }
+    const [sellerSmsRow] = await outboxOf("BOOKING_CONFIRMED");
+    for (const part of [listing.business.name, fmtDateTime(listing.slot.startAt), "둔산 라운지", safety]) {
+      expect(sellerSmsRow!.body).toContain(part);
+    }
+
+    // 2) 템플릿을 끈 사업장의 남는자리 기본 안내
+    await saveBusinessTemplate(listing.owner.id, listing.business.id, "BOOKING_CONFIRMED", { body: DEFAULT_TEMPLATES.BOOKING_CONFIRMED.body, isEnabled: false });
+    const nextSlot = await createSlot(listing.product, [{ capacity: 4 }], { startsInHours: 72 });
+    const second = await createBooking({ ...listing, slot: nextSlot, seat: nextSlot.seats[0]! }, customer);
+    await onBookingConfirmed(second.id);
+    const [platformSms] = await outboxOf("PLATFORM_BOOKING_CONFIRMED");
+    for (const part of [listing.business.name, fmtDateTime(nextSlot.startAt), "장소: 둔산 라운지", safety, `예약번호 ${second.code}`]) {
+      expect(platformSms!.body).toContain(part);
+    }
+  });
+
+  it("고객 취소: 재판매 연동 환불을 기다리는 예약에는 더 돌려받을 수 있는 최대 금액을 알린다", async () => {
+    const listing = await createListing();
+    const customer = await createUser();
+    // 60,000원 결제, 환불 불가 구간에 2명 모두 취소, 다시 팔리면 50%까지
+    const booking = await createBooking(listing, customer, {
+      status: "CANCELLED",
+      cancelledBy: "CUSTOMER",
+      cancelledAt: new Date(),
+      refundRate: 0,
+      refundAmount: 0,
+      resaleRefundRate: 50,
+      resalePendingQty: 2,
+    });
+    await onBookingCancelled(booking.id);
+    const [mine] = await inbox(customer.id);
+    expect(mine!.body).toContain("환불 금액은 없어요");
+    expect(mine!.body).toContain("자리가 다시 예약되면 회차 시작 후 최대 30,000원을 더 돌려드려요.");
+
+    // 대기 중인 좌석이 없으면(판정이 끝났거나 대상이 아님) 알리지 않는다.
+    const settled = await createBooking(listing, customer, { status: "CANCELLED", cancelledBy: "CUSTOMER", refundRate: 0, refundAmount: 0, resaleRefundRate: 50, resalePendingQty: 0 });
+    await onBookingCancelled(settled.id);
+    const other = (await inbox(customer.id)).find((n) => (n.data as { bookingId?: string }).bookingId === settled.id);
+    expect(other!.body).not.toContain("자리가 다시 예약되면");
+  });
+
+  it("재판매 연동 환불 확정: 취소된 예약의 고객에게 추가 환불 금액을 한 번만 알린다", async () => {
+    const listing = await createListing();
+    const customer = await createUser({ phone: "01022223333" });
+    const booking = await createBooking(listing, customer, {
+      status: "CANCELLED",
+      cancelledBy: "CUSTOMER",
+      refundRate: 0,
+      refundAmount: 30000,
+      resaleRefundRate: 50,
+      paymentState: "PARTIALLY_REFUNDED",
+    });
+
+    await onResaleRefund(booking.id, 30000);
+    await onResaleRefund(booking.id, 30000);
+    const notices = await inbox(customer.id);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ type: "REFUND_DONE", title: "취소한 자리가 다시 예약돼 더 돌려드려요", linkUrl: `/my/bookings/${booking.code}` });
+    expect(notices[0]!.body).toContain("30,000원을 결제 수단으로 더 돌려드릴게요.");
+    expect(notices[0]!.data).toMatchObject({ kind: "RESALE", extraAmount: 30000, refundAmount: 30000 });
+    const sms = await outboxOf("PLATFORM_RESALE_REFUND");
+    expect(sms).toHaveLength(1);
+    expect(sms[0]).toMatchObject({ recipient: "01022223333", dedupeKey: `RESALE_REFUND:${booking.id}:30000` });
+
+    // 금액이 없거나 취소되지 않은 예약에는 보내지 않는다.
+    const active = await createBooking(listing, await createUser());
+    await onResaleRefund(active.id, 10000);
+    await onResaleRefund(booking.id, 0);
+    await onResaleRefund("missing-booking", 10000);
+    expect(await prisma.notification.count()).toBe(1);
+  });
+
+  it("개최 확정: 확정 예약 고객과 사업장 구성원에게 한 번씩 알린다", async () => {
+    const listing = await createListing([{ capacity: 6 }], { goConfirmedAt: new Date() });
+    await prisma.slotSeat.update({ where: { id: listing.seat.id }, data: { minCount: 4 } });
+    const customer = await createUser({ name: "김하늘", phone: "01022223333" });
+    const quiet = await createUser({ notificationPrefs: { bookingSms: false } });
+    const confirmed = await createBooking(listing, customer);
+    await createBooking(listing, quiet);
+    // 알리지 않는 예약: 승인 대기, 취소, 사업자가 직접 넣은 손님
+    const pendingUser = await createUser();
+    await createBooking(listing, pendingUser, { status: "PENDING_APPROVAL", confirmedAt: null });
+    const cancelledUser = await createUser();
+    await createBooking(listing, cancelledUser, { status: "CANCELLED", cancelledBy: "CUSTOMER" });
+    await createBooking(listing, null, { channel: "MANUAL", guestName: "박손님", guestPhone: "01044445555" });
+
+    await onSlotGoConfirmed(listing.slot.id);
+    await onSlotGoConfirmed(listing.slot.id);
+
+    const [mine] = await inbox(customer.id);
+    expect(mine).toMatchObject({ type: "SLOT_GO_CONFIRMED", title: "개최가 확정됐어요", linkUrl: `/my/bookings/${confirmed.code}` });
+    expect(mine!.body).toContain(listing.product.title);
+    expect(mine!.body).toContain(fmtDateTime(listing.slot.startAt));
+    expect((await inbox(quiet.id)).map((n) => n.type)).toEqual(["SLOT_GO_CONFIRMED"]);
+    expect(await inbox(pendingUser.id)).toHaveLength(0);
+    expect(await inbox(cancelledUser.id)).toHaveLength(0);
+
+    // 문자는 예약 문자를 받는 고객에게만, 예약당 한 통
+    const sms = await outboxOf("PLATFORM_SLOT_GO_CONFIRMED");
+    expect(sms.map((m) => m.recipient)).toEqual(["01022223333"]);
+    expect(sms[0]!.body).toContain("[남는자리] 개최가 확정됐어요.");
+
+    const [seller] = await inbox(listing.owner.id);
+    expect(seller).toMatchObject({ type: "SLOT_GO_CONFIRMED", linkUrl: `/seller/slots/${listing.slot.id}` });
+    expect(await inbox(listing.owner.id)).toHaveLength(1);
+  });
+
+  it("개최 확정 알림은 확정되지 않았거나, 취소됐거나, 최소 인원 조건이 없는 회차에는 보내지 않는다", async () => {
+    const customer = await createUser();
+    const notConfirmed = await createListing();
+    await prisma.slotSeat.update({ where: { id: notConfirmed.seat.id }, data: { minCount: 2 } });
+    await createBooking(notConfirmed, customer);
+    const cancelled = await createListing([{ capacity: 4 }], { goConfirmedAt: new Date(), status: "CANCELLED" });
+    await prisma.slotSeat.update({ where: { id: cancelled.seat.id }, data: { minCount: 2 } });
+    await createBooking(cancelled, customer);
+    const noMinimum = await createListing([{ capacity: 4 }], { goConfirmedAt: new Date() });
+    await createBooking(noMinimum, customer);
+    const started = await createListing([{ capacity: 4 }], { goConfirmedAt: new Date(), startsInHours: -1 });
+    await prisma.slotSeat.update({ where: { id: started.seat.id }, data: { minCount: 2 } });
+    await createBooking(started, customer);
+
+    for (const listing of [notConfirmed, cancelled, noMinimum, started]) await onSlotGoConfirmed(listing.slot.id);
+    await onSlotGoConfirmed("missing-slot");
+    expect(await prisma.notification.count()).toBe(0);
+    expect(await prisma.messageOutbox.count()).toBe(0);
+  });
+
+  it("회차 취소: 함께 취소된 예약 고객(문자 포함)·대기자·사업장 구성원에게 알리고, 예약 취소 알림과 겹치지 않는다", async () => {
+    const cancelledAt = new Date();
+    const listing = await createListing([{ capacity: 6 }], { status: "CANCELLED", cancelledAt, cancelReason: "최소 인원 미달" });
+    const staff = await createUser();
+    await prisma.businessMember.create({ data: { businessId: listing.business.id, userId: staff.id, role: "STAFF" } });
+    const customer = await createUser({ name: "김하늘", phone: "01022223333", notificationPrefs: { bookingSms: false } });
+    const earlier = await createUser();
+    const waiter = await createUser();
+    const withSlot = {
+      status: "CANCELLED" as const,
+      cancelledBy: "SYSTEM" as const,
+      cancelReason: "최소 인원 미달",
+      cancelledAt,
+      refundRate: 100,
+      refundAmount: 60000,
+      paymentState: "REFUNDED" as const,
+    };
+    const booking = await createBooking(listing, customer, withSlot);
+    // 회차 취소 전에 고객이 직접 취소한 예약, 사업자가 며칠 전에 따로 취소한 예약은 대상이 아니다.
+    const selfCancelled = await createUser();
+    await createBooking(listing, selfCancelled, { status: "CANCELLED", cancelledBy: "CUSTOMER", cancelledAt });
+    await createBooking(listing, earlier, { ...withSlot, cancelledBy: "SELLER", cancelledAt: new Date(cancelledAt.getTime() - 3 * 86_400_000) });
+    await prisma.waitlistEntry.create({ data: { userId: waiter.id, slotId: listing.slot.id, slotSeatId: listing.seat.id, status: "CLOSED" } });
+
+    await onSlotCancelled(listing.slot.id, "최소 인원 미달", { excludeUserId: staff.id });
+
+    const [mine] = await inbox(customer.id);
+    expect(mine).toMatchObject({ type: "SLOT_CANCELLED", title: "회차가 취소돼 예약도 함께 취소됐어요", linkUrl: `/my/bookings/${booking.code}` });
+    expect(mine!.body).toContain("사유: 최소 인원 미달");
+    expect(mine!.body).toContain("결제하신 60,000원은 전액 환불돼요.");
+    // 헛걸음하지 않도록 예약 문자를 꺼 둔 고객에게도 문자를 보낸다.
+    const [sms] = await outboxOf("PLATFORM_BOOKING_CANCELLED");
+    expect(sms).toMatchObject({ recipient: "01022223333", status: "QUEUED" });
+    expect(sms!.body).toContain("[남는자리] 회차가 취소돼 예약도 함께 취소됐어요.");
+    expect(await inbox(selfCancelled.id)).toHaveLength(0);
+    expect(await inbox(earlier.id)).toHaveLength(0);
+
+    const [waiting] = await inbox(waiter.id);
+    expect(waiting).toMatchObject({ type: "SLOT_CANCELLED", title: "기다리던 회차가 취소됐어요", linkUrl: `/slots/${listing.slot.id}` });
+
+    const [seller] = await inbox(listing.owner.id);
+    expect(seller).toMatchObject({ type: "SLOT_CANCELLED", title: "회차가 취소됐어요", linkUrl: `/seller/slots/${listing.slot.id}` });
+    expect(seller!.body).toContain("사유: 최소 인원 미달");
+    expect(seller!.body).toContain("예약 1건이 함께 취소됐고");
+    // 직접 취소한 구성원은 뺀다.
+    expect(await inbox(staff.id)).toHaveLength(0);
+
+    // 같은 회차 취소를 다시 알리거나, 예약별 취소 알림이 뒤따라 와도 고객 안내는 한 번뿐이다.
+    await onSlotCancelled(listing.slot.id, "최소 인원 미달");
+    await onBookingCancelled(booking.id);
+    expect(await inbox(customer.id)).toHaveLength(1);
+    expect(await inbox(waiter.id)).toHaveLength(1);
+    expect(await outboxOf("PLATFORM_BOOKING_CANCELLED")).toHaveLength(1);
+    expect((await inbox(listing.owner.id)).filter((n) => n.type === "SLOT_CANCELLED")).toHaveLength(1);
+
+    // 취소되지 않은 회차에는 아무것도 보내지 않는다.
+    const open = await createListing();
+    await createBooking(open, await createUser());
+    const before = await prisma.notification.count();
+    await onSlotCancelled(open.slot.id, "실수로 호출");
+    expect(await prisma.notification.count()).toBe(before);
+  });
+
+  it("회차 취소: 예약 취소 알림이 먼저 나갔다면 회차 취소에서 다시 보내지 않고, 운영자 취소 사유는 고객에게 보여 주지 않는다", async () => {
+    const cancelledAt = new Date();
+    const listing = await createListing([{ capacity: 4 }], { status: "CANCELLED", cancelledAt });
+    const customer = await createUser({ phone: "01022223333" });
+    const byAdmin = await createUser();
+    const base = { status: "CANCELLED" as const, cancelledAt, refundAmount: 60000, paymentState: "REFUNDED" as const };
+    const first = await createBooking(listing, customer, { ...base, cancelledBy: "SELLER" });
+    await createBooking(listing, byAdmin, { ...base, cancelledBy: "ADMIN" });
+
+    await onBookingCancelled(first.id);
+    await onSlotCancelled(listing.slot.id, "신고 접수에 따른 운영 조치");
+
+    const mine = await inbox(customer.id);
+    expect(mine.map((n) => n.title)).toEqual(["사업장 사정으로 예약이 취소됐어요"]);
+    expect(await outboxOf("BOOKING_CANCELLED_BY_SELLER")).toHaveLength(1);
+    const [adminCase] = await inbox(byAdmin.id);
+    expect(adminCase).toMatchObject({ type: "SLOT_CANCELLED" });
+    expect(adminCase!.body).not.toContain("신고 접수");
+  });
+
+  it("노쇼 처리: 한도 전에는 경고를, 제한이 걸리면 기한을 알리고 이의제기 방법을 함께 안내한다", async () => {
+    const { noShowLimit, noShowWindowDays, noShowRestrictDays } = DEFAULT_SETTINGS;
+    const listing = await createListing([{ capacity: 4 }], { startsInHours: -3 });
+    const customer = await createUser({ phone: "01022223333", notificationPrefs: { bookingSms: false } });
+    const noShowAt = new Date();
+    const booking = await createBooking(listing, customer, { status: "NO_SHOW", noShowAt });
+
+    await onNoShowMarked(booking.id, { countInWindow: 1, limit: noShowLimit });
+    await onNoShowMarked(booking.id, { countInWindow: 1, limit: noShowLimit });
+    const [warning] = await inbox(customer.id);
+    expect(warning).toMatchObject({ type: "NO_SHOW_NOTICE", title: "예약이 노쇼로 처리됐어요", linkUrl: `/my/bookings/${booking.code}` });
+    expect(warning!.body).toContain(`최근 ${noShowWindowDays}일 동안 노쇼 1회예요.`);
+    if (noShowLimit > 1) expect(warning!.body).toContain(`${noShowLimit}회가 되면 ${noShowRestrictDays}일 동안 새 예약이 제한돼요.`);
+    expect(warning!.body).toContain(`${HELP_FACTS.noShowDisputeHours}시간 안에 예약 상세에서 이의를 제기해 주세요.`);
+    expect(warning!.data).toMatchObject({
+      countInWindow: 1,
+      limit: noShowLimit,
+      restrictedUntil: null,
+      disputeUntil: new Date(noShowAt.getTime() + HELP_FACTS.noShowDisputeHours * HOUR_MS).toISOString(),
+    });
+    expect(await inbox(customer.id)).toHaveLength(1);
+    // 경고 문자는 예약 문자 설정을 따른다(꺼 둔 고객에게는 보내지 않는다).
+    expect(await outboxOf("PLATFORM_NO_SHOW_NOTICE")).toHaveLength(0);
+
+    // 제한이 걸린 노쇼: 기한을 알리고, 문자는 수신 설정과 무관하게 보낸다.
+    const second = await createListing([{ capacity: 4 }], { startsInHours: -2 });
+    const restrictedUntil = new Date(Date.now() + noShowRestrictDays * 86_400_000);
+    const again = await createBooking(second, customer, { status: "NO_SHOW", noShowAt: new Date() });
+    await onNoShowMarked(again.id, { countInWindow: noShowLimit, limit: noShowLimit, restrictedUntil });
+    const restricted = (await inbox(customer.id)).find((n) => (n.data as { bookingId?: string }).bookingId === again.id);
+    expect(restricted).toMatchObject({ title: "노쇼로 처리돼 새 예약이 잠시 제한돼요" });
+    expect(restricted!.body).toContain(`${fmtDate(restrictedUntil)}까지 새 예약을 할 수 없어요.`);
+    expect(restricted!.data).toMatchObject({ restrictedUntil: restrictedUntil.toISOString() });
+    const [sms] = await outboxOf("PLATFORM_NO_SHOW_NOTICE");
+    expect(sms).toMatchObject({ recipient: "01022223333" });
+    expect(sms!.body).toContain("이의를 제기해 주세요.");
+
+    // 사업자가 되돌렸다가 다시 노쇼로 처리하면 새로 알린다.
+    await prisma.booking.update({ where: { id: booking.id }, data: { noShowAt: new Date(noShowAt.getTime() + 60_000) } });
+    await onNoShowMarked(booking.id, { countInWindow: 1, limit: noShowLimit });
+    expect((await inbox(customer.id)).filter((n) => (n.data as { bookingId?: string }).bookingId === booking.id)).toHaveLength(2);
+  });
+
+  it("노쇼 알림은 노쇼 상태인 회원 예약에만 보낸다", async () => {
+    const listing = await createListing([{ capacity: 4 }], { startsInHours: -3 });
+    const customer = await createUser();
+    const reverted = await createBooking(listing, customer, { status: "COMPLETED" });
+    const manual = await createBooking(listing, null, { channel: "MANUAL", status: "NO_SHOW", noShowAt: new Date(), guestPhone: "01044445555" });
+
+    await onNoShowMarked(reverted.id, { countInWindow: 1, limit: 2 });
+    await onNoShowMarked(manual.id, { countInWindow: 1, limit: 2 });
+    await onNoShowMarked("missing-booking", { countInWindow: 1, limit: 2 });
+    expect(await prisma.notification.count()).toBe(0);
+    expect(await prisma.messageOutbox.count()).toBe(0);
+  });
+
   it("환불 완료: 금액을 알리고, 같은 환불의 중복 호출은 한 번만 처리한다", async () => {
     const listing = await createListing();
     const customer = await createUser();
@@ -1598,6 +1999,71 @@ describe("리마인드 · 후기 요청", () => {
     expect(sms.map((m) => m.dedupeKey).sort()).toEqual([`REMINDER_DAY_BEFORE:${booking.id}`, `REMINDER_HOURS_BEFORE:${booking.id}`]);
     expect(sms.every((m) => m.businessId === listing.business.id && m.recipient === "01022223333")).toBe(true);
     expect((await prisma.booking.findUniqueOrThrow({ where: { id: booking.id } })).reminderSentAt).toBeInstanceOf(Date);
+  });
+
+  it("리마인드에는 참석 확정 권유, 이른 취소 권유, 지금 취소할 때의 환불 기준이 들어간다", async () => {
+    const tiers = [...CANCELLATION_PRESETS.STANDARD.tiers];
+    const cancelEarly = "못 오시게 되면 미리 취소해 주세요. 다른 분이 자리를 이어받을 수 있어요.";
+    const bookedAt = new Date(Date.now() - 5 * 24 * HOUR_MS);
+    const customer = await createUser({ phone: "01022223333" });
+    const reminderOf = async (bookingId: string) => {
+      const rows = await prisma.notification.findMany({ where: { userId: customer.id, type: "BOOKING_REMINDER" } });
+      return rows.find((n) => (n.data as { bookingId: string }).bookingId === bookingId)!;
+    };
+
+    // 1) 시작 30시간 전, 아직 참석 확정 전
+    const dayBefore = await createListing([{ capacity: 4 }], { startsInHours: 30 });
+    const first = await createBooking(dayBefore, customer, { policySnapshot: tiers, createdAt: bookedAt });
+    await sendBookingReminder(first.id, "DAY_BEFORE");
+    const rate = computeRefundRate({ tiers, startAt: dayBefore.slot.startAt, bookedAt });
+    expect(rate).toBeGreaterThan(0);
+    expect(rate).toBeLessThan(100);
+    const n1 = await reminderOf(first.id);
+    expect(n1.body).toContain("오실 수 있다면 '참석 확정'을 눌러 주세요.");
+    expect(n1.body).toContain(cancelEarly);
+    expect(n1.body).toContain(`지금 취소하면 결제 금액의 ${rate}%를 돌려드려요.`);
+    expect(n1.data).toMatchObject({ kind: "DAY_BEFORE", attendanceConfirmed: false });
+    expect(n1.linkUrl).toBe(`/my/bookings/${first.code}`);
+    // 사업자 기본 문자에도 같은 권유와 참석 확정·취소 링크가 들어간다.
+    const sms = await prisma.messageOutbox.findFirstOrThrow({ where: { templateKey: "REMINDER_DAY_BEFORE" } });
+    expect(sms.body).toContain(cancelEarly);
+    expect(sms.body).toContain(`참석 확정·취소: http://localhost:3000/my/bookings/${first.code}`);
+    expect(DEFAULT_TEMPLATES.REMINDER_HOURS_BEFORE.body).toContain(cancelEarly);
+
+    // 2) 시작 2시간 전, 참석 확정을 마쳤고 환불 불가 구간이지만 재판매 연동 환불이 있는 예약
+    const soon = await createListing([{ capacity: 4 }], { startsInHours: 2 });
+    const second = await createBooking(soon, customer, { policySnapshot: tiers, createdAt: bookedAt, attendanceConfirmedAt: new Date(), resaleRefundRate: 50 });
+    await sendBookingReminder(second.id, "HOURS_BEFORE");
+    const n2 = await reminderOf(second.id);
+    expect(n2.body).not.toContain("참석 확정");
+    expect(n2.body).toContain(cancelEarly);
+    expect(n2.body).toContain("지금은 취소해도 환불되지 않아요. 자리가 다시 예약되면 50%까지 돌려드려요.");
+    expect(n2.data).toMatchObject({ kind: "HOURS_BEFORE", attendanceConfirmed: true });
+
+    // 3) 전액 환불 구간
+    const far = await createListing([{ capacity: 4 }], { startsInHours: 24 * 5 });
+    const third = await createBooking(far, customer, { policySnapshot: tiers, createdAt: bookedAt });
+    await sendBookingReminder(third.id, "DAY_BEFORE");
+    expect((await reminderOf(third.id)).body).toContain("지금 취소하면 결제 금액을 전액 돌려드려요.");
+
+    // 4) 온라인으로 결제한 금액이 없거나 정책을 읽을 수 없는 예약에는 환불 문구를 넣지 않는다(추측한 값을 보여 주지 않는다).
+    const onsiteSlot = await createListing([{ capacity: 4 }], { startsInHours: 20 });
+    const onsite = await createBooking(onsiteSlot, customer, { policySnapshot: tiers, paymentMethod: "ONSITE", paymentState: "UNPAID", payNowAmount: 0, payOnsiteAmount: 60000 });
+    const unreadableSlot = await createListing([{ capacity: 4 }], { startsInHours: 21 });
+    const unreadable = await createBooking(unreadableSlot, customer, { policySnapshot: { memo: "형식이 다른 스냅샷" } });
+    for (const booking of [onsite, unreadable]) {
+      await sendBookingReminder(booking.id, "DAY_BEFORE");
+      const body = (await reminderOf(booking.id)).body;
+      expect(body).toContain(cancelEarly);
+      expect(body).not.toContain("환불");
+      expect(body).not.toContain("돌려드려요");
+    }
+
+    // 5) { tiers: [...] } 형태로 저장된 스냅샷도 읽는다.
+    const nestedSlot = await createListing([{ capacity: 4 }], { startsInHours: 30 });
+    const nested = await createBooking(nestedSlot, customer, { policySnapshot: { tiers }, createdAt: bookedAt });
+    await sendBookingReminder(nested.id, "DAY_BEFORE");
+    expect((await reminderOf(nested.id)).body).toContain(`지금 취소하면 결제 금액의 ${rate}%를 돌려드려요.`);
   });
 
   it("확정 상태가 아니거나 이미 시작한 예약에는 리마인드를 보내지 않는다. 템플릿을 끄면 앱 알림만 간다", async () => {

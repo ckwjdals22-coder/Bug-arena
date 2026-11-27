@@ -2,6 +2,7 @@
 
 import "server-only";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import QRCode from "qrcode";
 import { z } from "zod";
 import { safeNextPath } from "@/lib/cookies";
@@ -20,9 +21,11 @@ import {
   type AccountProfile,
 } from "@/server/auth/account";
 import { requireAdminOrThrow, requireUserOrThrow } from "@/server/auth/guards";
+import { completeKakaoSignup, kakaoCookieNames, kakaoCookieOptions } from "@/server/auth/kakao";
 import { createSession, destroySession, readSession } from "@/server/auth/session";
 import { err, runAction, type ActionResult } from "@/server/errors";
 import { getClientIp } from "@/server/request";
+import { completeMockIdentity, type IdentityStatus } from "@/server/services/identity";
 
 /**
  * 계정 관련 서버 액션 — 쿠키(세션)와 요청 정보(IP)는 여기서만 다루고, 검증·규칙은 account.ts 서비스가 맡는다.
@@ -64,6 +67,7 @@ const signupSchema = z.object({
   agreePrivacy: z.boolean(),
   agreeAge14: z.boolean(),
   agreeMarketing: z.boolean().optional(),
+  agreeNightAlert: z.boolean().optional(),
   next: optionalText(2000),
 });
 
@@ -75,6 +79,39 @@ export async function signupAction(input: unknown): Promise<ActionResult<{ redir
     await destroySession("user");
     await createSession(userId, "user");
     return { redirectTo: safeNextPath(next) };
+  });
+}
+
+const kakaoSignupSchema = z.object({
+  name: text(100),
+  phone: optionalText(40),
+  gender: z.enum(["MALE", "FEMALE"]).nullish(),
+  birthYear: z.number().nullish(),
+  agreeTerms: z.boolean(),
+  agreePrivacy: z.boolean(),
+  agreeAge14: z.boolean(),
+  agreeMarketing: z.boolean().optional(),
+  agreeNightAlert: z.boolean().optional(),
+});
+
+/**
+ * 카카오 가입 완료(/signup/kakao 화면의 제출). 이메일·카카오 계정은 콜백이 쿠키에 담아 둔 가입 대기 정보에서만 읽는다.
+ * 성공하면 바로 로그인된 상태가 되고, 카카오 로그인을 시작할 때 가려던 경로를 돌려준다.
+ * 대기 정보가 없거나 10분이 지났으면 실패한다 — 카카오 로그인을 다시 시작하도록 안내한다.
+ */
+export async function completeKakaoSignupAction(input: unknown): Promise<ActionResult<{ redirectTo: string }>> {
+  return runAction(async () => {
+    const data = parseShape(kakaoSignupSchema, input);
+    const jar = await cookies();
+    const names = kakaoCookieNames();
+    const { userId } = await completeKakaoSignup(jar.get(names.pending)?.value ?? "", { ...data, ip: await getClientIp() });
+    const redirectTo = safeNextPath(jar.get(names.next)?.value);
+    const expired = { ...kakaoCookieOptions(), maxAge: 0 };
+    jar.set(names.pending, "", expired);
+    jar.set(names.next, "", expired);
+    await destroySession("user");
+    await createSession(userId, "user");
+    return { redirectTo };
   });
 }
 
@@ -212,20 +249,40 @@ export async function updateConsentsAction(
 ): Promise<ActionResult<{ marketingConsentAt: Date | null; nightAlertConsentAt: Date | null }>> {
   return runAction(async () => {
     const user = await requireUserOrThrow();
-    const consents = await updateConsents(user.id, parseShape(consentsSchema, input));
+    // 동의·철회 기록에 요청 IP 를 함께 남긴다.
+    const consents = await updateConsents(user.id, parseShape(consentsSchema, input), { ip: await getClientIp() });
     revalidatePath("/my", "layout");
     return consents;
   });
 }
 
-const withdrawSchema = z.object({ password: text(200) });
+const mockIdentitySchema = z.object({ name: text(100), birthYear: z.number(), gender: z.enum(["MALE", "FEMALE"]) });
 
-/** 회원 탈퇴. 성공하면 세션 쿠키도 지운다. */
+/**
+ * 시연·개발용 가짜 본인확인 완료. 실제 본인확인 기관이 연결되지 않은 동안 본인확인이 필요한 흐름을 보여 주는 데만 쓴다.
+ * 운영 환경(시연 배포 제외)에서는 NOT_CONFIGURED 로 실패한다.
+ */
+export async function completeMockIdentityAction(input: unknown): Promise<ActionResult<IdentityStatus>> {
+  return runAction(async () => {
+    const user = await requireUserOrThrow();
+    const status = await completeMockIdentity(user.id, parseShape(mockIdentitySchema, input));
+    revalidatePath("/my", "layout");
+    return status;
+  });
+}
+
+const withdrawSchema = z.object({ password: text(200).optional(), confirmText: text(40).optional() });
+
+/**
+ * 회원 탈퇴. 성공하면 세션 쿠키도 지운다.
+ * 비밀번호가 있는 계정은 password 를, 카카오로만 가입한 계정(AccountProfile.hasPassword = false)은
+ * confirmText 에 확인 문구(WITHDRAW_CONFIRM_TEXT)를 보낸다.
+ */
 export async function withdrawAction(input: unknown): Promise<ActionResult> {
   return runAction(async () => {
     const user = await requireUserOrThrow();
-    const { password } = parseShape(withdrawSchema, input);
-    await withdrawAccount({ userId: user.id, password });
+    const { password, confirmText } = parseShape(withdrawSchema, input);
+    await withdrawAccount({ userId: user.id, password, confirmText });
     await destroySession("user");
     return undefined;
   });

@@ -45,17 +45,21 @@ export const BANNED_PHRASES: { phrase: string; reason: string }[] = [
   { phrase: "현금할인", reason: "남는자리 밖에서 결제하도록 안내할 수 없어요." },
 ];
 
-/** 문구에서 금칙 표현을 찾는다(대소문자·연속 공백 무시). 없으면 빈 배열 */
+const squash = (text: string) => text.toLowerCase().replace(/\s+/g, "");
+
+/**
+ * 문구에서 금칙 표현을 찾는다. 대소문자와 띄어쓰기를 무시하므로
+ * "땡 처리", "성혼보장", "입금시"처럼 띄어 쓰거나 붙여 쓴 변형도 잡는다. 없으면 빈 배열.
+ */
 export function findBannedPhrases(...texts: (string | null | undefined)[]): { phrase: string; reason: string }[] {
-  const joined = texts
-    .filter((t): t is string => typeof t === "string" && t.length > 0)
-    .join("\n")
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-  if (!joined) return [];
+  const parts = texts.filter((t): t is string => typeof t === "string" && t.length > 0).map(squash);
+  if (parts.length === 0) return [];
   const found = new Map<string, { phrase: string; reason: string }>();
   for (const item of BANNED_PHRASES) {
-    if (joined.includes(item.phrase.toLowerCase())) found.set(item.phrase, item);
+    const needle = squash(item.phrase);
+    // 띄어쓰기만 다른 항목(예: "마감세일"/"마감 세일")은 하나로 본다.
+    if (found.has(needle)) continue;
+    if (parts.some((part) => part.includes(needle))) found.set(needle, item);
   }
   return [...found.values()];
 }

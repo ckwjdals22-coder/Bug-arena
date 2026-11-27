@@ -2,6 +2,7 @@
  * 짧은 안내 목록 — 온보딩 화면과 빈 화면(예약 없음, 상품 없음 등)에 쓴다. 해요체. 순수 데이터.
  *
  * 시간·기간은 운영 설정이므로 {{settings.*}} 자리표시자로 적는다(src/content/render.ts 의 resolveDeep 로 바꾼다).
+ * 0 이 "없음"을 뜻하는 설정(무료 취소 시간, 입점 프로모션)은 [[if settings.*]]…[[end]] 로 감싸 0 일 때 문장을 바꾼다.
  * 금칙 표현(src/lib/policy.ts 의 BANNED_PHRASES)은 예시로도 적지 않는다 — 어떤 종류인지만 설명한다.
  */
 import { legalDocHref } from "../legal/types";
@@ -58,7 +59,7 @@ export const SELLER_ONBOARDING_GUIDE: Guide = {
     },
   ],
   footnote:
-    "자리는 입점이 승인된 뒤에 고객에게 공개돼요. 승인된 때부터 {{settings.launchPromoMonths}}개월 동안, 프로모션을 적용받은 예약 {{settings.launchPromoBookings}}건까지는 중개 수수료가 없어요.",
+    "자리는 입점이 승인된 뒤에 고객에게 공개돼요.[[if settings.launchPromoMonths & settings.launchPromoBookings]] 승인된 때부터 {{settings.launchPromoMonths}}개월 동안, 프로모션을 적용받은 예약 {{settings.launchPromoBookings}}건까지는 중개 수수료가 없어요.[[end]]",
 };
 
 export interface WritingTip {
@@ -87,7 +88,7 @@ export const VACANCY_WRITING_TIPS: { id: string; title: string; summary: string;
     {
       id: "clear-conditions",
       title: "참가 조건은 분명하게",
-      body: "성별 좌석, 나이 조건, 최소 인원과 판정 시각이 있으면 빠짐없이 정해 주세요. 정한 조건은 고객이 예약하기 전에 화면에 그대로 보여요.",
+      body: "성별 좌석, 나이 조건, 최소 인원과 판정 시각이 있으면 빠짐없이 정해 주세요. 술이 나오거나 성인만 참가하는 자리는 참가 나이를 19세 이상으로 정해 주세요. 늦게 온 고객이 언제까지 입장할 수 있는지도 유의 사항에 적어 주세요. 정한 조건은 고객이 예약하기 전에 화면에 그대로 보여요.",
     },
     {
       id: "honest-origin",
@@ -97,12 +98,12 @@ export const VACANCY_WRITING_TIPS: { id: string; title: string; summary: string;
     {
       id: "refund-choice",
       title: "환불 기준과 '다시 팔리면 환불'을 골라 두기",
-      body: "환불 기준은 예약 화면에 그대로 보여요. 다시 팔리면 환불해 주는 설정을 켜 두면, 늦게 취소한 고객도 그 자리가 다시 팔렸을 때 정해 둔 비율까지 돌려받아요. 온라인으로 결제받는 상품에서만 쓸 수 있어요.",
+      body: "환불 기준은 예약 화면에 그대로 보여요. 다시 팔리면 환불해 주는 설정을 켜 두면, 늦게 취소한 고객도 그 자리가 다시 예약된 채로 모임이 시작됐을 때 정해 둔 비율까지 돌려받아요. 온라인으로 결제받는 상품에서만 쓸 수 있어요.",
     },
     {
       id: "place-and-photos",
       title: "장소와 사진은 실제 그대로",
-      body: "공개 화면에는 장소 이름과 동네까지만 보이고, 정확한 주소는 예약이 확정된 고객에게만 보여요. 사진은 실제 공간과 진행 모습을 올려 주세요.",
+      body: "공개 화면에는 장소 이름과 동네까지만 보이고, 모임 장소의 정확한 주소는 예약이 확정된 고객에게만 보여요. 사업장 주소는 법에 따라 항상 공개돼요. 사진은 실제 공간과 진행 모습을 올려 주세요.",
     },
     {
       id: "no-banned-phrases",
@@ -134,13 +135,13 @@ export const FIRST_BOOKING_GUIDE: Guide = {
     {
       id: "pay",
       title: "결제하고 확정하기",
-      body: "결제를 시작하면 {{settings.holdMinutes|min}} 동안 자리를 잡아 둬요. 예약한 뒤 {{settings.cancelGraceMinutes|min}} 안에는 전액 환불로 취소할 수 있어요. 시작이 임박한 예약은 예외예요.",
+      body: "결제를 시작하면 {{settings.holdMinutes|min}} 동안 자리를 잡아 둬요. [[if settings.cancelGraceMinutes]]예약한 뒤 {{settings.cancelGraceMinutes|min}} 안에는 전액 환불로 취소할 수 있어요.[[else]]취소하면 얼마를 돌려받는지는 결제하기 전에 확인할 수 있어요.[[end]][[if settings.cancelGraceMinutes & settings.cancelGraceMinLeadMinutes]] 시작이 임박한 예약은 예외예요.[[end]]",
       link: { label: "무료 취소 알아보기", href: faqHref("free-cancel") },
     },
     {
       id: "attend",
       title: "예약 패스 들고 참석하기",
-      body: "예약이 확정되면 정확한 주소와 예약 패스가 예약 상세 화면에 나와요. 못 가게 되면 일찍 취소해 주세요.",
+      body: "예약이 확정되면 모임 장소의 정확한 주소와 예약 패스가 예약 상세 화면에 나와요. 못 가게 되면 일찍 취소해 주세요.",
       link: { label: "안전 수칙 보기", href: HELP_SAFETY_PATH },
     },
   ],

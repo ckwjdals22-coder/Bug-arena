@@ -3,12 +3,15 @@ import { z } from "zod";
 import type { MessageStatus, Prisma } from "@/generated/prisma/client";
 import { safeNextPath } from "@/lib/cookies";
 import { env } from "@/lib/env";
-import { fmtDateTimeNumeric } from "@/lib/time";
+import { DAY, fmtDateTimeNumeric } from "@/lib/time";
 import { audit } from "@/server/audit";
 import { prisma } from "@/server/db";
 import { err } from "@/server/errors";
 import { sha256 } from "@/server/security/crypto";
+import { recordConsents } from "@/server/services/consent";
 import { enqueueMessageDetailed } from "./outbox";
+
+export { scrubSensitiveOutbox } from "./outbox";
 
 /**
  * 알림의 단일 진입점.
@@ -148,39 +151,64 @@ const consentSchema = z
 
 const CONSENT_WITHDRAWN_ERROR = "수신 동의를 철회했어요";
 
+interface ConsentRow {
+  status: string;
+  marketingConsentAt: Date | null;
+  nightAlertConsentAt: Date | null;
+}
+
 /**
  * 광고성 정보 수신 동의·철회(문자의 "무료수신거부" 가 가리키는 기능).
  * - 철회하면 야간 수신 동의와 빈자리 문자 설정도 함께 꺼지고, 대기 중인 광고성 메시지는 보내지 않는다.
+ * - 동의·철회가 실제로 바뀔 때마다 ConsentRecord 에 문서 버전·시각·IP 와 함께 쌓는다(docs/02-architecture.md 6.9).
+ *   광고 수신 철회로 야간 동의가 함께 꺼질 때도 야간 철회를 따로 기록한다. 이미 같은 상태면 기록하지 않는다.
  * - 처리 결과는 앱 내 알림으로 알려 주고(정보통신망법 제50조 제7항) 감사 로그에 남긴다.
+ * context.ip 는 동의 기록에 남길 요청 IP 다(없으면 비워 둔다).
  */
-export async function updateMarketingConsent(userId: string, input: unknown): Promise<NotificationSettings> {
+export async function updateMarketingConsent(
+  userId: string,
+  input: unknown,
+  context: { ip?: string | null } = {},
+): Promise<NotificationSettings> {
   const parsed = consentSchema.parse(input);
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { status: true, marketingConsentAt: true, nightAlertConsentAt: true },
-  });
-  if (!user || user.status === "WITHDRAWN") throw err.notFound("회원 정보를 찾을 수 없어요.");
-
   const now = new Date();
-  const marketingOn = parsed.marketing ?? Boolean(user.marketingConsentAt);
-  if (parsed.night === true && !marketingOn) {
-    throw err.validation("야간 알림을 받으려면 광고성 정보 수신에 먼저 동의해 주세요.", {
-      night: "광고성 정보 수신 동의가 필요해요.",
-    });
-  }
-  const nightOn = marketingOn && (parsed.night ?? Boolean(user.nightAlertConsentAt));
-  const marketingChanged = marketingOn !== Boolean(user.marketingConsentAt);
-  const nightChanged = nightOn !== Boolean(user.nightAlertConsentAt);
 
-  if (marketingChanged || nightChanged) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        marketingConsentAt: marketingOn ? (user.marketingConsentAt ?? now) : null,
-        nightAlertConsentAt: nightOn ? (user.nightAlertConsentAt ?? now) : null,
-      },
-    });
-  }
+  // 회원 행을 잠그고 판단해, 동시에 들어온 변경이 같은 동의를 두 번 기록하지 않게 한다.
+  const { marketingOn, nightOn, marketingChanged, nightChanged } = await prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<ConsentRow[]>`
+      SELECT "status"::text AS "status", "marketingConsentAt", "nightAlertConsentAt"
+      FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+    const user = rows[0];
+    if (!user || user.status === "WITHDRAWN") throw err.notFound("회원 정보를 찾을 수 없어요.");
+
+    const marketing = parsed.marketing ?? Boolean(user.marketingConsentAt);
+    if (parsed.night === true && !marketing) {
+      throw err.validation("야간 알림을 받으려면 광고성 정보 수신에 먼저 동의해 주세요.", {
+        night: "광고성 정보 수신 동의가 필요해요.",
+      });
+    }
+    const night = marketing && (parsed.night ?? Boolean(user.nightAlertConsentAt));
+    const changed = { marketing: marketing !== Boolean(user.marketingConsentAt), night: night !== Boolean(user.nightAlertConsentAt) };
+
+    if (changed.marketing || changed.night) {
+      // 바뀐 항목만 고친다(그대로인 동의의 시각은 건드리지 않는다).
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          ...(changed.marketing ? { marketingConsentAt: marketing ? now : null } : {}),
+          ...(changed.night ? { nightAlertConsentAt: night ? now : null } : {}),
+        },
+      });
+      await recordConsents(
+        [
+          ...(changed.marketing ? [{ userId, kind: "MARKETING" as const, agreed: marketing, ip: context.ip }] : []),
+          ...(changed.night ? [{ userId, kind: "NIGHT_ALERT" as const, agreed: night, ip: context.ip }] : []),
+        ],
+        tx,
+      );
+    }
+    return { marketingOn: marketing, nightOn: night, marketingChanged: changed.marketing, nightChanged: changed.night };
+  });
 
   if (marketingChanged && !marketingOn) {
     await updateNotificationPrefs(userId, { vacancySms: false });
@@ -229,7 +257,16 @@ export function isExternalAllowed(prefs: NotificationPrefs, type: NotificationTy
   if (options.essential) return true;
   if (type === "VACANCY_ALERT") return prefs.vacancySms;
   if (type === "REVIEW_REQUEST") return prefs.reviewRequest;
-  if (type.startsWith("BOOKING_") || type.startsWith("WAITLIST_") || type === "REFUND_DONE") return prefs.bookingSms;
+  // 예약과 그 회차에 관한 안내(확정·취소·리마인드·자리 제안·환불·개최 확정·노쇼)는 예약 문자 설정을 따른다.
+  if (
+    type.startsWith("BOOKING_") ||
+    type.startsWith("WAITLIST_") ||
+    type.startsWith("SLOT_") ||
+    type === "REFUND_DONE" ||
+    type === "NO_SHOW_NOTICE"
+  ) {
+    return prefs.bookingSms;
+  }
   return true;
 }
 
@@ -424,4 +461,28 @@ export async function markNotificationsRead(userId: string, ids: string[] | "all
     data: { readAt: new Date() },
   });
   return result.count;
+}
+
+// ── 보관 기한 정리 ────────────────────────────────────
+
+/** 읽은 앱 내 알림을 보관하는 기간(일) */
+export const NOTIFICATION_RETENTION_DAYS = 180;
+/** 외부 발송 내역(문자·이메일)을 보관하는 기간(일) */
+export const OUTBOX_RETENTION_DAYS = 365;
+
+/**
+ * 보관 기한이 지난 알림·발송 내역을 지운다(주기 작업용, 여러 번 불러도 결과가 같다).
+ * - 앱 내 알림: 읽은 것만, 만든 지 180일이 지나면 지운다. 읽지 않은 알림은 남긴다.
+ * - 발송 내역: 만든 지 365일이 지난 것. 아직 대기 중(QUEUED)인 행은 건드리지 않는다.
+ */
+export async function purgeOldNotifications(now: Date = new Date()): Promise<{ notifications: number; outbox: number }> {
+  const [notifications, outbox] = await Promise.all([
+    prisma.notification.deleteMany({
+      where: { readAt: { not: null }, createdAt: { lt: new Date(now.getTime() - NOTIFICATION_RETENTION_DAYS * DAY) } },
+    }),
+    prisma.messageOutbox.deleteMany({
+      where: { status: { not: "QUEUED" }, createdAt: { lt: new Date(now.getTime() - OUTBOX_RETENTION_DAYS * DAY) } },
+    }),
+  ]);
+  return { notifications: notifications.count, outbox: outbox.count };
 }

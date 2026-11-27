@@ -41,7 +41,7 @@
   /* 긴급(마감 60분 이내) — 오류와 다른 토큰 */
   --urgent-paper: #C2250B;  --urgent-ink: #FF7352;
   /* 상태 4색: fg(글자·솔리드) / weak(바탕) / line(테두리) */
-  --danger-fg: #A4201A;   --danger-weak: #FBE6DE;   --danger-line: #E3A99C;
+  --danger-fg: #A4201A;   --danger-weak: #FBE6DE;   --danger-line: #E3A99C;   --danger-ink-weak: #40221C;  /* 잉크 위 danger 버튼 hover */
   --success-fg: #1B6335;  --success-weak: #E2ECD6;  --success-line: #B9CFA9;
   --warning-fg: #734A00;  --warning-weak: #F4E6BF;  --warning-line: #DCC27A;  --warning-solid: #E0A100;
   --info-fg: #1D4F91;     --info-weak: #DDE5EE;     --info-line: #A9BEDA;
@@ -108,6 +108,7 @@
   --disabled-bg: var(--paper-3);  --disabled-fg: var(--stone);
   --focus: var(--ink);
   --btn-line: var(--ink);               /* 선 버튼 테두리 */
+  --danger-hover: var(--danger-weak);   /* danger 버튼 hover·누름 바탕 */
   --solid-hover: var(--ink-3);    --solid-press: #3D392E;
   --lamp-ring: 0 0 0 1.5px var(--ink);  /* 종이 위 라임 램프는 헤일로 대신 잉크 링 */
   --seat-open-ring: inset 0 0 0 1px var(--ink), 0 0 0 2px var(--paper), 0 0 0 3.5px var(--ink);
@@ -125,6 +126,7 @@
   --disabled-bg: var(--ink-3);    --disabled-fg: var(--stone);
   --focus: var(--paper);
   --btn-line: var(--stone);
+  --danger-hover: var(--danger-ink-weak);
   --solid-hover: var(--paper-2);  --solid-press: var(--paper-3);
   --lamp-ring: 0 0 0 3px rgb(200 245 58 / .22);
   --seat-open-ring: 0 0 0 2px var(--ink), 0 0 0 3.5px var(--lime);
@@ -134,6 +136,11 @@
 
 /* 앱 범위: 사업자 센터는 본문 16 · 보조 14 이상(12px은 뱃지·탭 라벨에만). 공용 컴포넌트의 13px·15px 단계를 한 단계씩 올린다 */
 [data-app="seller"] { --fs-caption: .875rem; --lh-caption: 1.25rem; --fs-body-2: 1rem; --lh-body-2: 1.5rem; }
+/* 운영자 콘솔(데스크톱 전용): 표·컨트롤 14/20, 한 화면 글자 크기 5종을 목표로 15px·16px 단계를 14px로 모은다.
+   터치 기기(pointer: coarse)에서는 입력을 16px로 되돌린다 */
+[data-app="admin"] { --fs-body-2: .875rem; --lh-body-2: 1.25rem; --fs-body: .875rem; --lh-body: 1.25rem; }
+[data-app="admin"] .input, [data-app="admin"] .select { font-size: .875rem; }
+@media (pointer: coarse) { [data-app="admin"] .input, [data-app="admin"] .select { font-size: max(16px, 1rem); } }
 /* 사업자 화면의 기본 버튼은 48px(행의 주 동작 48px 이상) */
 [data-app="seller"] .btn:not(.btn--sm):not(.btn--xl) { min-height: 48px; }
 
@@ -169,9 +176,9 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 .clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ugc { word-break: normal; white-space: pre-line; overflow-wrap: anywhere; }   /* 후기·닉네임 등 사용자가 쓴 글 */
 .measure { max-width: 36em; }                       /* 데스크톱에서 읽는 글의 폭 */
-/* 보이는 크기가 44px보다 작은 컨트롤의 누르는 영역 넓히기 */
-.hit { position: relative; }
-.hit::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+/* 보이는 크기가 44px보다 작은 컨트롤의 누르는 영역 넓히기 (.hit 는 '기다리던 자리' 카드 이름이라 쓰지 않는다) */
+.tap44 { position: relative; }
+.tap44::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 150ms !important; transition-property: opacity !important; scroll-behavior: auto !important; }
@@ -244,13 +251,13 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 /* 플랩 칸: 남은 자리를 글자로 말한다. 라임 = 열림, 어두운 칸 = 닫힘. 좌우 홈은 플랩의 경첩 */
 .flap { position: relative; display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: var(--r-xs); flex: none;
   background: var(--lime); color: var(--ink); box-shadow: inset 0 0 0 1px var(--edge);
-  font-size: var(--fs-caption); font-weight: 600; line-height: var(--lh-caption); white-space: nowrap; }
+  font-size: var(--fs-label); font-weight: 600; line-height: var(--lh-label); white-space: nowrap; }   /* 남은 자리는 읽어야 하는 정보: 14px */
 .flap::before, .flap::after { content: ""; position: absolute; top: 50%; width: 3px; height: 4px; margin-top: -2px; background: var(--ink); }
 .flap::before { left: 0; border-radius: 0 2px 2px 0; }
 .flap::after { right: 0; border-radius: 2px 0 0 2px; }
 .flap--off { background: var(--flap-off-bg); color: var(--flap-off-fg); box-shadow: none; }
 .flap--off::before, .flap--off::after { background: var(--bg); }
-.flap--sm { min-height: 20px; padding: 0 7px; font-size: var(--fs-micro); line-height: var(--lh-micro); }
+.flap--sm { min-height: 20px; padding: 0 7px; }                                 /* 낮은 칸(요약 행). 글자는 그대로 14px */
 /* 값이 바뀔 때 한 번: 위 반쪽이 접혔다 새 값으로 펴진다 */
 @media (prefers-reduced-motion: no-preference) {
   .flap.is-changed { animation: flap-turn var(--d-sheet) var(--ease-move) 1; transform-origin: 50% 50%; }
@@ -292,13 +299,13 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 .seatmap-table { height: 12px; margin-left: 20px; border-radius: 6px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--fg-3); }
 
 /* 예약 마감: 60분 넘게 남으면 중립, 60분 이내면 긴급색 + 시계 아이콘 + 글자(강조 방식은 이것 하나) */
-.deadline { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; }
+.deadline { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg-2); white-space: nowrap; }
 .deadline .time { color: var(--fg); }
 .deadline.is-soon, .deadline.is-soon .time { color: var(--urgent); font-weight: 600; }
 .deadline.is-closed { color: var(--fg-3); }
 
 /* 개최 확정: '모으는 중 · 확정까지 여성 1명' → '개최 확정' */
-.go { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; }
+.go { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg-2); white-space: nowrap; }
 .go b { font-weight: 600; color: var(--fg); }
 .go.is-confirmed { color: var(--fg); font-weight: 600; }
 
@@ -320,20 +327,20 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 /* 크기 */
 .btn--xl { min-height: 52px; padding: 0 20px; font-size: var(--fs-body); }   /* 하단 고정 바 전용 */
 .btn--lg { min-height: 48px; padding: 0 20px; font-size: var(--fs-body); }   /* 본문 안 주 버튼 */
-.btn--sm { min-height: 36px; padding: 0 12px; font-size: var(--fs-label); }  /* 모바일에서는 .hit 로 44px 확보 */
+.btn--sm { min-height: 36px; padding: 0 12px; font-size: var(--fs-label); }  /* 모바일에서는 .tap44 로 44px 확보 */
 .btn--block { display: flex; width: 100%; }
 /* hover */
 .btn--primary:hover, .btn--primary.is-hover { background: var(--lime-hover); }
 .btn--solid:hover, .btn--solid.is-hover { background: var(--solid-hover); }
 .btn--line:hover, .btn--line.is-hover, .btn--ghost:hover, .btn--ghost.is-hover { background: var(--surface); }
-.btn--danger:hover, .btn--danger.is-hover { background: var(--danger-weak); }
+.btn--danger:hover, .btn--danger.is-hover { background: var(--danger-hover); }
 .btn--danger-solid:hover, .btn--danger-solid.is-hover { background: #8E1A15; }
 /* 누름: 100ms 안에 1px 내려간다 */
 .btn:active, .btn.is-press { transform: translateY(1px); }
 .btn--primary:active, .btn--primary.is-press { background: var(--lime-press); }
 .btn--solid:active, .btn--solid.is-press { background: var(--solid-press); }
 .btn--line:active, .btn--line.is-press, .btn--ghost:active, .btn--ghost.is-press { background: var(--surface-2); }
-.btn--danger:active, .btn--danger.is-press { background: var(--danger-weak); box-shadow: inset 0 0 0 2px var(--danger); }
+.btn--danger:active, .btn--danger.is-press { background: var(--danger-hover); box-shadow: inset 0 0 0 2px var(--danger); }
 /* 비활성: 왜 못 누르는지는 가까운 곳에 글로 적는다. 미입력을 이유로 미리 비활성화하지 않는다 */
 .btn:disabled, .btn.is-disabled { background: var(--disabled-bg); color: var(--disabled-fg); box-shadow: none; cursor: not-allowed; transform: none; }
 .btn--ghost:disabled, .btn--ghost.is-disabled { background: none; }
@@ -368,7 +375,7 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 .field-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; }
 .field-label small { font-size: var(--fs-caption); font-weight: 400; color: var(--fg-2); }       /* '42 / 200', '바꿀 수 없어요' */
 .field-help { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); }
-.field-error { display: flex; align-items: flex-start; gap: 4px; font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--danger); }
+.field-error { display: flex; align-items: flex-start; gap: 4px; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; color: var(--danger); }   /* 오류 문구는 14px */
 .field-error .ic { margin-top: 2px; }
 
 .input, .select, .textarea { display: block; width: 100%; min-height: 48px; padding: 0 14px; border: 0; border-radius: var(--r-sm); background: var(--bg); color: var(--fg);
@@ -500,54 +507,59 @@ h1, h2, h3, h4 { font-weight: 700; text-wrap: balance; }
 .dot-badge { position: absolute; top: -3px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--urgent-paper); color: var(--white); font-size: var(--fs-micro); font-weight: 600; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--bg); }
 
 /* ── 12 자리 행·보드 ─────────────────────────────────────────────────── */
-/* 행 = 시각 열 | 본문(제목 → 어디 → 금액·남은 자리 → [알림 줄]) | 사진 또는 꺾쇠.
+/* 행 = 시각 열 | 머리(제목 → 어디) | 사진 또는 꺾쇠, 그 아래 발(금액·남은 자리 → [알림 줄]).
    행 전체가 하나의 링크. 배경·테두리·그림자 없음, 아래 1px 선만.
-   사진이 없으면 칸을 없애고 꺾쇠가 그 자리에 온다(회색 상자 금지). 잉크·종이는 감싸는 표면이 정한다 */
+   사진은 제목·메타 옆에만 놓이고(64×64, 1:1) 금액 줄은 그 아래로 본문 폭을 다 쓴다 — 사진이 있어도 금액과 남은 자리가 한 줄에 선다.
+   사진이 없으면 칸을 없애고 꺾쇠가 그 자리에 온다(회색 상자 금지). 잉크·종이는 감싸는 표면이 정한다.
+   <a class="row"> .row-time · .row-main(.row-title .row-meta) · .row-thumb | .row-chev · .row-foot(.row-status .row-note) </a> */
 .board { container-type: inline-size; }
 .row { position: relative; display: grid; grid-template-columns: 60px minmax(0, 1fr) auto; column-gap: 12px; align-items: start; padding: 12px var(--gutter); border-bottom: 1px solid var(--line); color: var(--fg);
   transition: background-color var(--d-press) var(--ease-move); }
 a.row:hover, .row.is-hover { background: color-mix(in srgb, var(--surface) 60%, var(--bg)); }
 a.row:active, .row.is-press { background: var(--surface); }
 a.row:focus-visible { outline-offset: -2px; }
-/* 시각 열: 시작 시각(모노 20/28 700) → 진행 시간 → 자리가 나온 이유(글자) */
-.row-time { display: grid; }
+/* 시각 열: 시작 시각(모노 20/28 700) → 진행 시간 → 자리가 나온 이유(글자). 두 줄(머리·발)에 걸친다 */
+.row-time { grid-column: 1; grid-row: 1 / span 2; display: grid; }
 .row-time .time { font-size: var(--fs-title-2); line-height: var(--lh-title-2); font-weight: 700; letter-spacing: var(--ls-title-2); }
 .row-time span { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; }
-/* 본문 */
-.row-body { min-width: 0; display: grid; }
+/* 머리: 제목 → 어디 */
+.row-main { grid-column: 2; grid-row: 1; min-width: 0; display: grid; align-content: start; }
 .row-title { margin-top: 3px; font-size: var(--fs-body); line-height: 1.375rem; font-weight: 600; text-wrap: balance;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .row-meta { margin-top: 2px; display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; overflow: hidden; }
 .row-meta > * { flex: none; }
 .row-meta .row-host { flex: 0 1 auto; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; }     /* 넘치면 호스트 이름부터 줄인다. 동 이름은 줄이지 않는다 */
 .row-meta > * + *::before { content: "·"; margin-right: 4px; color: var(--fg-3); }                  /* 항목 사이 가운뎃점 */
-.row-note .ic { color: var(--fg); }
-/* 금액 → 남은 자리. 좁으면 남은 자리가 다음 줄로 내려간다(위치는 언제나 왼쪽부터) */
+/* 오른쪽: 사진 64×64(1:1) 또는 꺾쇠 */
+.row-thumb { grid-column: 3; grid-row: 1; width: 64px; height: 64px; border-radius: var(--r-sm); object-fit: cover; background: var(--surface); overflow: hidden; }
+.row-chev { grid-column: 3; grid-row: 1 / span 2; align-self: center; color: var(--fg-3); }
+/* 발: 금액 → 남은 자리, 그리고 알림 줄. 사진이 있는 행에서는 사진 아래까지 폭을 다 쓴다 */
+.row-foot { grid-column: 2; grid-row: 2; min-width: 0; display: grid; }
+.row-thumb ~ .row-foot { grid-column: 2 / -1; }
 .row-status { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 24px; }
 .row-seats { display: inline-flex; align-items: center; gap: 4px; }
 /* 알림 줄: 개최 확정 진행, 60분 이내 예약 마감. 해당할 때만 생긴다 */
 .row-note { margin-top: 4px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
-/* 오른쪽: 사진 88×88(1:1) 또는 꺾쇠 */
-.row-thumb { width: 88px; height: 88px; border-radius: var(--r-sm); object-fit: cover; background: var(--surface); overflow: hidden; }
-.row-chev { align-self: center; color: var(--fg-3); }
+.row-note .ic { color: var(--fg); }
 /* 마감된 자리: 숨기지 않고 제자리에. 행은 링크가 아니고 제목과 알림 버튼만 누를 수 있다 */
 .row.is-closed .row-time .time, .row.is-closed .row-title { color: var(--fg-2); }
 .row .row-action { margin-top: 8px; justify-self: start; }
 @container (max-width: 379px) {
   .row { padding-left: 16px; padding-right: 16px; column-gap: 10px; }
-  .row-thumb { width: 72px; height: 72px; }
 }
 /* 요약 행: 두 줄. 미리보기·내 예약·알림함 */
 .row--compact { align-items: center; padding-top: 10px; padding-bottom: 10px; min-height: 64px; }
+.row--compact .row-time { grid-row: 1; }
+.row--compact > .badge { grid-column: 3; align-self: center; }
 .row--compact .row-title { margin-top: 0; -webkit-line-clamp: 1; font-size: var(--fs-body-2); line-height: var(--lh-body-2); }
 .row--compact .row-time .time { font-size: var(--fs-body); line-height: var(--lh-body); letter-spacing: 0; }
 
 /* 보드 머리 · 날짜 띠 · 보드 끝 */
-.board-head { padding: 14px var(--gutter) 12px; }
-.board-head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.board-head { padding: 8px var(--gutter) 6px; }
+.board-head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; }
 .board-head h2 { font-size: var(--fs-title-2); line-height: var(--lh-title-2); letter-spacing: var(--ls-title-2); }
 .board-head-sub { display: flex; align-items: center; gap: 8px; margin-top: 2px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); }
-.board-sort { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; margin: -6px -6px -6px 0; padding: 0 6px; font-size: var(--fs-label); font-weight: 600; white-space: nowrap; }
+.board-sort { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; margin: -8px -6px -8px 0; padding: 0 6px; font-size: var(--fs-label); font-weight: 600; white-space: nowrap; }
 .dayband { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 var(--gutter); background: var(--surface); border-bottom: 1px solid var(--line); font-size: var(--fs-body-2); font-weight: 700; color: var(--fg); }
 .dayband span { font-size: var(--fs-caption); font-weight: 400; color: var(--fg-2); }
 .dayband a, .dayband em { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 44px; height: 44px; font-size: var(--fs-caption); font-weight: 600; white-space: nowrap; }
@@ -695,14 +707,14 @@ a.row:focus-visible { outline-offset: -2px; }
 /* 구간은 채움·빗금·빈 칸으로 구분하고 각 조각에 글자. 아래 눈금은 실제 시각. 폭은 순서만 뜻한다 */
 .timeline { display: grid; gap: 6px; }
 .timeline-bar { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; }
-.timeline-seg { display: flex; align-items: center; min-height: 36px; padding: 0 10px; border-radius: var(--r-xs); font-size: var(--fs-caption); font-weight: 600; white-space: nowrap; }
+.timeline-seg { display: flex; align-items: center; min-height: 36px; padding: 0 10px; border-radius: var(--r-xs); font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; white-space: nowrap; }   /* 환불 기준은 읽어야 하는 정보: 14px */
 .timeline-seg.is-full { background: var(--fg); color: var(--bg); }
 .timeline-seg.is-part { background: repeating-linear-gradient(135deg, var(--surface-2) 0 6px, var(--surface) 6px 9px); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); }
 .timeline-seg.is-none { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg-2); }
 .timeline-axis { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; }
-.timeline-axis > div { position: relative; padding-top: 8px; font-size: var(--fs-micro); line-height: var(--lh-micro); color: var(--fg-2); }
+.timeline-axis > div { position: relative; padding-top: 8px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); }
 .timeline-axis > div::before { content: ""; position: absolute; left: 0; top: 0; width: 1px; height: 5px; background: var(--fg); }
-.timeline-axis .time { display: block; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg); }
+.timeline-axis .time { display: block; font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg); }
 .timeline-axis > div:last-child { text-align: right; }
 .timeline-axis > div:last-child::before { left: auto; right: 0; }
 
@@ -718,7 +730,9 @@ a.row:focus-visible { outline-offset: -2px; }
 .table tbody tr:hover, .table tbody tr.is-hover { background: color-mix(in srgb, var(--surface) 55%, var(--bg)); }
 .table tbody tr.is-selected { background: var(--surface); box-shadow: inset 2px 0 0 var(--fg); }
 .table s { color: var(--fg-3); }
-.table--dense td { height: 40px; padding: 8px 12px; }          /* 운영자 콘솔 */
+.table--dense td { height: 40px; padding: 8px 10px; }          /* 운영자 콘솔 */
+.table--dense th { padding: 0 10px; }
+/* 숫자 칸의 둘째 줄(규칙·기준)은 줄바꿈하지 않으므로 10자 안팎으로 짧게 쓴다. 긴 이유는 따로 열을 둔다(정산 표의 '요율과 이유') */
 /* 선택 묶음 바 */
 .bulkbar { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 8px 0 14px; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--fg); font-size: var(--fs-label); }
 .bulkbar b { font-weight: 600; }
@@ -841,13 +855,14 @@ a.row:focus-visible { outline-offset: -2px; }
 .tabbar-item--add { color: var(--ink); font-weight: 700; }
 .tabbar-item--add .tabbar-icon { width: 48px; height: 34px; margin-top: -12px; border-radius: var(--r-sm); background: var(--ink); color: var(--on-ink); box-shadow: 0 0 0 4px var(--paper); }
 
-/* 하단 결제 바(잉크): 화면에 하나. 76px(버튼 52 + 위아래 12) + 안전 영역. 두 줄형은 112px 이하 */
-.actionbar { flex: none; background: var(--ink); color: var(--on-ink); padding-bottom: env(safe-area-inset-bottom); }
-.actionbar-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding: 6px var(--gutter) 0; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--on-ink-2); }
+/* 하단 결제 바(잉크): 화면에 하나. 76px(버튼 52 + 위아래 12) + 안전 영역. 두 줄형은 112px 이하.
+   반드시 data-surface="ink" 와 함께 쓴다: <div class="actionbar" data-surface="ink"> — 안쪽 버튼·글자가 잉크 토큰을 읽는다 */
+.actionbar { flex: none; padding-bottom: env(safe-area-inset-bottom); }
+.actionbar-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding: 6px var(--gutter) 0; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); }
 .actionbar-main { display: flex; align-items: center; gap: 12px; min-height: var(--h-actionbar); padding: 12px var(--gutter); }
 .actionbar-note + .actionbar-main { min-height: 72px; padding-top: 8px; }
 .actionbar-sum { flex: none; display: grid; min-width: 0; }
-.actionbar-sum small { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--on-ink-2); white-space: nowrap; }
+.actionbar-sum small { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; }
 .actionbar-main > .btn { flex: 1; min-width: 132px; }
 
 /* 데스크톱 헤더 64px */
@@ -891,14 +906,14 @@ a.row:focus-visible { outline-offset: -2px; }
 /* ── 21 조합 ─────────────────────────────────────────────────────────── */
 /* '기다리던 자리' 알림: 대기하던 자리가 실제로 났을 때만. 그 화면의 primary 가 된다.
    문구는 방식에 따라 다르다 — 순번 제안: 'HH:MM까지 잡아뒀어요' / 동시 알림: '먼저 예약하는 분께 확정돼요' */
-.hit { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-md); }
-.hit-head { display: grid; gap: 2px; font-size: var(--fs-label); line-height: var(--lh-label); }
+.hit { display: grid; gap: 6px; padding: 10px 14px 12px; border-radius: var(--r-md); }
+.hit-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; font-size: var(--fs-label); line-height: var(--lh-label); }
 .hit-head > span:first-child { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
-.hit-head > span:last-child { padding-left: 16px; color: var(--fg-2); }
+.hit-head > span:last-child { color: var(--fg-2); }
 .hit-head > span:last-child b { color: var(--fg); font-weight: 600; }
 .hit-main { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 12px; align-items: center; }
 .hit-main .time { font-size: var(--fs-title-2); line-height: var(--lh-title-2); font-weight: 700; letter-spacing: var(--ls-title-2); }
-.hit-main small { display: block; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); }
+.hit-main small { display: block; font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg-2); }   /* 자리 수·금액: 14px */
 .hit-main h3 { font-size: var(--fs-body); line-height: 1.375rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hit--inline { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 24px; }      /* 데스크톱: 한 줄 */
 
@@ -909,13 +924,13 @@ a.row:focus-visible { outline-offset: -2px; }
 .departure-main { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 20px; align-items: start; }
 .departure-label { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: var(--fs-label); line-height: var(--lh-label); font-weight: 600; white-space: nowrap; }
 .departure-label em { display: inline-flex; align-items: center; min-height: 20px; padding: 0 6px; border-radius: var(--r-xs); background: var(--fg); color: var(--bg); font-size: var(--fs-micro); font-weight: 700; }
-.departure-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--fg-2); white-space: nowrap; }
+.departure-foot { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg-2); white-space: nowrap; }   /* 종료 시각·남은 자리: 14px */
 .departure-foot b { color: var(--fg); font-weight: 600; }
 .departure-seats { justify-self: end; }
 
 /* 상태 블록(상세의 예약 영역): 아이콘 + 제목 16/600 + 한 줄 설명. 숫자 → 그다음 일 → 행동 */
 .statusblock { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; align-items: start; padding: 14px; border-radius: var(--r-md); background: var(--surface); }
-.statusblock b { display: block; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; }
+.statusblock b { display: block; font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; text-wrap: balance; }
 .statusblock p { font-size: var(--fs-label); line-height: var(--lh-label); color: var(--fg-2); }
 
 /* 진행하는 곳 한 줄: 머리글자 타일 + 이름 + 평점(후기 수) · 확인 표시. 전체가 링크, 높이 44 이상 */

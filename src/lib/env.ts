@@ -54,6 +54,12 @@ const schema = z.object({
   /** 카카오 로그인(REST API 키). 값이 없으면 카카오 로그인 버튼을 숨긴다 */
   KAKAO_CLIENT_ID: z.string().optional(),
   KAKAO_CLIENT_SECRET: z.string().optional(),
+
+  /**
+   * 국세청 사업자등록 상태조회 API 인증키(공공데이터포털). 값이 없으면 입점 심사에서 번호 형식(검증 숫자)만 확인한다.
+   * 일반 인증키(Decoding)를 넣는다. Encoding 키(% 가 들어 있는 값)를 넣어도 그대로 쓴다.
+   */
+  NTS_SERVICE_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

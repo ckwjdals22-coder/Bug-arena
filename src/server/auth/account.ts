@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma, type Gender } from "@/generated/prisma/client";
 import { env } from "@/lib/env";
 import { maskEmail, normalizePhone } from "@/lib/format";
+import { MIN_SIGNUP_AGE } from "@/lib/policy";
 import { MINUTE, kstParts } from "@/lib/time";
 import { audit } from "@/server/audit";
 import { hashPassword, passwordPolicyError, verifyDummy, verifyPassword } from "@/server/auth/password";
@@ -12,23 +13,29 @@ import { prisma } from "@/server/db";
 import { AppError, err, toActionError } from "@/server/errors";
 import { decrypt, encrypt, randomToken, safeEqual, sha256 } from "@/server/security/crypto";
 import { enforceRateLimit, refundRateLimit } from "@/server/security/rate-limit";
+import { listConsentHistory, recordConsents, type ConsentHistoryItem, type ConsentInput } from "@/server/services/consent";
 import { updateMarketingConsent } from "@/server/services/notifications";
-import { enqueueMessage } from "@/server/services/notifications/outbox";
+import { CREDENTIAL_TEMPLATE_KEYS, enqueueMessage } from "@/server/services/notifications/outbox";
 
 /**
- * 계정 서비스 — 가입·로그인·운영자 2단계 인증·비밀번호·프로필·탈퇴.
+ * 계정 서비스 — 가입·로그인·운영자 2단계 인증·비밀번호·프로필·동의 내역·탈퇴.
  * 쿠키·헤더를 읽지 않는다. 세션 발급과 IP 조회는 서버 액션(actions.ts)이 맡고, 여기서는 넘겨받은 값만 쓴다.
  * 로그인·재설정 요청은 계정이 있든 없든 같은 응답을 돌려준다(계정 존재 여부 추측 방지).
+ * 카카오 로그인(kakao.ts)은 회원을 만들 때 이 파일의 signUpWithKakao 를 쓴다(회원 생성·동의 기록은 한곳에서만).
  */
 
 export const MAX_FAILED_LOGINS = 10;
 export const LOGIN_LOCK_MINUTES = 15;
 export const PASSWORD_RESET_TTL_MINUTES = 30;
-export const PASSWORD_RESET_TEMPLATE_KEY = "PLATFORM_PASSWORD_RESET";
+export const PASSWORD_RESET_TEMPLATE_KEY = CREDENTIAL_TEMPLATE_KEYS.PASSWORD_RESET;
+/** 비밀번호가 없는 계정(카카오로만 가입)이 탈퇴할 때 입력해야 하는 확인 문구 */
+export const WITHDRAW_CONFIRM_TEXT = "탈퇴할게요";
+/** 정지된 계정의 로그인 안내 — 카카오 로그인도 같은 문구를 쓴다. */
+export const ACCOUNT_SUSPENDED_MESSAGE = "이용이 정지된 계정이에요. 고객센터로 문의해 주세요.";
 
 const GENERIC_LOGIN_ERROR = "이메일 또는 비밀번호가 맞지 않아요.";
 const LOCKED_ERROR = "로그인 시도가 많아 잠시 잠겼어요. 15분 뒤에 다시 시도해 주세요.";
-const SUSPENDED_ERROR = "이용이 정지된 계정이에요. 고객센터로 문의해 주세요.";
+const SUSPENDED_ERROR = ACCOUNT_SUSPENDED_MESSAGE;
 const RESET_LINK_ERROR = "링크가 만료됐거나 이미 사용됐어요. 비밀번호 재설정을 다시 요청해 주세요.";
 const TOTP_INVALID_ERROR = "인증 코드가 맞지 않아요. 인증 앱의 6자리 코드를 다시 확인해 주세요.";
 const TOTP_STEP_MS = 30_000;
@@ -94,7 +101,17 @@ const birthYearSchema = z
   .number("출생 연도를 확인해 주세요.")
   .int("출생 연도를 확인해 주세요.")
   .refine((year) => year >= 1900 && year <= currentKstYear(), "출생 연도를 확인해 주세요.")
-  .refine((year) => currentKstYear() - year >= 14, "만 14세 이상만 이용할 수 있어요.");
+  // 생일은 받지 않으므로 올해 그 나이가 되는 해까지 받는다(만 나이는 가입 때의 '만 14세 이상' 확인으로 보완한다).
+  .refine((year) => currentKstYear() - year >= MIN_SIGNUP_AGE, `만 ${MIN_SIGNUP_AGE}세 이상만 이용할 수 있어요.`);
+
+/** 계정과 관련된 다른 모듈(카카오 로그인·본인확인)이 같은 규칙으로 검증하도록 내보낸다. */
+export const accountFieldSchemas = {
+  email: emailSchema,
+  name: nameSchema,
+  phone: phoneSchema,
+  gender: genderSchema,
+  birthYear: birthYearSchema,
+} as const;
 
 const passwordInputSchema = z.string("비밀번호를 입력해 주세요.").min(1, "비밀번호를 입력해 주세요.").max(200, "비밀번호는 72자 이하여야 해요.");
 
@@ -102,6 +119,9 @@ function assertPasswordPolicy(password: string, email: string, field: string): v
   const reason = passwordPolicyError(password, { email });
   if (reason) throw err.validation(reason, { [field]: reason });
 }
+
+/** 비밀번호 로그인을 쓸 수 있는 계정인지 — 카카오로만 가입한 계정은 어떤 비밀번호와도 맞지 않는 임의 값을 가진다. */
+const hasUsablePassword = (passwordHash: string) => passwordHash.startsWith("scrypt$");
 
 /** 저장된 해시가 깨져 있어도 예외 대신 불일치로 처리한다(계정마다 다른 오류가 새어 나가지 않게). */
 async function passwordMatches(password: string, stored: string): Promise<boolean> {
@@ -126,52 +146,115 @@ export interface SignUpInput {
   /** 만 14세 이상 확인(개인정보 보호법상 법정대리인 동의 대상 제외) */
   agreeAge14: boolean;
   agreeMarketing?: boolean;
+  /** 야간(21~08시) 광고성 알림 수신 — 광고성 정보 수신에 동의했을 때만 고를 수 있다 */
+  agreeNightAlert?: boolean;
   ip: string;
 }
 
-const signUpSchema = z.object({
-  email: emailSchema.refine((email) => !email.endsWith(".invalid"), "사용할 수 없는 이메일 주소예요."),
-  password: passwordInputSchema,
+/** 가입 화면의 프로필·동의 항목(이메일 가입과 카카오 가입이 함께 쓴다) */
+const signUpProfileShape = {
   name: nameSchema,
   phone: phoneSchema.nullish(),
   gender: genderSchema.nullish(),
   birthYear: birthYearSchema.nullish(),
   agreeTerms: z.literal(true, "이용약관에 동의해 주세요."),
   agreePrivacy: z.literal(true, "개인정보 수집·이용에 동의해 주세요."),
-  agreeAge14: z.literal(true, "만 14세 이상만 가입할 수 있어요."),
+  agreeAge14: z.literal(true, `만 ${MIN_SIGNUP_AGE}세 이상만 가입할 수 있어요.`),
   agreeMarketing: z.boolean().optional(),
+  agreeNightAlert: z.boolean().optional(),
+};
+
+const signUpSchema = z.object({
+  email: emailSchema.refine((email) => !email.endsWith(".invalid"), "사용할 수 없는 이메일 주소예요."),
+  password: passwordInputSchema,
+  ...signUpProfileShape,
 });
+
+const SIGNUP_RATE_MESSAGE = "가입 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.";
 
 const duplicateEmail = () => new AppError("CONFLICT", "이미 가입된 이메일이에요.", { email: "이미 가입된 이메일이에요." });
 
+function assertNightAlertNeedsMarketing(data: { agreeMarketing?: boolean; agreeNightAlert?: boolean }): void {
+  if (data.agreeNightAlert && !data.agreeMarketing) {
+    const message = "야간 알림을 받으려면 광고성 정보 수신에 먼저 동의해 주세요.";
+    throw err.validation(message, { agreeNightAlert: message });
+  }
+}
+
+interface NewAccountProfile {
+  name: string;
+  phone?: string | null;
+  gender?: Gender | null;
+  birthYear?: number | null;
+  agreeMarketing?: boolean;
+  agreeNightAlert?: boolean;
+}
+
+interface NewAccount extends NewAccountProfile {
+  email: string;
+  passwordHash: string;
+  kakaoId?: string;
+  ip: string;
+}
+
+/** 검증을 마친 가입 입력에서 저장할 프로필·동의 항목만 고른다(비밀번호 원문 같은 값이 섞여 넘어가지 않게). */
+const pickProfile = (data: NewAccountProfile): NewAccountProfile => ({
+  name: data.name,
+  phone: data.phone,
+  gender: data.gender,
+  birthYear: data.birthYear,
+  agreeMarketing: data.agreeMarketing,
+  agreeNightAlert: data.agreeNightAlert,
+});
+
+/**
+ * 회원 행과 가입 시점의 동의 기록(약관·개인정보, 동의했다면 광고성·야간)을 한 트랜잭션으로 만든다.
+ * 동의 기록에는 문서 버전과 가입 요청의 IP 가 함께 남는다(docs/02-architecture.md 6.9).
+ */
+async function createAccount(account: NewAccount): Promise<string> {
+  const now = new Date();
+  const marketing = Boolean(account.agreeMarketing);
+  const nightAlert = marketing && Boolean(account.agreeNightAlert);
+  return prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({
+      data: {
+        email: account.email,
+        passwordHash: account.passwordHash,
+        kakaoId: account.kakaoId ?? null,
+        name: account.name,
+        phone: account.phone ?? null,
+        gender: account.gender ?? null,
+        birthYear: account.birthYear ?? null,
+        termsAgreedAt: now,
+        privacyAgreedAt: now,
+        marketingConsentAt: marketing ? now : null,
+        nightAlertConsentAt: nightAlert ? now : null,
+      },
+      select: { id: true },
+    });
+    const consent = (kind: ConsentInput["kind"]): ConsentInput => ({ userId: user.id, kind, agreed: true, ip: account.ip });
+    await recordConsents(
+      [consent("TERMS"), consent("PRIVACY"), ...(marketing ? [consent("MARKETING")] : []), ...(nightAlert ? [consent("NIGHT_ALERT")] : [])],
+      tx,
+    );
+    return user.id;
+  });
+}
+
 export async function signUp(input: SignUpInput): Promise<{ userId: string }> {
   const data = parseInput(signUpSchema, input);
+  assertNightAlertNeedsMarketing(data);
   assertPasswordPolicy(data.password, data.email, "password");
   // 형식 오류는 횟수에 넣지 않고, 가입 여부가 드러나는 중복 확인 앞에서 제한한다.
-  await enforceRateLimit(`signup:ip:${clientKey(input.ip)}`, 10, 3600, "가입 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.");
+  await enforceRateLimit(`signup:ip:${clientKey(input.ip)}`, 10, 3600, SIGNUP_RATE_MESSAGE);
 
   const existing = await prisma.user.findUnique({ where: { email: data.email }, select: { id: true } });
   if (existing) throw duplicateEmail();
 
-  const now = new Date();
   const passwordHash = await hashPassword(data.password);
   let userId: string;
   try {
-    const user = await prisma.user.create({
-      data: {
-        email: data.email,
-        passwordHash,
-        name: data.name,
-        phone: data.phone ?? null,
-        gender: data.gender ?? null,
-        birthYear: data.birthYear ?? null,
-        termsAgreedAt: now,
-        privacyAgreedAt: now,
-        marketingConsentAt: data.agreeMarketing ? now : null,
-      },
-      select: { id: true },
-    });
-    userId = user.id;
+    userId = await createAccount({ ...pickProfile(data), email: data.email, passwordHash, ip: input.ip });
   } catch (e) {
     // 같은 이메일로 동시에 들어온 가입
     if (isUniqueViolation(e)) throw duplicateEmail();
@@ -179,6 +262,66 @@ export async function signUp(input: SignUpInput): Promise<{ userId: string }> {
   }
 
   await auditAccount("CUSTOMER", "auth.signup", userId, { marketing: Boolean(data.agreeMarketing) });
+  return { userId };
+}
+
+export interface KakaoAccountInput {
+  /** 카카오 회원번호 — kakao.ts 가 카카오에서 직접 받아 온 값만 넘긴다 */
+  kakaoId: string;
+  /** 카카오가 유효하고 인증됐다고 알려 준 이메일 */
+  email: string;
+  name: string;
+  phone?: string | null;
+  gender?: Gender | null;
+  birthYear?: number | null;
+  agreeTerms: boolean;
+  agreePrivacy: boolean;
+  agreeAge14: boolean;
+  agreeMarketing?: boolean;
+  agreeNightAlert?: boolean;
+  ip: string;
+}
+
+const kakaoSignUpSchema = z.object({
+  kakaoId: z.string().regex(/^[0-9]{1,20}$/, "카카오 계정 정보를 확인하지 못했어요. 카카오 로그인을 다시 시도해 주세요."),
+  email: emailSchema,
+  ...signUpProfileShape,
+});
+
+/**
+ * 카카오 계정으로 새 회원을 만든다(kakao.ts 의 completeKakaoSignup 전용 — 화면에서 직접 부르지 않는다).
+ * 비밀번호 자리에는 어떤 비밀번호와도 맞지 않는 임의 값을 저장한다. 나중에 비밀번호 재설정 메일로 비밀번호를 만들 수 있다.
+ */
+export async function signUpWithKakao(input: KakaoAccountInput): Promise<{ userId: string }> {
+  const data = parseInput(kakaoSignUpSchema, input);
+  assertNightAlertNeedsMarketing(data);
+  await enforceRateLimit(`signup:ip:${clientKey(input.ip)}`, 10, 3600, SIGNUP_RATE_MESSAGE);
+
+  const kakaoTaken = () => err.conflict("이미 가입된 카카오 계정이에요. 카카오로 다시 로그인해 주세요.");
+  const [byKakao, byEmail] = await Promise.all([
+    prisma.user.findUnique({ where: { kakaoId: data.kakaoId }, select: { id: true } }),
+    prisma.user.findUnique({ where: { email: data.email }, select: { id: true } }),
+  ]);
+  if (byKakao) throw kakaoTaken();
+  if (byEmail) throw duplicateEmail();
+
+  let userId: string;
+  try {
+    userId = await createAccount({
+      ...pickProfile(data),
+      email: data.email,
+      kakaoId: data.kakaoId,
+      passwordHash: `social$${randomToken(32)}`,
+      ip: input.ip,
+    });
+  } catch (e) {
+    // 같은 카카오 계정이나 이메일로 동시에 들어온 가입
+    if (!isUniqueViolation(e)) throw e;
+    const sameKakao = await prisma.user.findUnique({ where: { kakaoId: data.kakaoId }, select: { id: true } });
+    throw sameKakao ? kakaoTaken() : duplicateEmail();
+  }
+
+  await auditAccount("CUSTOMER", "auth.signup", userId, { marketing: Boolean(data.agreeMarketing), method: "kakao" });
   return { userId };
 }
 
@@ -482,6 +625,11 @@ export async function changePassword(input: {
     select: { id: true, email: true, passwordHash: true, status: true },
   });
   if (!user || user.status !== "ACTIVE") throw err.notFound("회원 정보를 찾을 수 없어요.");
+  if (!hasUsablePassword(user.passwordHash)) {
+    // 카카오로만 가입한 계정: 현재 비밀번호가 없으므로 메일로 본인을 확인한 뒤 새로 만든다.
+    const message = "아직 비밀번호가 없는 계정이에요. 로그인 화면의 '비밀번호 재설정'으로 새 비밀번호를 만들어 주세요.";
+    throw err.validation(message, { currentPassword: message });
+  }
   if (!(await passwordMatches(data.currentPassword, user.passwordHash))) {
     throw err.validation("현재 비밀번호가 맞지 않아요.", { currentPassword: "현재 비밀번호가 맞지 않아요." });
   }
@@ -606,6 +754,10 @@ export interface AccountProfile {
   birthYear: number | null;
   /** 본인인증을 마쳤는지. true 면 이름·성별·출생 연도를 바꿀 수 없다. */
   identityVerified: boolean;
+  /** 비밀번호 로그인을 쓸 수 있는지. false 면 카카오로만 가입한 계정이다(비밀번호 변경 대신 재설정 메일로 새로 만든다). */
+  hasPassword: boolean;
+  /** 카카오 계정이 연결돼 있는지 */
+  kakaoLinked: boolean;
   marketingConsentAt: Date | null;
   nightAlertConsentAt: Date | null;
   noShowCount: number;
@@ -623,6 +775,9 @@ const accountSelect = {
   gender: true,
   birthYear: true,
   identityVerifiedAt: true,
+  // 아래 두 값은 여부만 내보낸다(원문은 화면으로 나가지 않는다).
+  passwordHash: true,
+  kakaoId: true,
   marketingConsentAt: true,
   nightAlertConsentAt: true,
   noShowCount: true,
@@ -644,6 +799,8 @@ function toAccountProfile(row: AccountRow): AccountProfile {
     gender: row.gender,
     birthYear: row.birthYear,
     identityVerified: row.identityVerifiedAt !== null,
+    hasPassword: hasUsablePassword(row.passwordHash),
+    kakaoLinked: row.kakaoId !== null,
     marketingConsentAt: row.marketingConsentAt,
     nightAlertConsentAt: row.nightAlertConsentAt,
     noShowCount: row.noShowCount,
@@ -740,33 +897,109 @@ const consentsSchema = z
 /**
  * 광고성 정보·야간 알림 수신 동의 변경.
  * 실제 처리는 알림 모듈의 updateMarketingConsent 하나로 모은다 — 동의 시각 기록·철회 시 야간 동의와
- * 대기 중 광고 메시지 정리·처리 결과 통지·감사 기록(user.marketing_consent)이 그곳에서 함께 이뤄진다.
+ * 대기 중 광고 메시지 정리·처리 결과 통지·동의 기록(ConsentRecord)·감사 기록(user.marketing_consent)이 그곳에서 함께 이뤄진다.
+ * context.ip 는 동의 기록에 남길 요청 IP 다(서버 액션이 넘긴다).
  */
 export async function updateConsents(
   userId: string,
   input: { marketing?: boolean; nightAlert?: boolean },
+  context: { ip?: string | null } = {},
 ): Promise<{ marketingConsentAt: Date | null; nightAlertConsentAt: Date | null }> {
   const data = parseInput(consentsSchema, input);
-  const settings = await updateMarketingConsent(userId, {
-    ...(data.marketing !== undefined ? { marketing: data.marketing } : {}),
-    ...(data.nightAlert !== undefined ? { night: data.nightAlert } : {}),
-  });
+  const settings = await updateMarketingConsent(
+    userId,
+    {
+      ...(data.marketing !== undefined ? { marketing: data.marketing } : {}),
+      ...(data.nightAlert !== undefined ? { night: data.nightAlert } : {}),
+    },
+    { ip: context.ip },
+  );
   return { marketingConsentAt: settings.marketingConsentAt, nightAlertConsentAt: settings.nightAlertConsentAt };
+}
+
+// ── 개인정보·동의 내역 ────────────────────────────────
+
+export interface ThirdPartyRecipient {
+  businessId: string;
+  /** 제공받은 판매자의 상호 */
+  businessName: string;
+  /** 이 판매자에게 연락처가 전달된 예약 수 */
+  bookingCount: number;
+  /** 가장 최근에 예약한 날 */
+  lastBookingAt: Date;
+}
+
+export interface PrivacyOverview {
+  /** 동의·철회 이력(최신순) */
+  consents: ConsentHistoryItem[];
+  marketingConsentAt: Date | null;
+  nightAlertConsentAt: Date | null;
+  /** 예약을 통해 이름·연락처를 제공받은 판매자(최근 예약순) */
+  thirdPartyRecipients: ThirdPartyRecipient[];
+}
+
+/**
+ * 마이 > 개인정보 화면용: 동의 이력, 현재 수신 동의 상태, 내 연락처를 제공받은 판매자 목록.
+ * 판매자에게 연락처가 전달되는 것은 예약이 판매자에게 보이는 순간부터이므로,
+ * 결제를 끝내지 않은 예약(결제 대기·시간 초과)은 세지 않는다.
+ */
+export async function getMyPrivacyOverview(userId: string): Promise<PrivacyOverview> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { status: true, marketingConsentAt: true, nightAlertConsentAt: true },
+  });
+  if (!user || user.status === "WITHDRAWN") throw err.notFound("회원 정보를 찾을 수 없어요.");
+
+  const [consents, groups] = await Promise.all([
+    listConsentHistory(userId, 100),
+    prisma.booking.groupBy({
+      by: ["businessId"],
+      where: { userId, status: { notIn: ["PENDING_PAYMENT", "EXPIRED"] } },
+      _count: { _all: true },
+      _max: { createdAt: true },
+    }),
+  ]);
+  const businesses = await prisma.business.findMany({
+    where: { id: { in: groups.map((g) => g.businessId) } },
+    select: { id: true, name: true },
+  });
+  const names = new Map(businesses.map((b) => [b.id, b.name]));
+  const thirdPartyRecipients = groups
+    .flatMap((g) => {
+      const businessName = names.get(g.businessId);
+      const lastBookingAt = g._max.createdAt;
+      return businessName && lastBookingAt ? [{ businessId: g.businessId, businessName, bookingCount: g._count._all, lastBookingAt }] : [];
+    })
+    .sort((a, b) => b.lastBookingAt.getTime() - a.lastBookingAt.getTime());
+
+  return {
+    consents,
+    marketingConsentAt: user.marketingConsentAt,
+    nightAlertConsentAt: user.nightAlertConsentAt,
+    thirdPartyRecipients,
+  };
 }
 
 // ── 탈퇴 ──────────────────────────────────────────────
 
 const WITHDRAWN_NAME = "탈퇴한 회원";
+const WITHDRAWN_CUSTOMER_NAME = "탈퇴한 고객";
 
 /**
  * 회원 탈퇴.
- * - 진행 중인 예약이 있거나, 대표로 있는 사업장에 열린 회차·진행 중인 예약이 있으면 거절한다.
- * - 개인정보는 지우고(이메일·이름·연락처·수신 동의·관심·알림), 예약·결제 기록은 전자상거래법 보관 의무에 따라 남긴다.
+ * - 본인 확인: 비밀번호가 있는 계정은 비밀번호로, 카카오로만 가입한 계정은 확인 문구(WITHDRAW_CONFIRM_TEXT)로 한다.
+ * - 진행 중인 예약, 끝나지 않은 환불이 있거나, 대표로 있는 사업장에 열린 회차·진행 중인 예약이 있으면 거절한다.
+ * - 개인정보는 지우고(이메일·이름·연락처·카카오 연결·수신 동의·관심·알림), 예약·결제 기록은 남긴다.
+ *   예약에 남긴 이름·연락처(Booking.guestName·guestPhone)는 전자상거래법의 거래 기록 보관 의무(계약·대금 결제 5년)에 따라
+ *   지우지 않는다. 동의 기록(ConsentRecord)도 증빙이므로 그대로 둔다.
+ * - 사업자 고객 카드: 남는자리로 생긴 카드(MARKETPLACE·DIRECT)는 이름·연락처·메모를 가리고 이용 횟수만 남긴다.
+ *   사업자가 직접 등록했거나 가져온 카드(MANUAL·IMPORTED)는 사업자의 자료이므로 회원 연결만 끊는다.
  * - 대표로 있던 사업장은 운영을 종료하고(심사 중이면 반려, 승인됐으면 이용 정지) 모든 사업장 소속을 정리한다.
  */
-export async function withdrawAccount(input: { userId: string; password: string }): Promise<void> {
-  const { password } = parseInput(z.object({ password: passwordInputSchema }), input);
+export async function withdrawAccount(input: { userId: string; password?: string; confirmText?: string }): Promise<void> {
   const userId = input.userId;
+  // 비밀번호가 있는 계정은 비밀번호 없이는 아무것도 진행하지 않는다(형식 오류는 횟수에 넣지 않는다).
+  const password = input.password === undefined ? null : parseInput(z.object({ password: passwordInputSchema }), input).password;
   await enforceRateLimit(`withdraw:user:${userId}`, 5, 3600);
 
   const user = await prisma.user.findUnique({
@@ -774,8 +1007,14 @@ export async function withdrawAccount(input: { userId: string; password: string 
     select: { id: true, passwordHash: true, status: true, adminRole: true },
   });
   if (!user || user.status !== "ACTIVE") throw err.notFound("회원 정보를 찾을 수 없어요.");
-  if (!(await passwordMatches(password, user.passwordHash))) {
-    throw err.validation("비밀번호가 맞지 않아요.", { password: "비밀번호가 맞지 않아요." });
+  if (hasUsablePassword(user.passwordHash)) {
+    if (password === null) throw err.validation("비밀번호를 입력해 주세요.", { password: "비밀번호를 입력해 주세요." });
+    if (!(await passwordMatches(password, user.passwordHash))) {
+      throw err.validation("비밀번호가 맞지 않아요.", { password: "비밀번호가 맞지 않아요." });
+    }
+  } else if (typeof input.confirmText !== "string" || input.confirmText.trim() !== WITHDRAW_CONFIRM_TEXT) {
+    const message = `탈퇴하려면 '${WITHDRAW_CONFIRM_TEXT}'를 그대로 입력해 주세요.`;
+    throw err.validation(message, { confirmText: message });
   }
   if (user.adminRole) throw err.forbidden("운영자 계정은 탈퇴할 수 없어요. 최고 관리자에게 운영자 권한 해제를 먼저 요청해 주세요.");
 
@@ -794,6 +1033,16 @@ export async function withdrawAccount(input: { userId: string; password: string 
   });
   if (ownBooking) {
     throw err.conflict("진행 중인 예약이 있어 탈퇴할 수 없어요. 예약을 이용하거나 취소한 뒤 다시 시도해 주세요.");
+  }
+  // 환불이 끝나기 전에 탈퇴하면 결과를 알려 드릴 방법이 없어진다.
+  const openRefund = await prisma.refund.findFirst({
+    where: { status: { in: ["REQUESTED", "FAILED"] }, booking: { userId } },
+    select: { id: true },
+  });
+  if (openRefund) {
+    throw err.conflict(
+      "아직 끝나지 않은 환불이 있어 탈퇴할 수 없어요. 환불이 완료된 뒤 다시 시도해 주세요. 며칠이 지나도 그대로라면 고객센터로 문의해 주세요.",
+    );
   }
 
   const owned = await prisma.businessMember.findMany({
@@ -825,6 +1074,8 @@ export async function withdrawAccount(input: { userId: string; password: string 
       where: { id: userId, status: "ACTIVE" },
       data: {
         email: `withdrawn+${userId}@deleted.invalid`,
+        // 같은 카카오 계정으로 다시 가입할 수 있게 연결을 끊는다.
+        kakaoId: null,
         name: WITHDRAWN_NAME,
         nickname: null,
         phone: null,
@@ -868,6 +1119,18 @@ export async function withdrawAccount(input: { userId: string; password: string 
       data: { status: "SKIPPED", error: "탈퇴한 회원이라 보내지 않았어요" },
     });
     await tx.messageOutbox.updateMany({ where: { userId }, data: { recipient: WITHDRAWN_NAME } });
+
+    // 사업자 고객 카드. 가린 카드의 전화번호 자리에는 (사업장, 전화번호) 유니크를 지키면서 전화번호로 읽히지 않는 값을 넣는다
+    // (카드 ID 의 숫자를 영문 대문자로 바꿔 숫자가 하나도 없게 한다).
+    await tx.$executeRaw`
+      UPDATE "BusinessCustomer"
+      SET "name" = ${WITHDRAWN_CUSTOMER_NAME},
+          "phone" = 'withdrawn-' || translate("id", '0123456789', 'ABCDEFGHIJ'),
+          "memo" = NULL,
+          "userId" = NULL,
+          "updatedAt" = ${now}::timestamp
+      WHERE "userId" = ${userId} AND "source" IN ('MARKETPLACE', 'DIRECT')`;
+    await tx.businessCustomer.updateMany({ where: { userId }, data: { userId: null } });
 
     if (operatingIds.length > 0) {
       await tx.business.updateMany({
