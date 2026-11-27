@@ -1,0 +1,145 @@
+/* 설정 · 도움말 */
+.settings-h {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--ink-soft);
+}
+.settings-h:first-child {
+  margin-top: 0;
+}
+.settings-list {
+  display: flex;
+  flex-direction: column;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 2px dashed rgba(36, 27, 53, 0.14);
+}
+.settings-label {
+  font-weight: 800;
+}
+.settings-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 58px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.settings-switch::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 8px;
+  height: 26px;
+  border: var(--border);
+  border-radius: 999px;
+  background: var(--paper-2);
+  transition: background 0.12s ease;
+}
+.settings-switch::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 12px;
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid var(--ink);
+  border-radius: 50%;
+  background: var(--white);
+  transition: transform 0.12s ease;
+}
+.settings-switch.on::before {
+  background: var(--green);
+}
+.settings-switch.on::after {
+  transform: translateX(26px);
+}
+.settings-seg {
+  display: flex;
+  flex: 0 0 auto;
+  border: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--white);
+}
+.settings-seg-btn {
+  min-width: 46px;
+  min-height: 42px;
+  padding: 0 10px;
+  border: none;
+  border-right: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 800;
+  font-size: 13px;
+}
+.settings-seg-btn:last-child {
+  border-right: none;
+}
+.settings-seg-btn.on {
+  background: var(--ink);
+  color: var(--white);
+}
+.settings-help {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.settings-help-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 44%) 1fr;
+  gap: 10px;
+  width: 100%;
+  font-size: 13.5px;
+}
+.settings-help-key {
+  font-weight: 800;
+}
+.settings-kbd {
+  display: inline-block;
+  min-width: 22px;
+  margin-right: 2px;
+  padding: 0 5px;
+  border: 2px solid var(--ink);
+  border-bottom-width: 3.5px;
+  border-radius: 6px;
+  background: var(--white);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+.settings-link {
+  min-height: 38px;
+  font-size: 13px;
+  padding: 4px 10px;
+}
+.settings-notice p {
+  margin: 0;
+  font-size: 13px;
+}
+.settings-real {
+  padding: 8px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--yellow);
+  font-weight: 800;
+}
+.settings-foot {
+  margin-top: 14px;
+}
+@media (max-width: 420px) {
+  .settings-row {
+    flex-wrap: wrap;
+  }
+  .settings-seg {
+    margin-left: auto;
+  }
+}
