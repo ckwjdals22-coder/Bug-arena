@@ -14,7 +14,7 @@
         └────────────── shared/ (프로토콜·상수·월드·콘텐츠·규칙) ──────────────┘
 ```
 
-- **방(Room) = 독립된 시뮬레이션 단위.** 접속자 최대 20명 + 서버가 움직이는 NPC 28명. 방끼리는 상태를 공유하지 않는다 → 방 수를 늘리는 것이 곧 수평 확장(프로세스/DO 단위 분산).
+- **방(Room) = 독립된 시뮬레이션 단위.** 접속자 최대 20명 + 서버가 움직이는 NPC 28~52명(방 인원에 따라 늘고 준다). 방끼리는 상태를 공유하지 않는다 → 방 수를 늘리는 것이 곧 수평 확장(프로세스/DO 단위 분산).
 - **서버 권위:** NPC 이동, 포교 판정, 진행도(영향력/신도/업적)는 서버가 정한다. 클라이언트는 자기 캐릭터 이동만 예측하고 서버가 속도/경계를 검증한다.
 - **계정 없음:** 진행도는 서버가 HMAC 서명해 클라이언트 localStorage 에 맡긴다(`SignedSave`). 다음 접속 때 서명을 검증하고 이어서 쓴다.
 
@@ -36,7 +36,7 @@ server/
     npcSim.ts           NPC 시뮬레이션
     lobby.ts            방 목록/자동 배정
     save.ts             HMAC-SHA256(순수 JS) 서명기
-    systems/*.ts        기능 플러그인(교단, 단상, 배틀, 헌금함, 업적, 단속반, 기싸움)
+    systems/*.ts        기능 플러그인(교단, 단상, 배틀, 헌금함, 가상 매점, 업적, 단속반, 기싸움)
   node/main.ts          Node 어댑터: HTTP(정적 파일, /api/rooms, /healthz) + WebSocket
   node/ops.ts           운영 규칙(순수 함수): JSON 한 줄 로그, 압축 협상, Origin 검사, 보안 헤더
   node/persist.ts       DATA_DIR 점검·잠금, 서명 비밀키, 교단 기록 파일(.bak·깨진 파일 보존)
@@ -153,7 +153,14 @@ export class Room implements RoomApi {
 - `grant`: prog.inf/fol/coins/items 반영, `rank = rankForInfluence(inf)`. 오르면 `rankUp` 을 reward 에 담고 `feed('rank', …)`, `publish(['rank'])`. fol 이 변하면 `publish(['fol'])`. 교단이 있으면 `prog.cultFol/cultInf`(교주일 때)와 `host.cults?.record(...)` 반영. `reward` 전송, `markSave`.
 - `bump`/`setStat`: `prog.stats[k]` 갱신 후 모든 시스템 `onStat`. `markSave`.
 - `unlockAchievement`: 중복이면 false. `prog.ach.push`, `grant{why:'ach', inf: def.inf}` + reward 의 `ach` 에 id, `feed('ach', …)`.
-- `disconnect`: 대화 정리, `npcs.onPlayerLeave`, 시스템 `onLeave`, `leave` 방송.
+- `disconnect(conn, clean)`: `clean`(상대가 스스로 닫음: 닫힘 코드 1000/1001/1005)이면 바로 퇴장 — 대화 정리, `npcs.onPlayerLeave`, 시스템 `onLeave`, `leave` 방송. 아니면 아래 '끊김과 재접속' 대로 잠시 세워 둔다.
+
+**끊김과 재접속**
+- 비정상 끊김(망 전환, 응답 없어 끊은 경우)은 플레이어를 방에서 빼지 않고 `RESUME_GRACE_MS`(15초) 동안 `lingering` 에 둔다. 다른 사람에게는 서 있는 것으로 보인다(leave 를 보내지 않는다). 시간이 지나면 그때 퇴장 처리한다.
+- 같은 pid 의 `hello` 가 오면 새로 입장시키지 않고 **방에 있던 그 `PlayerState` 에 새 연결을 이어 붙인다**(`resume`): 같은 id·위치·진행도·배틀·신도·쿨타임. 옛 연결이 아직 살아 있으면(다른 탭, 서버가 아직 끊긴 줄 모르는 연결) `kick{why:'dup'}` 로 닫되 사람은 남긴다. 시스템의 `onLeave`/`onJoin` 은 불리지 않고 `onWelcome` 만 불린다.
+- 완전히 나간 뒤에는 `PlayerMemory.last` 에 자리(위치, 따라오던 신도 id·남은 시간·헌납 여부)를 5분 적어 둔다. 같은 방에 다시 들어오면 그 자리에서 시작하고, 아직 임자 없는 옛 신도를 다시 따라오게 한다(`restoreFollowers`).
+
+**접속자 메모(`PlayerMemory`)**: pid 별로 서버 메모리에만 두는 짧은 기억 — 쿨타임 표(`cd`: 초대·배틀·영입 보상 칸·시민의 거절 기억 키 등), 차단 목록, 입막음·이름 고정 만료 시각, 마지막 자리, 나가기 직전의 진행도(60초). 재접속·새 탭·방 이동으로 제재와 쿨타임을 지우지 못하게 한다. Node 어댑터는 모든 방이 하나의 저장소를 함께 쓰고, Cloudflare 어댑터는 방(Durable Object)마다 따로 두되 DO 저장소에 보관한다. 기억할 것이 없으면 나가는 즉시 지우고, 상한(2만 건)을 넘으면 오래된 것부터 버린다.
 
 **부정 방지/안정성:** 연결당 토큰 버킷(`RATE_LIMIT_PER_SEC`, 넘치면 `kick{why:'rate'}`), 메시지 크기 `MAX_MSG_BYTES`, 모든 필드 타입 검사(잘못되면 무시), 한 메시지 처리 중 예외는 잡아서 로그만 남기고 방은 계속 돈다.
 
@@ -175,7 +182,8 @@ export function createNpcSim(world: WorldDef, rnd: Rnd, events: NpcSimEvents, co
 - 이동 후 `resolveCollision` 으로 벽에 끼지 않게. NPC 끼리는 가까우면 약하게 밀어낸다(선택).
 - 위치/yaw/st 가 변하면 `dirty = true`. 혼잣말: 배회 중 25~60초에 한 번 `arch.mutter`(방 전체로 보면 너무 잦지 않게).
 - `canTalk`: `mode` 가 leave/enter/flee/script 면 'gone', `talker !== 0 && talker !== playerId` 면 'busy', `memo.get(playerId) > now` 면 'memo', 그 외 'ok'.
-- 성능: 방당 28명 × 10Hz. 틱당 할당을 최소화한다(경로는 목적지 정할 때만 계산).
+- **인구 조절:** 목표 시민 수 = `NPC_POP_BASE + NPC_POP_PER_PLAYER × 접속자`(설정한 기본 수 ~ `NPC_MAX_PER_ROOM` 52). 목표가 오르면 출구에서 한 명씩 걸어 들어오고(`onSpawn`), 내리면 60초 유예 뒤 한가한 시민(배회·정지 중, 주인·대화 상대 없음)을 출구로 내보낸 다음 목록에서 지운다(`onGone` → 방이 `npcGone` 방송). 빈 번호는 10초 뒤에 재사용한다. 스크립트 NPC(단속반 등)는 세지도 지우지도 않는다.
+- 성능: 방당 28~52명 × 10Hz. 틱당 할당을 최소화한다(경로는 목적지 정할 때만 계산).
 
 ### 4.4 Lobby (server/core/lobby.ts)
 
@@ -249,6 +257,9 @@ mountUi(ctx)
 - 시계: 4초마다 `ping`. `pong` 으로 `rtt` 와 `clockOffset`(부드럽게 보정) 갱신.
 - **보간:** 스냅샷 `{time, players, npcs}` 를 받으면 포함된 엔티티는 샘플 추가(`hold = t`), **포함되지 않은 엔티티는 마지막 샘플의 `hold = time`** 으로 늘린다. 렌더 시각 `rt = serverNow() - INTERP_DELAY_MS`. 샘플 a(가장 최근의 `t <= rt`)와 다음 샘플 b 사이: `rt <= a.hold` 면 a 위치, 아니면 `(rt - a.hold)/(b.t - a.hold)` 로 선형 보간(yaw 는 최단 각도). b 가 없으면 a 위치(외삽은 하지 않거나 100ms 이내로만). 오래된 샘플은 버린다. 순간이동(4m 이상 차이)은 보간하지 않고 스냅.
 - 내 캐릭터는 스냅샷에서 무시한다(예측값 사용).
+- **조용히 죽은 연결:** 게임 중 10초 동안 서버에서 아무것도 오지 않으면(휴대폰의 망 전환은 닫힘 신호 없이 멎는 일이 흔하다) 끊긴 것으로 보고 바로 재접속한다. 탭이 가려져 있는 동안은 재지 않는다.
+- **다시 들어왔을 때:** 끊기는 순간의 상태(배틀·설교·대화 중이었는지)를 적어 두었다가 welcome 뒤에 `bus.emit('resumed', {same, lost, idle})` 로 알린다. `same`(서버가 같은 번호로 이어 붙여 줌)이면 카메라를 돌리지 않고 입장음도 내지 않는다. 사라진 것이 있으면 한 줄로 안내한다.
+- `npcGone`: 시민이 방을 떠나 지워졌다 → `store.npcs` 에서 지우고 이름표·말풍선을 정리한다.
 
 ### 5.4 렌더
 
