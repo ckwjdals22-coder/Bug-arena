@@ -635,3 +635,50 @@ describe('전체 문자열', () => {
     expect(contentIndex.LOADING_TIPS).toBe(LOADING_TIPS)
   })
 })
+
+// ───────── 거리 간판(shared/world/data.ts) ─────────
+
+describe('거리 간판', () => {
+  interface Sign {
+    text: string
+    sub?: string
+    vertical?: boolean
+  }
+  /** 월드 데이터 어디에 있든 간판 모양(text+bg+fg) 객체를 전부 모은다 */
+  function allSigns(root: unknown): Sign[] {
+    const out: Sign[] = []
+    const seen = new Set<unknown>()
+    const walk = (o: unknown): void => {
+      if (!o || typeof o !== 'object' || seen.has(o)) return
+      seen.add(o)
+      const r = o as Record<string, unknown>
+      if (typeof r.text === 'string' && 'bg' in r && 'fg' in r) out.push(r as unknown as Sign)
+      for (const v of Object.values(r)) walk(v)
+    }
+    walk(root)
+    return out
+  }
+
+  it('간판 글자가 판에 들어갈 길이다(세로 8자, 가로 큰 글자 10자, 작은 글자 20자 이하)', async () => {
+    const world = await import('../../shared/world/data')
+    const signs = allSigns(world)
+    expect(signs.length).toBeGreaterThan(40)
+    const bad: string[] = []
+    for (const s of signs) {
+      const main = len(s.text.replace(/\s+/g, ''))
+      if (s.vertical && main > 8) bad.push(`세로 ${main}자: ${s.text}`)
+      if (!s.vertical && main > 10) bad.push(`가로 ${main}자: ${s.text}`)
+      if (s.sub && len(s.sub) > 20) bad.push(`작은 글자 ${len(s.sub)}자: ${s.sub}`)
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('포교 부스·천막 간판은 실제 길거리 수법을 그대로 옮기지 않는다(가짜 설문, 무료 측정, 붙잡는 말, 헌납 재촉)', async () => {
+    const world = await import('../../shared/world/data')
+    const texts = allSigns(world).flatMap((s) => [s.text, s.sub ?? ''])
+    const tactics = ['설문조사', '무료 측정', '기운 무료', '잠깐 시간', '진짜 30초', '지금 바로', '부족하십니까', '헌납하세요']
+    expect(texts.filter((t) => tactics.some((w) => t.includes(w)))).toEqual([])
+    // 헌납 천막·그 옆 벽 간판에는 '전부 가상' 표시가 남아 있다
+    expect(texts.filter((t) => t.includes('전부 가상')).length).toBeGreaterThanOrEqual(2)
+  })
+})

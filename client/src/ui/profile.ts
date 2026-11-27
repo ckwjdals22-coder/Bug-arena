@@ -111,6 +111,10 @@ export function mountProfile(ctx: AppContext): void {
           if (res.why === 'empty') msg = '닉네임을 입력해 주세요.'
           else if (res.why === 'short') msg = `닉네임은 ${NAME_MIN}자 이상이어야 해요.`
           else if (res.why === 'long') msg = `닉네임은 ${NAME_MAX}자까지 쓸 수 있어요.`
+          else if (res.why === 'real')
+            msg = res.hit
+              ? `'${res.hit}'처럼 실존 인물·단체·브랜드로 보일 수 있는 이름은 쓸 수 없어요. 교주님은 허구여야 하거든요.`
+              : '실존 인물·단체로 보일 수 있는 이름은 쓸 수 없어요.'
           else msg = '쓸 수 없는 말이 들어 있어요. 다른 이름으로 지어 주세요.'
         } else if (res.text === store.profile.name) {
           msg = '지금 쓰고 있는 이름이에요.'

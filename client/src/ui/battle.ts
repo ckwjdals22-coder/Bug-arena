@@ -1,6 +1,6 @@
 /**
  * 포교 배틀 UI: 신청 버튼 → 상대의 수락 카드 → 점수판 → 결과.
- * 양쪽이 동의해야만 시작한다(카드를 무시하거나 '사양한다'를 누르면 아무 일도 일어나지 않는다).
+ * 양쪽이 동의해야만 시작한다(카드를 무시하거나 '사양할게요'를 누르면 아무 일도 일어나지 않는다).
  */
 import { BATTLE_COOLDOWN_MS, INF_BATTLE_LOSE, INF_BATTLE_WIN } from '../../../shared/constants'
 import type { BattleState } from '../../../shared/protocol'
@@ -38,7 +38,7 @@ export function mountBattle(ctx: AppContext): void {
         waiting = true
         playSfx(ctx, 'click')
         net.send({ t: 'battle', a: 'req', to: target })
-        ui.toast(`${store.nameOf(target)}님에게 포교 배틀을 신청했습니다`, 'info')
+        ui.toast(`${store.nameOf(target)}님에게 포교 배틀을 신청했어요`, 'info')
         ui.refreshContext()
       },
     }
@@ -72,13 +72,13 @@ export function mountBattle(ctx: AppContext): void {
     clear(card)
     card.append(
       h('div.battle-card-title', '⚔️ 포교 배틀 신청'),
-      h('div.battle-card-text', h('b', store.nameOf(from)), '님이 승부를 걸어 왔습니다.'),
-      h('div.battle-card-sub', '60초 동안 시민 신도를 더 많이 모으는 쪽이 이깁니다.'),
+      h('div.battle-card-text', h('b', store.nameOf(from)), '님이 승부를 걸어 왔어요.'),
+      h('div.battle-card-sub', '60초 동안 시민 신도를 더 많이 모으는 쪽이 이겨요.'),
       h('div.battle-card-bar', h('i', { style: { animationDuration: `${ms}ms` } })),
       h(
         'div.row.end',
-        h('button.btn.sm', { onclick: () => answer(false) }, '사양한다'),
-        h('button.btn.primary', { onclick: () => answer(true) }, '받아들인다'),
+        h('button.btn.sm', { onclick: () => answer(false) }, '사양할게요'),
+        h('button.btn.primary', { onclick: () => answer(true) }, '받아들일게요'),
       ),
     )
     card.classList.remove('hidden')
@@ -157,13 +157,13 @@ export function mountBattle(ctx: AppContext): void {
       h(
         'div.battle-result-text',
         voided
-          ? '상대가 자리를 떠서 없던 승부가 됐습니다.'
+          ? '상대가 자리를 떠서 없던 승부가 됐어요.'
           : left && won
-            ? '상대가 자리를 떴습니다. 앞서고 있었으니 승리입니다.'
+            ? '상대가 자리를 떴어요. 앞서고 있었으니 승리예요.'
             : tie
-              ? '둘 다 말은 많았습니다.'
+              ? '둘 다 말은 많았어요.'
               : won
-                ? '오늘 이 거리의 포교왕은 당신입니다.'
+                ? '오늘 이 거리의 포교왕은 당신이에요.'
                 : '괜찮아요. 거절도 수집이 됩니다.',
       ),
       ...(voided ? [] : [h('div.battle-result-inf', `✨ 영향력 +${inf}`)]),
@@ -190,12 +190,12 @@ export function mountBattle(ctx: AppContext): void {
           waiting = false
           if (m.why === 'cool') {
             readyAt = Math.max(readyAt, performance.now() + 4000)
-            ui.toast('방금 배틀을 했거나 거절당했어요. 잠시 뒤에 다시 신청하세요.', 'info')
+            ui.toast('방금 배틀을 했거나 거절당했어요. 잠시 뒤에 다시 신청해 주세요.', 'info')
           } else if (m.why === 'busy') ui.toast('상대가 지금 다른 승부 중이에요.', 'info')
-          else if (m.why === 'far') ui.toast('너무 멀어요. 가까이 가서 신청하세요.', 'info')
+          else if (m.why === 'far') ui.toast('너무 멀어요. 가까이 가서 신청해 주세요.', 'info')
           else if (wasWaiting) {
             readyAt = performance.now() + BATTLE_COOLDOWN_MS
-            ui.toast(m.why === 'left' ? '상대가 자리를 떴어요.' : '상대가 승부를 사양했습니다. 현명한 선택일지도요.', 'info')
+            ui.toast(m.why === 'left' ? '상대가 자리를 떴어요.' : '상대가 승부를 사양했어요. 현명한 선택일지도요.', 'info')
             playSfx(ctx, 'decline')
           }
           ui.refreshContext()

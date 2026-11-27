@@ -9,7 +9,7 @@
  */
 import './talk.css'
 import { NPC_REJECT_MEMORY_MS, TALK_TIMEOUT_MS } from '../../../shared/constants'
-import { ARCHETYPE_BY_ID } from '../../../shared/content/archetypes'
+import { ARCHETYPE_INFO_BY_ID } from '../../../shared/content/archetypeInfo'
 import { PITCH_LINES } from '../../../shared/content/lines'
 import type { PitchCategory } from '../../../shared/content/types'
 import { NpcModel, type PitchOutcome } from '../../../shared/types'
@@ -165,7 +165,7 @@ export function mountTalk(ctx: AppContext): void {
   function npcLabel(npcId: number): { name: string; arch: string } {
     const pub = store.npcs.get(npcId)?.pub
     if (!pub) return { name: '지나가던 시민', arch: '' }
-    return { name: pub.name, arch: ARCHETYPE_BY_ID.get(pub.arch)?.name ?? '' }
+    return { name: pub.name, arch: ARCHETYPE_INFO_BY_ID.get(pub.arch)?.name ?? '' }
   }
 
   function isWaiting(t: TalkState): boolean {

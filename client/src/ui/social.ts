@@ -15,6 +15,7 @@ import type { SInvited } from '../../../shared/protocol'
 import type { CultRef } from '../../../shared/types'
 import type { AppContext, ContextAction } from '../core/contracts'
 import { saveProfile } from '../core/store'
+import { josa } from '../share/kit'
 import { cultTagEl, emblemBadge } from './cult'
 import { inkOn, makePopup, playSfx, rankName } from './hud'
 import { h, hex } from './kit'
@@ -361,7 +362,8 @@ export function mountSocial(ctx: AppContext): void {
 
   bus.onMsg('err', (m) => {
     if (m.code === 'renamed') {
-      ui.toast(`닉네임 신고가 여러 번 들어와 이름이 「${m.msg ?? store.profile.name}」(으)로 바뀌었어요. 10분 뒤부터 프로필에서 다른 이름으로 바꿀 수 있어요.`, 'bad', 6000)
+      const renamed = m.msg ?? store.profile.name
+      ui.toast(`닉네임 신고가 여러 번 들어와 이름이 「${renamed}」${josa(renamed, '으로', '로')} 바뀌었어요. 10분 뒤부터 프로필에서 다른 이름으로 바꿀 수 있어요.`, 'bad', 6000)
     } else if (m.code === 'muted') {
       ui.toast('신고가 여러 번 들어와 5분 동안 말풍선과 초대를 쉬어 갑니다. 잠시 산책하고 와요!', 'bad', 6000)
     }

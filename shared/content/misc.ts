@@ -249,7 +249,7 @@ export const LOADING_TIPS: readonly string[] = [
   // ── 단상·천막·이벤트 ──
   '광장 단상에 올라가면 [오늘의 계시]를 발표할 수 있습니다.',
   '광장에서 집단 설교가 열리면 [설교 참여]로 끼어 보세요.',
-  '신도를 데리고 줄무늬 천막에 가면 [헌납 타임]이 열립니다.',
+  '신도를 데리고 줄무늬 천막의 가상 헌금함에 가면 [헌납 타임]이 열립니다.',
   '헌납품은 전부 쓸모없습니다. 그래서 모으는 맛이 있습니다.',
   '가상 코인으로 살 수 있는 것은 뿌듯함뿐입니다.',
   '호루라기 소리가 들리면 [도망가기]. 품위는 나중에 챙기세요.',
@@ -445,3 +445,37 @@ export const DUELS: readonly DuelDef[] = [
 /** 타이틀 화면 하단 고지 */
 export const DISCLAIMER =
   '이 게임의 모든 교단·인물·교리는 허구이며 풍자 코미디입니다. 실존 종교·단체·인물과 무관하고, 실제 포교·금전 요구·개인정보 수집을 하지 않습니다.'
+
+// ───────────────────────── 교단 이름 추천 조합기 재료 ─────────────────────────
+// 클라이언트의 '다른 이름 추천' 버튼이 쓴다. 공용 데이터로 둔 까닭: 모든 조합이 서버와 같은 이름 검사를
+// 통과하는지 단위 테스트가 전부 돌려 보기 위해서다(누구나 겪는 평범한 일상 — 음식/잠/출퇴근/날씨 — 만 쓴다).
+
+export const CULT_NAME_THEMES: readonly string[] = [
+  '라면', '만두', '김밥', '붕어빵', '야식', '낮잠', '이불', '늦잠', '알람', '출근길', '퇴근', '환승', '월요일', '금요일',
+  '장마', '소나기', '미세먼지', '에어컨', '택배', '슬리퍼', '양말', '리모컨', '편의점', '떡볶이',
+]
+export const CULT_NAME_SUFFIXES: readonly string[] = ['교', '회', '동호회', '연구회', '구원단', '친목회', '결사대', '수호단', '협회', '클럽']
+
+function hasBatchim(ch: string): boolean {
+  const code = ch.charCodeAt(0) - 0xac00
+  return code >= 0 && code < 11172 && code % 28 !== 0
+}
+
+/**
+ * 주제 + 접미사로 만드는 이름 모양들.
+ * 한 글자 접미사(교, 회)는 붙여 쓴다: '라면 교'는 띄어쓰기가 틀려 고장 난 이름처럼 보인다.
+ */
+export const CULT_NAME_PATTERNS: readonly ((theme: string, suffix: string) => string)[] = [
+  (a, s) => a + s,
+  (a, s) => (Array.from(s).length > 1 ? `${a} ${s}` : a + s),
+  (a) => `${a}의 계시`,
+  (a) => `${a}${hasBatchim(a.slice(-1)) ? '을' : '를'} 믿는 모임`,
+  (a) => `${a} 수호 동맹`,
+]
+
+/** 조합기가 만들 수 있는 이름 전부(중복 제거). 테스트용 */
+export function allCultNameCandidates(): string[] {
+  const out = new Set<string>()
+  for (const p of CULT_NAME_PATTERNS) for (const a of CULT_NAME_THEMES) for (const s of CULT_NAME_SUFFIXES) out.add(p(a, s))
+  return [...out]
+}

@@ -109,7 +109,7 @@ export function mountTutorial(ctx: AppContext): void {
       step = 'talk' // 표시만 유지하고 곧 끝낸다
       lingerTimer = setTimeout(() => {
         if (step === 'done' || store.phase !== 'playing') return
-        show('🎉 신도가 따라옵니다! 단상 📜 과 헌금함 🎁 에도 데려가 보세요')
+        show('🎉 신도가 따라옵니다! 단상 📜 과 가상 헌금함 🎁 에도 데려가 보세요')
         lingerTimer = setTimeout(finish, 6000)
       }, 2800)
     } else if (++fails >= 3) {

@@ -132,7 +132,7 @@ export function mountAchievements(ctx: AppContext): void {
       // 입장 직후 이미 끝나 있던 것은 알리지 않는다(배지로 충분)
       if (!primed) continue
       const def = DAILY_QUEST_BY_ID.get(id)
-      if (def) ui.toast(`📿 수행 완료: ${def.text} — 메뉴에서 보상 받기`, 'good', 2800)
+      if (def) ui.toast(`✅ 수행 완료: ${def.text} — 메뉴에서 보상 받기`, 'good', 2800)
     }
     primed = true
   }

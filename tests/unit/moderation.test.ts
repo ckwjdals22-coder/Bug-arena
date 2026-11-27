@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { CULT_NAME_SUGGESTIONS, CULT_TITLE_SUGGESTIONS, RANKS } from '../../shared/content/core'
-import { NICK_ADJ, NICK_NOUN } from '../../shared/content/misc'
+import { CULT_NAME_SUGGESTIONS, CULT_TITLE_SUGGESTIONS, OUTFITS, RANKS } from '../../shared/content/core'
+import { ARCHETYPES } from '../../shared/content/archetypes'
+import { NICK_ADJ, NICK_NOUN, allCultNameCandidates } from '../../shared/content/misc'
+import { CULT_NAME_MAX } from '../../shared/constants'
 import { NAME_MAX } from '../../shared/constants'
 import {
   checkCultName,
@@ -53,7 +55,7 @@ describe('욕설·비하 차단', () => {
 describe('실존 단체·인물 차단(교단 이름/칭호)', () => {
   const block = [
     '신천지', '신 천 지', '신.천.지', '통일교', '여호와의증인', '대순진리회', 'JMS', '구원파', '기독교', '불교', '천주교', '가톨릭', '이슬람', '순복음',
-    '라면교회', '퇴근성당', '김밥사찰', '목사님', '전도사', '스님', '교황', '예수', '부처님', '하나님', '메시아', 'church', 'Jesus',
+    '라면교회', '퇴근성당', '김밥사찰', '목사님', '스님', '교황', '예수', '부처님', '하나님', '메시아', 'church', 'Jesus',
     '국민의힘', '더불어민주당', '민주당', '정의당', '공산당', '대통령', '국회의원', '윤석열', '이재명', '문재인', '박근혜', '김정은', '트럼프', '나치', 'ISIS',
   ]
   it.each(block)('막는다: %s', (s) => {
@@ -107,11 +109,40 @@ describe('닉네임', () => {
     for (const a of NICK_ADJ) for (const n of NICK_NOUN) if (!checkNickname(a + n).ok) bad.push(a + n)
     expect(bad).toEqual([])
   })
-  it('기본 제공 교단 이름·칭호·직급명은 전부 통과한다', () => {
+  it('기본 제공 교단 이름·칭호·직급명·복장명·조합기 출력은 전부 통과한다', () => {
     for (const s of CULT_NAME_SUGGESTIONS) expect(checkCultName(s).ok, s).toBe(true)
     for (const s of CULT_TITLE_SUGGESTIONS) expect(checkTitle(s).ok, s).toBe(true)
-    // 직급명은 명세에 있는 이름이라 욕설 검사만 통과하면 된다(사용자 입력이 아니다)
-    for (const r of RANKS) expect(hasBadWord(r.name), r.name).toBe(false)
+    // 직급명·복장명은 게임이 직접 쓰는 말이다: 플레이어가 그대로 칭호나 교단 이름으로 써도 막히면 안 된다
+    // ('길거리 전도사'가 '실존 종교로 보인다'며 거절당하던 문제)
+    for (const r of RANKS) {
+      expect(hasBadWord(r.name), r.name).toBe(false)
+      expect(checkTitle(r.name), r.name).toMatchObject({ ok: true })
+      expect(checkCultName(r.name), r.name).toMatchObject({ ok: true })
+    }
+    for (const o of OUTFITS) {
+      expect(checkTitle(o.name), o.name).toMatchObject({ ok: true })
+      expect(checkCultName(o.name), o.name).toMatchObject({ ok: true })
+    }
+    // 추천 조합기가 만드는 이름 전부: 막히는 이름은 조용히 다시 뽑혀 '이불교' 같은 자연스러운 농담이 사라졌었다
+    const bad = allCultNameCandidates().filter((n) => Array.from(n).length <= CULT_NAME_MAX && !checkCultName(n).ok)
+    expect(bad).toEqual([])
+    // 한 글자 접미사 앞에는 띄어쓰기가 없다('라면 교'는 틀린 띄어쓰기)
+    expect(allCultNameCandidates().filter((n) => / [교회]$/.test(n))).toEqual([])
+  })
+  it('NPC 이름표(시민 이름)도 닉네임 검사를 통과한다', () => {
+    const bad = ARCHETYPES.flatMap((a) => a.names).filter((n) => {
+      const r = checkNickname(n)
+      return !r.ok && r.why !== 'long'
+    })
+    expect(bad).toEqual([])
+  })
+  it('실존 인물·단체·브랜드 이름은 닉네임으로도 쓸 수 없고, 무엇이 걸렸는지 알려 준다', () => {
+    expect(checkNickname('정명석')).toEqual({ ok: false, why: 'real', hit: '정명석' })
+    expect(checkNickname('윤석열')).toEqual({ ok: false, why: 'real', hit: '윤석열' })
+    expect(checkNickname('하나님')).toEqual({ ok: false, why: 'real', hit: '하나님' })
+    expect(checkNickname('스타벅스교주')).toEqual({ ok: false, why: 'real', hit: '스타벅스' })
+    // 게임의 일반어 '교주'는 계속 쓸 수 있다
+    expect(checkNickname('라면교주')).toMatchObject({ ok: true })
   })
 })
 
@@ -171,3 +202,58 @@ describe('실존 단체 필터의 오탐(띄어쓰기를 지우며 생기는 우
   })
 })
 
+
+/**
+ * 2차 검수에서 뚫린 문자열 전부. 막혀야 할 것과 통과해야 할 것을 한 표로 지킨다.
+ * 눈에 안 보이는·닮은꼴 글자는 코드로 만든다(소스에 직접 넣지 않는다).
+ */
+describe('2차 검수 표: 실존 인물·단체·브랜드, 변형 욕설, 오탐', () => {
+  const cyrA = String.fromCharCode(0x430) // 키릴 а
+  const greekMu = String.fromCharCode(0x3bc) // 그리스 μ
+  const cyrTse = String.fromCharCode(0x446) // 키릴 ц
+
+  const realBlock = [
+    // 정치인·독재자·실존 교주가 닉네임으로 통과하던 것
+    '윤석열', '이재명', '문재인', '트럼프', '김정은', '히틀러', '이만희', '정명석', '예수', '교황', '부처님', '하나님', '신천지교주',
+    // 실존 교주·창시자
+    '이만희교', '정명석 모임', '문선명교', '유병언회', '이재록교',
+    // 정치인
+    '한동훈교', '조국교', '조국', '이준석회', '안철수교', '김건희교', '국힘당',
+    // 종교 구호
+    '할렐루야교', '아멘교', '나무아미타불', '관세음보살', '알라후아크바르',
+    // 브랜드·캐릭터·유명인
+    '스타벅스교', '삼성교', '카카오교', '쿠팡교', '배민교', '포켓몬교', '피카츄회', 'BTS교', '방탄교', '뉴진스회', '아이유교', '페이커교', '손흥민교',
+    // 우회 표기
+    '통1교', '지천신', '씬천지', '신쳔지', `n${cyrA}zi교`, 'n4zi', '제이엠에스', '윤석렬교', '이재멍', '박근헤',
+  ]
+  it.each(realBlock)('실존 이름 차단(닉네임·교단 이름·칭호): %s', (s) => {
+    for (const r of [checkNickname(s), checkCultName(s), checkTitle(s)]) {
+      expect(r.ok, `${s} ${JSON.stringify(r)}`).toBe(false)
+      if (!r.ok) expect(r.why).toBe('real')
+    }
+  })
+
+  const badBlock = [
+    'tlqkf', 'qudtls', 'whssk', '시벌', '쉬발', '쒸발', '씌발', '시이발', 'ㅅ1발', '씨8', '18놈', '개쌔끼', '벙신', '븅딱',
+    `f${greekMu}ck`, `f${cyrTse}ck`, '니엄마', '애미없는', '애비없는', '느개비', '짱개', '쪽발이', '전라도놈', '경상도놈', '한녀', '애자', '찐따',
+    '정신병자', '죽고싶다',
+  ]
+  it.each(badBlock)('욕설·비하 차단: %s', (s) => {
+    expect(hasBadWord(s)).toBe(true)
+    expect(checkNickname(s)).toMatchObject({ ok: false, why: 'bad' })
+  })
+
+  const pass = [
+    '길거리 전도사', '수상한 전도사', '라면 전도사', '이불교', '이불 교', '조국 사랑', '방탄조끼', '착한녀석', '애자일', '애장품', '옷발',
+    '2018년생', '18세 교주', '배달의 성자들', '로또의 계시', '라면교', '명예 과장', '도시 8번 출구',
+  ]
+  it.each(pass)('오탐 없음(닉네임·교단 이름·칭호): %s', (s) => {
+    expect(checkTitle(s), s).toMatchObject({ ok: true })
+    expect(checkCultName(s), s).toMatchObject({ ok: true })
+    expect(checkNickname(s), s).toMatchObject({ ok: true })
+  })
+
+  it('이불교회처럼 진짜 낱말이 이어지면 다시 걸린다', () => {
+    expect(findRealGroup('이불교회')).not.toBeNull()
+  })
+})

@@ -83,7 +83,7 @@ export const OFFER_ITEMS: readonly OfferItem[] = [
   { id: 'mystery_usb', name: '정체불명의 USB', desc: "열어 보면 '새 폴더 (3)'만 들어 있다.", icon: '💾', rarity: 2, coins: 5 },
   { id: 'pizza_table', name: '피자 삼발이', desc: '피자 한가운데를 묵묵히 지키던 작은 탁자.', icon: '🍕', rarity: 2, coins: 5 },
   { id: 'dead_battery', name: '다 쓴 건전지', desc: '리모컨 안에서 임무를 마쳤다.', icon: '🔋', rarity: 2, coins: 4 },
-  { id: 'granny_tangerine', name: '검은 봉지에 든 귤', desc: '출처는 할머니. 거절은 불가능하다.', icon: '🍊', rarity: 2, coins: 6 },
+  { id: 'granny_tangerine', name: '검은 봉지에 든 귤', desc: '출처는 동네 고수. 거절은 불가능하다.', icon: '🍊', rarity: 2, coins: 6 },
   { id: 'fish_soy', name: '물고기 모양 간장', desc: '초밥은 떠나고 물고기만 남았다.', icon: '🍣', rarity: 2, coins: 4 },
   { id: 'old_diary', name: '작년 다이어리', desc: '1월 둘째 주까지만 꼼꼼하다.', icon: '📔', rarity: 2, coins: 5 },
   { id: 'bubble_film', name: '기포 낀 보호필름', desc: '붙이다 포기한 흔적이 생생하다.', icon: '📱', rarity: 2, coins: 4 },

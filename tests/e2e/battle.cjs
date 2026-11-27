@@ -30,7 +30,7 @@ const { OUT, sleep, startServer, launch, openPlayer, state, waitState, walkToPla
     check('신청하면 상대 화면에 수락 카드가 뜬다', (await card.innerText()).includes(a0.name))
     await B.page.screenshot({ path: path.join(OUT, 'battle-2-card-mobile.png') })
     check('수락 전에는 배틀이 시작되지 않는다', (await state(A.page)).battles.length === 0)
-    await card.locator('button', { hasText: '받아들인다' }).click()
+    await card.locator('button', { hasText: '받아들일게요' }).click()
     await waitState(A.page, (s) => s.battles.length === 1, 5000, 'battle start A')
     await waitState(B.page, (s) => s.battles.length === 1, 5000, 'battle start B')
     check('수락하면 양쪽 모두 점수판이 뜬다', (await A.page.locator('.battle-board').isVisible()) && (await B.page.locator('.battle-board').isVisible()))

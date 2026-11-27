@@ -7,7 +7,7 @@
  * 헌납품과 가상 코인은 장식일 뿐이며 실제 돈과 무관하다는 문구를 항상 보여 준다.
  */
 import { OFFER_COOLDOWN_MS, npcKey } from '../../../shared/constants'
-import { ARCHETYPES } from '../../../shared/content/archetypes'
+import { ARCHETYPE_INFO } from '../../../shared/content/archetypeInfo'
 import { OFFER_ITEMS, OFFER_ITEM_BY_ID } from '../../../shared/content/offerings'
 import type { OfferItem } from '../../../shared/content/types'
 import { WORLD } from '../../../shared/world'
@@ -18,7 +18,7 @@ import { stageBusy, stagePlay } from './stage'
 import './offering.css'
 
 const RARITY_NAME = ['', '흔함', '드묾', '희귀', '전설'] as const
-const NOTE = '가상 코인과 헌납품은 게임 속 장식입니다. 실제 돈과 무관하며, 살 수도 팔 수도 없습니다.'
+const NOTE = '가상 코인과 헌납품은 게임 속 장식입니다. 실제 돈과 무관하며, 돈으로 살 수도 돈으로 바꿀 수도 없습니다. 코인은 천막의 가상 매점에서 쓸모없는 칭호와 바꿀 수 있어요.'
 
 export function mountOffering(ctx: AppContext): void {
   const { store, bus, ui } = ctx
@@ -89,7 +89,7 @@ export function mountOffering(ctx: AppContext): void {
       h('div.offering-head', best >= 4 ? '✨ 전설의 헌납품! ✨' : '🎁 신도들이 무언가 내밀었습니다'),
       list,
       h('div.offering-coins', `🪙 가상 코인 +${fmt(coins)}`),
-      h('div.offering-note', '쓸모는 없지만 마음만은 받았습니다. (눌러서 닫기)'),
+      h('div.offering-note', '쓸모는 없지만 마음만은 받았습니다. 코인은 천막 매점에서 쓸 수 있어요. (눌러서 닫기)'),
     )
     reveal.classList.toggle('legend', best >= 4)
     reveal.classList.remove('hidden')
@@ -113,7 +113,7 @@ export function mountOffering(ctx: AppContext): void {
     const me = store.me
     const mine = !!me && m.p === me.id
     if (mine && m.items.length === 0) {
-      ui.toast('헌납할 신도가 없어요. 신도를 헌금함 앞으로 데려오세요.', 'info')
+      ui.toast('헌납할 신도가 없어요. 신도를 가상 헌금함 앞으로 데려오세요.', 'info')
       return
     }
     // 구경거리: 헌납한 시민 머리 위에 물건 아이콘, 헌금함에 동전
@@ -199,14 +199,14 @@ export function mountOffering(ctx: AppContext): void {
       }
 
       function drawPeople(): void {
-        const known = ARCHETYPES.filter((a) => met.has(a.id)).length
-        const pct = ARCHETYPES.length ? Math.round((known / ARCHETYPES.length) * 100) : 0
+        const known = ARCHETYPE_INFO.filter((a) => met.has(a.id)).length
+        const pct = ARCHETYPE_INFO.length ? Math.round((known / ARCHETYPE_INFO.length) * 100) : 0
         content.append(
-          h('div.offering-summary', h('div', h('b', `${known} / ${ARCHETYPES.length}`), ` 유형을 만났습니다 (${pct}%)`)),
+          h('div.offering-summary', h('div', h('b', `${known} / ${ARCHETYPE_INFO.length}`), ` 유형을 만났습니다 (${pct}%)`)),
           h('div.bar', h('i', { style: { width: `${pct}%` } })),
         )
         const list = h('div.offering-people')
-        for (const a of ARCHETYPES) {
+        for (const a of ARCHETYPE_INFO) {
           list.append(
             met.has(a.id)
               ? h('div.card.flat.offering-person', h('div.offering-person-name', a.name), h('div.muted.small', a.desc))

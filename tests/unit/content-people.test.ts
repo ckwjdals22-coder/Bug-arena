@@ -5,11 +5,12 @@
 import { describe, expect, it } from 'vitest'
 import { LINES_PER_TALK } from '../../shared/constants'
 import { ARCHETYPE_BY_ID, ARCHETYPES } from '../../shared/content/archetypes'
+import { ARCHETYPE_INFO, ARCHETYPE_INFO_BY_ID } from '../../shared/content/archetypeInfo'
 import { ACCESSORIES, FACES, HATS, MAX_RANK, OUTFIT_COLORS, OUTFITS } from '../../shared/content/core'
 import { PITCH_LINES } from '../../shared/content/lines'
 import { PITCH_CATEGORIES } from '../../shared/content/types'
 import type { Archetype, PitchCategory, PitchLine, ReactionSet } from '../../shared/content/types'
-import { type PitchContext, joinChance, pickLines, resolvePitch } from '../../shared/rules/pitch'
+import { JOIN_CHANCE_MIN, type PitchContext, joinChance, pickLines, resolvePitch } from '../../shared/rules/pitch'
 import { mulberry32, pick, pickWeighted } from '../../shared/rng'
 import type { PitchOutcome } from '../../shared/types'
 
@@ -209,6 +210,15 @@ describe('ARCHETYPES', () => {
     for (const id of ['office', 'student', 'rival', 'cat']) expect(ARCHETYPE_BY_ID.has(id), id).toBe(true)
   })
 
+  it('클라이언트용 가벼운 표(archetypeInfo)가 전체 표와 같은 순서·id·이름·설명이다', () => {
+    expect(ARCHETYPE_INFO.map((a) => ({ id: a.id, name: a.name, desc: a.desc }))).toEqual(
+      ARCHETYPES.map((a) => ({ id: a.id, name: a.name, desc: a.desc })),
+    )
+    expect(ARCHETYPE_INFO_BY_ID.size).toBe(ARCHETYPES.length)
+    // 대사·확률은 들어 있지 않다(번들에 실려 상성이 읽히지 않게)
+    for (const a of ARCHETYPE_INFO) expect(Object.keys(a).sort()).toEqual(['desc', 'id', 'name'])
+  })
+
   it('특수 유형: 라이벌 1종, 전생의 왕(royal) 2종 이상, 동물은 고양이뿐이다', () => {
     const by = (s: Archetype['special']): string[] => ARCHETYPES.filter((a) => a.special === s).map((a) => a.id)
     expect(by('rival')).toEqual(['rival'])
@@ -255,7 +265,11 @@ describe('ARCHETYPES', () => {
       expect(a.desc.length, `${a.id}.desc`).toBeGreaterThan(0)
       expect(a.names.length, `${a.id}.names`).toBeGreaterThanOrEqual(5)
       expect(a.greet.length, `${a.id}.greet`).toBeGreaterThanOrEqual(3)
-      expect(a.re.join?.length ?? 0, `${a.id}.re.join`).toBeGreaterThanOrEqual(4)
+      // 합류 불가 유형은 합류 대사를 두지 않는다(절대 쓰이지 않는 '넘어가는' 대사가 데이터에 남지 않게)
+      if (a.recruitable === false) {
+        expect(a.re.join ?? [], `${a.id}.re.join`).toEqual([])
+        for (const c of PITCH_CATEGORIES) expect(a.catRe?.[c]?.join ?? [], `${a.id}.catRe.${c}.join`).toEqual([])
+      } else expect(a.re.join?.length ?? 0, `${a.id}.re.join`).toBeGreaterThanOrEqual(4)
       expect(a.re.no?.length ?? 0, `${a.id}.re.no`).toBeGreaterThanOrEqual(5)
       if (a.curious > 0) expect(a.re.more?.length ?? 0, `${a.id}.re.more`).toBeGreaterThanOrEqual(2)
       // flee 가 0 인 유형도 멘트의 fleeBias 로 도망칠 수 있으므로 도망 대사는 전원 필수
@@ -370,7 +384,7 @@ describe('ARCHETYPES', () => {
       '아, 저 이미 다른 데 다녀요!',
       '혹시 전생에 제가 왕이었나요?',
       '1분이라면서 왜 20분째예요?',
-      '인상이 좋으면 그냥 지나가게 해주세요.',
+      '인상이 좋으면 그냥 지나가게 해 주세요.',
       '흥미로운데요? 더 들어볼게요.',
       '저도 사실 교주입니다.',
     ]) {
@@ -462,7 +476,11 @@ describe('상성과 밸런스', () => {
     for (const a of people) {
       const chances = PITCH_CATEGORIES.map((c) => chanceFor(a, c))
       const spread = Math.max(...chances) - Math.min(...chances)
-      expect(spread, `${a.id} spread`).toBeGreaterThanOrEqual(0.2 - 1e-9)
+      // 합류 불가 유형은 확률이 늘 0 이고, 상한이 있는 유형은 상한이 허락하는 만큼만 벌어진다
+      if (a.recruitable !== false) {
+        const room = Math.min(0.2, (a.maxChance ?? 1) - JOIN_CHANCE_MIN)
+        expect(spread, `${a.id} spread`).toBeGreaterThanOrEqual(room - 1e-9)
+      }
       const likes = PITCH_CATEGORIES.map((c) => a.like[c] ?? 0)
       expect(Math.max(...likes), `${a.id} 좋아하는 소재`).toBeGreaterThanOrEqual(0.1)
       expect(Math.min(...likes), `${a.id} 싫어하는 소재`).toBeLessThanOrEqual(-0.1)
@@ -499,6 +517,32 @@ describe('상성과 밸런스', () => {
       expect(a, id).toBeDefined()
       if (a) expect(a.base, id).toBeLessThan(mean)
     }
+    // 동네 어른과 취준생은 절대 신도가 되지 않는다(역할이 뒤집히는 것이 농담이다)
+    expect(ARCHETYPE_BY_ID.get('granny')?.recruitable).toBe(false)
+    expect(ARCHETYPE_BY_ID.get('jobseeker')?.recruitable).toBe(false)
+    // 외국인 이웃·육아 중인 아빠는 상한이 낮고, 고양이는 전설이다
+    expect(ARCHETYPE_BY_ID.get('expat')?.maxChance).toBeLessThanOrEqual(0.22)
+    expect(ARCHETYPE_BY_ID.get('dad')?.maxChance).toBeLessThanOrEqual(0.3)
+    expect(ARCHETYPE_BY_ID.get('cat')?.maxChance).toBeLessThanOrEqual(0.03)
+  })
+
+  it('합류 불가 유형은 최고 직급·2라운드·최선의 멘트·온갖 보정에도 확률 0, 상한 있는 유형은 상한을 넘지 않는다', () => {
+    const hot = ctx({ rank: MAX_RANK, round: 2, streak: 9, failStreak: 9, buff: 0.3 })
+    for (const a of ARCHETYPES) {
+      const best = Math.max(...PITCH_LINES.map((l) => joinChance(a, l, hot)))
+      if (a.recruitable === false) expect(best, a.id).toBe(0)
+      if (a.maxChance !== undefined) expect(best, a.id).toBeLessThanOrEqual(a.maxChance + 1e-12)
+      // 실제 판정에서도 합류·왕 결과가 나오지 않는다
+      if (a.recruitable === false) {
+        const rnd = mulberry32(31)
+        for (let i = 0; i < 2000; i++) {
+          const r = resolvePitch(a, pick(PITCH_LINES as PitchLine[], rnd), hot, rnd)
+          expect(['join', 'king'], `${a.id} ${r.outcome}`).not.toContain(r.outcome)
+        }
+      }
+    }
+    // 최소한 위 두 유형은 실제로 합류 불가로 표시돼 있어야 이 검사가 의미가 있다
+    expect(ARCHETYPES.filter((a) => a.recruitable === false).length).toBeGreaterThanOrEqual(2)
   })
 
   interface SimResult {

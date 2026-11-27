@@ -444,7 +444,7 @@ export const BUILDINGS: BuildingDef[] = [
         w: 9.5,
         h: 2.6,
         mount: 'paint',
-        sign: { text: '기운이 부족하십니까?', sub: '지금 바로 헌납하세요 (전부 가상)', bg: 0x4a3a6e, fg: 0xffe08a },
+        sign: { text: '양말 한 짝도 받습니다', sub: '쓸모없는 것만 받아요 · 전부 가상', bg: 0x4a3a6e, fg: 0xffe08a },
       },
     ],
   },
@@ -830,16 +830,17 @@ export const PROPS: PropDef[] = [
     z: -32.3,
     yaw: 0,
     w: 9,
-    sign: { text: '인상 좋은 분 환영', sub: '수상역 광장 포교 연합', bg: 0xffffff, fg: 0x6b4fb3 },
+    sign: { text: '인상 안 좋아도 환영', sub: '수상역 광장 포교 연합', bg: 0xffffff, fg: 0x6b4fb3 },
   },
 
   // ── 포교 부스 거리(남쪽 = 인도를 본다) ──
-  { kind: 'booth', x: BOOTH_X[0], z: BOOTH_Z, variant: 'meter', color: 0x7b5ea7, sign: { text: '기운 무료 측정', bg: 0x7b5ea7, fg: 0xffffff } },
-  { kind: 'booth', x: BOOTH_X[1], z: BOOTH_Z, variant: 'face', color: 0xe0a030, sign: { text: '관상 봐 드립니다', bg: 0xe0a030, fg: 0x3a2410 } },
-  { kind: 'booth', x: BOOTH_X[2], z: BOOTH_Z, variant: 'survey', color: 0x3f8f6b, sign: { text: '30초 설문조사', bg: 0x3f8f6b, fg: 0xffffff } },
-  { kind: 'xbanner', x: BOOTH_X[0] + 1.55, z: -13.95, sign: { text: '인상 좋으시네요', bg: 0xf6efff, fg: 0x6b4fb3, vertical: true } },
-  { kind: 'xbanner', x: BOOTH_X[1] + 1.55, z: -13.95, sign: { text: '잠깐 시간 되세요', bg: 0xfff3d6, fg: 0x8a4a12, vertical: true } },
-  { kind: 'xbanner', x: BOOTH_X[2] + 1.55, z: -13.95, sign: { text: '진짜 30초', bg: 0xe9fff3, fg: 0x2a6a4c, vertical: true } },
+  // 간판은 실제 길거리 수법(가짜 설문, 무료 기운 측정, '잠깐 시간 되세요')을 그대로 옮기지 않고 한 번 비튼다
+  { kind: 'booth', x: BOOTH_X[0], z: BOOTH_Z, variant: 'meter', color: 0x7b5ea7, sign: { text: '기운 측정', sub: '결과는 늘 "보통"', bg: 0x7b5ea7, fg: 0xffffff } },
+  { kind: 'booth', x: BOOTH_X[1], z: BOOTH_Z, variant: 'face', color: 0xe0a030, sign: { text: '관상 봐 드립니다', sub: '거울로요 · 셀프', bg: 0xe0a030, fg: 0x3a2410 } },
+  { kind: 'booth', x: BOOTH_X[2], z: BOOTH_Z, variant: 'survey', color: 0x3f8f6b, sign: { text: '1문항 설문', sub: '팥 vs 슈크림', bg: 0x3f8f6b, fg: 0xffffff } },
+  { kind: 'xbanner', x: BOOTH_X[0] + 1.55, z: -13.95, sign: { text: '다들 인상 좋으세요', bg: 0xf6efff, fg: 0x6b4fb3, vertical: true } },
+  { kind: 'xbanner', x: BOOTH_X[1] + 1.55, z: -13.95, sign: { text: '바쁘면 그냥 가세요', bg: 0xfff3d6, fg: 0x8a4a12, vertical: true } },
+  { kind: 'xbanner', x: BOOTH_X[2] + 1.55, z: -13.95, sign: { text: '교주 시계로 30초', bg: 0xe9fff3, fg: 0x2a6a4c, vertical: true } },
   { kind: 'tree', x: 29.8, z: -15.2, variant: 'green' },
 
   // ── 버스 정류장 ──

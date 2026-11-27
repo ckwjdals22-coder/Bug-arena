@@ -92,7 +92,7 @@ export const CAPTIONS: Record<CaptionKey, readonly CaptionDef[]> = {
   ],
   reject: [
     { text: '깔끔하게 거절당했다', style: 'gungseo' },
-    { text: '그는 오늘도 말을 걸었다', style: 'gungseo' },
+    { text: '교주는 오늘도 말을 걸었다', style: 'gungseo' },
     { text: '거절 장인의 길', style: 'pop' },
     { text: '(괜찮아… 원래 그런 거야…)', style: 'whisper' },
     { text: '교주, 표정은 아직 웃고 있다', style: 'pop' },
@@ -123,7 +123,7 @@ export const CAPTIONS: Record<CaptionKey, readonly CaptionDef[]> = {
     { text: '{n}연속 거절, 이제 즐기기 시작', style: 'pop', min: 5 },
     { text: '(전단지라도 돌려 볼까…)', style: 'whisper', min: 5 },
     { text: '거절 {n}연속 | 기록을 세우는 중', style: 'gungseo', min: 10 },
-    { text: '{n}연속 거절의 사나이, 전설이 되다', style: 'pop', min: 10 },
+    { text: '{n}연속 거절의 주인공, 전설이 되다', style: 'pop', min: 10 },
     { text: '(이 정도면 거절이 나를 따라온다)', style: 'whisper', min: 10 },
   ],
   winStreak: [

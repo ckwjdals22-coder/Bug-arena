@@ -10,6 +10,7 @@
 import './cult.css'
 import { CULT_NAME_MAX, CULT_NAME_MIN, TITLE_MAX } from '../../../shared/constants'
 import { CULT_COLORS, CULT_EMBLEMS, CULT_NAME_SUGGESTIONS, CULT_TITLE_SUGGESTIONS } from '../../../shared/content/core'
+import { CULT_NAME_PATTERNS, CULT_NAME_SUFFIXES, CULT_NAME_THEMES } from '../../../shared/content/misc'
 import type { SCultRes } from '../../../shared/protocol'
 import { type TextCheck, checkCultName, checkTitle } from '../../../shared/rules/moderation'
 import type { CultRef, CultScore } from '../../../shared/types'
@@ -19,32 +20,13 @@ import { clear, fmt, h, hex } from './kit'
 
 const SCORE_REFRESH_MS = 10_000
 
-/** 추천 이름 조합기: 누구나 겪는 평범한 일상(음식/잠/출퇴근/날씨…)만 쓴다 */
-const NAME_THEMES: readonly string[] = [
-  '라면', '만두', '김밥', '붕어빵', '야식', '낮잠', '이불', '늦잠', '알람', '출근길', '퇴근', '환승', '월요일', '금요일',
-  '장마', '소나기', '미세먼지', '에어컨', '택배', '슬리퍼', '양말', '리모컨', '편의점', '떡볶이',
-]
-const NAME_SUFFIXES: readonly string[] = ['교', '회', '동호회', '연구회', '구원단', '친목회', '결사대', '수호단', '협회', '클럽']
-const NAME_PATTERNS: readonly ((a: string, b: string) => string)[] = [
-  (a, s) => a + s,
-  (a, s) => `${a} ${s}`,
-  (a) => `${a}의 계시`,
-  (a) => `${a}을 믿는 모임`.replace(/([가-힣])을/, (m, c: string) => c + (hasBatchim(c) ? '을' : '를')),
-  (a) => `${a} 수호 동맹`,
-]
-
-function hasBatchim(ch: string): boolean {
-  const code = ch.charCodeAt(0) - 0xac00
-  return code >= 0 && code < 11172 && code % 28 !== 0
-}
-
 function pick<T>(list: readonly T[]): T {
   return list[Math.floor(Math.random() * list.length)]!
 }
 
 export function randomCultName(): string {
   for (let i = 0; i < 30; i++) {
-    const name = pick(NAME_PATTERNS)(pick(NAME_THEMES), pick(NAME_SUFFIXES))
+    const name = pick(CULT_NAME_PATTERNS)(pick(CULT_NAME_THEMES), pick(CULT_NAME_SUFFIXES))
     if (Array.from(name).length <= CULT_NAME_MAX && checkCultName(name).ok) return name
   }
   return pick(CULT_NAME_SUGGESTIONS)
@@ -64,7 +46,7 @@ export function textCheckMessage(c: TextCheck, what: '이름' | '칭호'): strin
     case 'real':
       // 무엇 때문인지 알려 준다(띄어쓰기를 무시하고 보기 때문에 뜻밖의 낱말이 걸릴 수 있다)
       return c.hit
-        ? `'${c.hit}'처럼 실존 종교·단체·인물로 보일 수 있는 말은 쓸 수 없어요. 전부 허구여야 하거든요.`
+        ? `'${c.hit}'처럼 실존 종교·단체·인물·브랜드로 보일 수 있는 말은 쓸 수 없어요. 전부 허구여야 하거든요.`
         : '실존 단체처럼 보이는 이름은 쓸 수 없어요. 전부 허구여야 하거든요.'
   }
 }
