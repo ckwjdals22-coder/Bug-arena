@@ -1,0 +1,20 @@
+{
+  "name": "doas-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "도를 아십니까? — Cloudflare Workers + Durable Objects 실시간 서버 어댑터(같은 server/core 를 돌린다)",
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "dev": "wrangler dev",
+    "build:client": "npm --prefix .. run build:client",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && wrangler deploy --dry-run --outdir .wrangler/dry",
+    "deploy": "npm run build:client && wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261125.1",
+    "wrangler": "4.168.0"
+  }
+}

@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "도를 아십니까? — 교주 시뮬레이터: 3D 로우폴리 실시간 멀티플레이 풍자 웹게임",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "concurrently -k -n server,client -c magenta,cyan \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch server/node/main.ts",
@@ -16,7 +18,11 @@
     "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/run.cjs",
-    "loadtest": "tsx tools/loadtest.ts"
+    "loadtest": "tsx tools/loadtest.ts",
+    "cf:dev": "npm --prefix worker run dev",
+    "cf:check": "npm --prefix worker run check",
+    "cf:smoke": "node tests/e2e/worker-smoke.cjs",
+    "media": "node tools/make-media.cjs"
   },
   "dependencies": {
     "ws": "8.23.0"

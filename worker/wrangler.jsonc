@@ -1,0 +1,50 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "doas-game",
+	"main": "src/index.ts",
+	// 관례: 프로젝트를 만든 날짜로 고정하고, 올릴 때는 그 사이 바뀐 compatibility flag 를 읽고 테스트한다.
+	// 이 날짜 이후라서: 이진 프레임 기본값 Blob(→ 코드에서 arraybuffer 로 바꿈), Close 자동 응답, nodejs_compat 기본 활성.
+	"compatibility_date": "2026-11-23",
+	"upload_source_maps": true,
+
+	// 정적 클라이언트(npm run build:client → dist/client). 경로는 이 설정 파일 기준.
+	// 에셋과 일치하는 요청은 Worker 를 거치지 않고 무료로 서빙되고, 에셋에 없는 경로만 Worker 의 fetch() 로 온다.
+	// 클라이언트를 다른 곳(파운더리 등)에 따로 올린다면 이 블록을 통째로 지워도 된다(docs/DEPLOY-CLOUDFLARE.md).
+	"assets": {
+		"directory": "../dist/client",
+		"binding": "ASSETS",
+		// 같은 이름의 파일이 생겨도 API 가 가려지지 않게 이 경로는 항상 Worker 가 먼저 받는다.
+		"run_worker_first": ["/ws", "/api/*", "/healthz"]
+		// not_found_handling 은 기본값(none). SPA 모드를 켜면 없는 JS 파일에도 index.html 이 200 으로 나간다.
+	},
+
+	"durable_objects": {
+		"bindings": [
+			{ "name": "ROOM", "class_name": "RoomDO" },
+			{ "name": "LOBBY", "class_name": "LobbyDO" }
+		]
+		// code_update_strategy 생략 = { "mode": "deferred", "max_delay": 300 }: 배포 후 최대 5분 안에 깨어 있는 방이 재시작된다.
+	},
+
+	// DO 클래스 선언(2026-07~ 의 현재 방식). 새 프로젝트는 SQLite 백엔드만 만들 수 있다(무료 플랜 포함).
+	// 주의: 이 블록과 옛 "migrations" 는 함께 쓸 수 없고, exports 로 한 번 배포하면 migrations 로 돌아갈 수 없다.
+	"exports": {
+		"RoomDO": { "type": "durable-object", "storage": "sqlite" },
+		"LobbyDO": { "type": "durable-object", "storage": "sqlite" }
+	},
+
+	// 비밀이 아닌 설정만(Node 서버의 같은 이름 환경변수와 같은 의미). 대시보드에서 바꾼 값은 다음 배포 때 덮어써진다.
+	"vars": {
+		"ROOMS": "3",
+		"MAX_ROOMS": "3",
+		"ROOM_CAPACITY": "20",
+		"NPCS": "28",
+		// 쉼표 구분. 비우면 전부 허용. 예: "https://play.example.com,https://example.github.io"
+		"ALLOWED_ORIGINS": ""
+	},
+	// 누락되면 wrangler deploy 가 실패한다. 로컬에서는 이 폴더의 .dev.vars 에서 읽는다(.dev.vars.example 참고).
+	"secrets": { "required": ["SAVE_SECRET"] },
+
+	// WebSocket 메시지 하나하나가 '호출 로그'가 되지 않게 한다(로그 과금 방지). console.* 와 예외는 그대로 남는다.
+	"observability": { "enabled": true, "logs": { "invocation_logs": false } }
+}

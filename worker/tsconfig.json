@@ -1,0 +1,20 @@
+{
+  // 루트 tsconfig(client/server)와 따로 검사한다: Workers 런타임 타입(@cloudflare/workers-types)은
+  // Node·DOM 타입과 겹치는 전역이 많아서 한 프로젝트에 섞으면 충돌한다.
+  // wrangler 가 esbuild 로 번들하므로 ../../server/core, ../../shared 를 상대 경로로 그대로 import 한다.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["src"]
+}
