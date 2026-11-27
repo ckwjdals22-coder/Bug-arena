@@ -9,6 +9,7 @@ import { roomFromUrl } from '../core/config'
 import type { AppContext } from '../core/contracts'
 import { playSfx, rankDef } from './hud'
 import { clear, h } from './kit'
+import { stagePlay } from './stage'
 
 interface Notice {
   icon: string
@@ -209,19 +210,31 @@ export function mountSystem(ctx: AppContext): void {
   )
   const rankBox = h('div.system-rank.hidden', { role: 'status' }, rankCard)
   let rankTimer = 0
+  /** 무대(stage.ts) 자리를 돌려주는 함수: 눌러서 일찍 닫으면 다음 알림이 바로 이어진다 */
+  let releaseStage: (() => void) | undefined
+
+  let rankFrame = 0
 
   function hideRank(): void {
     clearTimeout(rankTimer)
+    // 보이기 직전(다음 프레임)에 숨기라는 말이 오면 그 보이기도 취소한다(결과 배너에 비켜 줄 때 카드가 남지 않게)
+    cancelAnimationFrame(rankFrame)
     rankBox.classList.add('hidden')
+    const release = releaseStage
+    releaseStage = undefined
+    release?.()
   }
-  function showRank(def: RankDef): void {
+  function showRank(def: RankDef, done?: () => void): void {
     rankName.textContent = def.name
     rankCheer.textContent = def.cheer
     rankUnlock.textContent = def.unlock
     // 연달아 승급해도 등장 연출이 다시 돌도록 한 번 숨겼다가 보인다
     rankBox.classList.add('hidden')
-    requestAnimationFrame(() => rankBox.classList.remove('hidden'))
+    cancelAnimationFrame(rankFrame)
+    rankFrame = requestAnimationFrame(() => rankBox.classList.remove('hidden'))
     clearTimeout(rankTimer)
+    // 앞 카드의 자리는 여기서 돌려주지 않는다(이미 끝난 차례다) → 새 자리만 기억
+    releaseStage = done
     rankTimer = window.setTimeout(hideRank, RANK_MS)
   }
   rankCard.addEventListener('click', hideRank)
@@ -306,16 +319,26 @@ export function mountSystem(ctx: AppContext): void {
 
   bus.on('rankUp', (rank) => {
     const def = rankDef(rank)
-    playSfx(ctx, 'rank')
-    const me = store.me
-    if (me) {
-      try {
-        ctx.fx.burst('rank', me.x, me.y, me.z)
-      } catch {
-        /* 이펙트 실패는 무시 */
+    // 첫 신도를 얻는 순간에는 승급(영향력 30)도 같이 오는 일이 많다 → 결과 배너·헌납 카드·업적 배너가 지나간 뒤 마지막에 띄운다.
+    // 소리·불꽃도 카드가 뜰 때 같이 나야 "무엇을 축하하는지" 이어진다
+    stagePlay(3, RANK_MS, (done) => {
+      if (store.phase !== 'playing') {
+        done()
+        return
       }
-    }
-    showRank(def)
+      playSfx(ctx, 'rank')
+      const me = store.me
+      if (me) {
+        try {
+          ctx.fx.burst('rank', me.x, me.y, me.z)
+        } catch {
+          /* 이펙트 실패는 무시 */
+        }
+      }
+      showRank(def, done)
+      // 카드가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(stage.ts)
+      return hideRank
+    })
   })
 
   resetNames()

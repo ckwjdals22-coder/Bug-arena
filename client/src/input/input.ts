@@ -24,6 +24,8 @@ interface PointerInfo {
   startAt: number
   moved: number
   role: 'joy' | 'look' | 'mouse'
+  /** 핀치로 시작한 손가락: 떼어도 '짧은 탭 = 그곳으로 이동'으로 치지 않는다 */
+  pinch?: boolean
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -90,24 +92,32 @@ export function createInput(canvas: HTMLCanvasElement, uiRoot: HTMLElement): Inp
       moved: 0,
       role: 'mouse',
     }
-    if (
-      e.pointerType !== 'mouse' &&
-      joy &&
-      joy.moved <= TAP_MAX_MOVE &&
-      performance.now() - joy.startAt < PINCH_GRACE_MS &&
-      Math.hypot(e.clientX - joy.startX, e.clientY - joy.startY) < PINCH_NEAR_PX
-    ) {
-      // 두 손가락이 거의 동시에, 서로 가까이 닿았고 첫 손가락이 아직 움직이지 않았다 = 걷기가 아니라 확대/축소(핀치)다.
-      // 화면 왼쪽 절반에서 시작한 핀치가 캐릭터를 걷게 만들지 않도록, 조이스틱이 되려던 첫 손가락을 시점 조작으로 돌린다.
-      // (양손 엄지로 이동+시점을 동시에 잡는 경우는 두 손가락이 멀리 떨어져 있어 여기에 걸리지 않는다)
-      joy.role = 'look'
-      joy = null
-      joyX = 0
-      joyY = 0
-      joyBase.classList.add('hidden')
+    // 두 손가락이 거의 동시에, 서로 가까이 닿았고 첫 손가락이 아직 움직이지 않았다 = 걷기가 아니라 확대/축소(핀치)다.
+    // 두 손가락 모두 시점(look) 손가락으로 만든다: 첫 손가락이 조이스틱이었으면 놓아 주고(걷지 않게),
+    // 두 번째 손가락도 왼쪽 절반에 닿았다고 새 조이스틱이 되면 안 된다(그러면 시점 손가락이 하나뿐이라 줌이 안 되고 캐릭터만 걷는다).
+    // (양손 엄지로 이동+시점을 동시에 잡는 경우는 두 손가락이 멀리 떨어져 있거나 시간 차가 커서 여기에 걸리지 않는다)
+    let pinchStart = false
+    if (e.pointerType !== 'mouse') {
+      const now = performance.now()
+      for (const p of pointers.values()) {
+        if (p.role === 'mouse' || p.moved > TAP_MAX_MOVE || now - p.startAt >= PINCH_GRACE_MS) continue
+        if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) >= PINCH_NEAR_PX) continue
+        pinchStart = true
+        p.pinch = true
+        if (p === joy) {
+          p.role = 'look'
+          joy = null
+          joyX = 0
+          joyY = 0
+          joyBase.classList.add('hidden')
+        }
+      }
     }
     if (e.pointerType === 'mouse') {
       info.role = 'mouse'
+    } else if (pinchStart) {
+      info.role = 'look'
+      info.pinch = true
     } else if (!joy && e.clientX < window.innerWidth * 0.5) {
       info.role = 'joy'
       joy = info
@@ -177,7 +187,7 @@ export function createInput(canvas: HTMLCanvasElement, uiRoot: HTMLElement): Inp
       joyBase.classList.add('hidden')
     }
     if (p.role === 'look') pinchDist = 0
-    if (!cancelled && quick && (e.pointerType !== 'mouse' || e.button === 0)) {
+    if (!cancelled && quick && !p.pinch && (e.pointerType !== 'mouse' || e.button === 0)) {
       tap = { clientX: e.clientX, clientY: e.clientY }
     }
   }

@@ -15,7 +15,7 @@ import type { PitchCategory } from '../../../shared/content/types'
 import { NpcModel, type PitchOutcome } from '../../../shared/types'
 import type { AppContext, FxKind, SfxName } from '../core/contracts'
 import type { TalkState } from '../core/store'
-import { isTyping, playSfx } from './hud'
+import { anyPopupOpen, isTyping, playSfx } from './hud'
 import { holdStage } from './stage'
 import { clear, h } from './kit'
 
@@ -380,6 +380,8 @@ export function mountTalk(ctx: AppContext): void {
   window.addEventListener('keydown', (e) => {
     if (!open || e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping() || ui.openPanelId) return
     if (e.key === 'Escape') {
+      // 메뉴 팝업이 대화 창 위에 떠 있으면 이번 Esc 는 팝업 몫이다(hud.ts 가 닫는다)
+      if (anyPopupOpen()) return
       playSfx(ctx, 'close')
       ctx.actions.endTalk()
       return

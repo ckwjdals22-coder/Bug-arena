@@ -261,7 +261,8 @@ async function main() {
     await check('PC: 승급하면 토스트의 [임명장 받기]가 임명장 탭을 연다', async () => {
       await A.evaluate(() => window.__doas.bus.emit('rankUp', 1))
       const btn = A.locator('.cert-toast-btn')
-      await btn.waitFor({ state: 'visible', timeout: 4000 })
+      // 토스트는 승급 카드(4.8초)가 무대에서 내려간 뒤에 뜬다(ui/stage.ts 순서: 승급 카드 → 토스트)
+      await btn.waitFor({ state: 'visible', timeout: 9000 })
       await btn.click()
       await waitCard(A, 'certificate')
       return '임명장 탭 열림'

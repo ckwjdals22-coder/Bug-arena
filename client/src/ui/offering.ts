@@ -14,7 +14,7 @@ import { WORLD } from '../../../shared/world'
 import type { AppContext } from '../core/contracts'
 import { playSfx } from './hud'
 import { clear, fmt, h } from './kit'
-import { stageBusy, stagePlay } from './stage'
+import { stagePlay } from './stage'
 import './offering.css'
 
 const RARITY_NAME = ['', '흔함', '드묾', '희귀', '전설'] as const
@@ -58,11 +58,16 @@ export function mountOffering(ctx: AppContext): void {
   ui.root.append(reveal)
   let hideTimer: ReturnType<typeof setTimeout> | undefined
   const timers: ReturnType<typeof setTimeout>[] = []
+  /** 무대(stage.ts)에서 받은 자리를 돌려주는 함수: 눌러서 일찍 닫으면 다음 카드(업적·승급)가 바로 이어진다 */
+  let releaseStage: (() => void) | undefined
 
   function closeReveal(): void {
     clearTimeout(hideTimer)
     for (const t of timers.splice(0)) clearTimeout(t)
     reveal.classList.add('hidden')
+    const release = releaseStage
+    releaseStage = undefined
+    release?.()
   }
   reveal.addEventListener('click', closeReveal)
 
@@ -80,8 +85,12 @@ export function mountOffering(ctx: AppContext): void {
     )
   }
 
-  function showReveal(itemIds: string[], coins: number): void {
+  /** 공개 카드가 실제로 떠 있는 시간: 물건이 하나씩 나오는 만큼 길어진다(무대 자리도 이만큼 잡아야 다른 카드가 겹치지 않는다) */
+  const revealMs = (n: number): number => 3200 + n * 700
+
+  function showReveal(itemIds: string[], coins: number, done?: () => void, newIds?: ReadonlySet<string>): void {
     closeReveal()
+    releaseStage = done
     clear(reveal)
     const list = h('div.offering-list')
     const best = itemIds.reduce((m, id) => Math.max(m, OFFER_ITEM_BY_ID.get(id)?.rarity ?? 1), 1)
@@ -89,14 +98,14 @@ export function mountOffering(ctx: AppContext): void {
       h('div.offering-head', best >= 4 ? '✨ 전설의 헌납품! ✨' : '🎁 신도들이 무언가 내밀었습니다'),
       list,
       h('div.offering-coins', `🪙 가상 코인 +${fmt(coins)}`),
-      h('div.offering-note', '쓸모는 없지만 마음만은 받았습니다. 코인은 천막 매점에서 쓸 수 있어요. (눌러서 닫기)'),
+      h('div.offering-note', '쓸모는 없지만 마음만은 받았습니다. 가상 코인은 실제 돈과 무관하며 천막 매점에서만 쓸 수 있어요. (눌러서 닫기)'),
     )
     reveal.classList.toggle('legend', best >= 4)
     reveal.classList.remove('hidden')
     itemIds.forEach((id, i) => {
       const item = OFFER_ITEM_BY_ID.get(id)
       if (!item) return
-      const isNew = !seen.has(id)
+      const isNew = newIds ? newIds.has(id) : !seen.has(id)
       seen.add(id)
       timers.push(
         setTimeout(() => {
@@ -106,7 +115,7 @@ export function mountOffering(ctx: AppContext): void {
       )
     })
     timers.push(setTimeout(() => playSfx(ctx, 'coin'), 180 + itemIds.length * 320))
-    hideTimer = setTimeout(closeReveal, 3200 + itemIds.length * 700)
+    hideTimer = setTimeout(closeReveal, revealMs(itemIds.length))
   }
 
   bus.onMsg('offered', (m) => {
@@ -116,12 +125,14 @@ export function mountOffering(ctx: AppContext): void {
       ui.toast('헌납할 신도가 없어요. 신도를 가상 헌금함 앞으로 데려오세요.', 'info')
       return
     }
-    // 구경거리: 헌납한 시민 머리 위에 물건 아이콘, 헌금함에 동전
+    // 구경거리: 헌납한 시민 머리 위에 물건 아이콘, 헌금함에 동전.
+    // 내가 받은 것이면 머리 위 글자는 띄우지 않는다: 같은 물건을 공개 카드가 곧 크게 보여 주고,
+    // 포교 성공 순간에는 "신도 +1"·영향력 글자와 말풍선이 이미 그 자리에 몰려 있어 이름이 겹쳐 읽히지 않는다
     for (const [npcId, itemId] of m.items) {
       const item = OFFER_ITEM_BY_ID.get(itemId)
       const v = store.npcs.get(npcId)
       if (!item || !v) continue
-      ctx.overlay.pop(v.x, v.y + 1.9, v.z, `${item.icon} ${item.name}`, item.rarity >= 3 ? 'gold' : 'info')
+      if (!mine) ctx.overlay.pop(v.x, v.y + 1.9, v.z, `${item.icon} ${item.name}`, item.rarity >= 3 ? 'gold' : 'info')
       ctx.fx.burst('coin', v.x, v.y, v.z)
       if (item.rarity >= 4) ctx.overlay.bubble(npcKey(npcId), '이건… 가보입니다.', 2600, 'npc')
     }
@@ -130,10 +141,19 @@ export function mountOffering(ctx: AppContext): void {
     if (mine) {
       fresh = true
       const ids = m.items.map((x) => x[1])
-      // 포교 성공 직후에 신도가 바로 물건을 내민 경우: 결과 배너·자막이 지나간 뒤에 보여 준다(한꺼번에 겹치지 않게).
-      // 헌금함에서 직접 [헌납 타임]을 누른 경우처럼 화면이 비어 있으면 바로 띄운다
-      if (stageBusy()) stagePlay(1.5, 2400, () => showReveal(ids, m.coins))
-      else showReveal(ids, m.coins)
+      // 늘 무대 줄에 선다: 포교 성공 직후라면 결과 배너·자막이 지나간 뒤에 뜨고, 카드가 떠 있는 내내 업적·승급 카드가 기다린다.
+      // 헌금함에서 직접 [헌납 타임]을 누른 경우처럼 무대가 비어 있으면 곧바로(40ms 뒤) 뜬다
+      // 처음 보는 물건(NEW)은 지금 정해 둔다: 결과 배너에 밀려 카드가 다시 나와도 NEW 표시가 사라지지 않게
+      const newIds = new Set(ids.filter((id) => !seen.has(id)))
+      stagePlay(1.5, revealMs(ids.length), (done) => {
+        if (store.phase !== 'playing') {
+          done()
+          return
+        }
+        showReveal(ids, m.coins, done, newIds)
+        // 카드가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(무대가 숨기고, 덜 보였으면 다시 줄 세운다)
+        return closeReveal
+      })
     }
   })
   bus.on('phase', (p) => {

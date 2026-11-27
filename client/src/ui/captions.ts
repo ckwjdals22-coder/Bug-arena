@@ -22,6 +22,8 @@ const BEAT_MS = 350
 /** 표시 시간: 짧은 자막 1.4초 ~ 긴 자막 1.9초 */
 const SHOW_MIN_MS = 1400
 const SHOW_MAX_MS = 1900
+/** 사라지는 애니메이션 길이. 무대 자리도 이것까지 잡아야 다음 배너가 사라지는 자막 위에 겹치지 않는다 */
+const FADE_MS = 180
 /** 가만히 서 있으면 자막 */
 const IDLE_MS = 40_000
 
@@ -89,7 +91,7 @@ export function mountCaptions(ctx: AppContext): CaptionsApi {
       hideTimer = window.setTimeout(() => {
         showing = false
         if (pending) schedule()
-      }, 180)
+      }, FADE_MS)
     }, ms)
   }
 
@@ -97,7 +99,7 @@ export function mountCaptions(ctx: AppContext): CaptionsApi {
   function schedule(): void {
     if (showing || beatTimer !== undefined || queued) return
     queued = true
-    stagePlay(1, BEAT_MS + SHOW_MAX_MS, () => {
+    stagePlay(1, BEAT_MS + SHOW_MAX_MS + FADE_MS, () => {
       queued = false
       if (!showing && beatTimer === undefined) beatTimer = window.setTimeout(next, BEAT_MS)
     })

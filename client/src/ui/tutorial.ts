@@ -11,7 +11,11 @@ import { saveProfile } from '../core/store'
 import { clear, h } from './kit'
 import './tutorial.css'
 
-type Step = 'move' | 'talk' | 'pick' | 'done'
+/**
+ * cheer = 첫 포교 성공 뒤 '신도가 따라옵니다' 축하 한 줄을 띄우고 끝나기를 기다리는 중.
+ * 이 단계에서는 대화·포교 결과가 와도 안내를 되돌리지 않는다(성공한 사람에게 다시 '말을 걸어 보세요'가 뜨면 안 된다)
+ */
+type Step = 'move' | 'talk' | 'pick' | 'cheer' | 'done'
 
 interface Pin {
   icon: string
@@ -69,7 +73,7 @@ export function mountTutorial(ctx: AppContext): void {
     syncHintSpace()
   }
   function showStep(): void {
-    if (step === 'done' || store.phase !== 'playing') {
+    if (step === 'done' || step === 'cheer' || store.phase !== 'playing') {
       hint.classList.add('hidden')
       return
     }
@@ -101,14 +105,19 @@ export function mountTutorial(ctx: AppContext): void {
     }
   })
   bus.onMsg('pitchRes', (m) => {
-    if (step === 'done' || !store.me || m.p !== store.me.id || m.o === 'more') return
+    if (step === 'done' || step === 'cheer' || !store.me || m.p !== store.me.id || m.o === 'more') return
     clearTimeout(lingerTimer)
     if (m.o === 'join' || m.o === 'king') {
-      // 결과 배너·업적 카드가 한꺼번에 뜨는 순간에는 잠깐 비켜 있다가, 그것들이 지나간 뒤에 다음 안내를 띄운다
+      // 결과 배너·업적 카드가 한꺼번에 뜨는 순간에는 잠깐 비켜 있다가, 그것들이 지나간 뒤에 다음 안내를 띄운다.
+      // 이제부터는 다음 대화가 바로 시작돼도 '말을 걸어 보세요'로 돌아가지 않는다(cheer 단계는 위의 처리기들이 건드리지 않는다)
       hint.classList.add('hidden')
-      step = 'talk' // 표시만 유지하고 곧 끝낸다
+      step = 'cheer'
       lingerTimer = setTimeout(() => {
-        if (step === 'done' || store.phase !== 'playing') return
+        if (step !== 'cheer') return
+        if (store.phase !== 'playing') {
+          finish()
+          return
+        }
         show('🎉 신도가 따라옵니다! 단상 📜 과 가상 헌금함 🎁 에도 데려가 보세요')
         lingerTimer = setTimeout(finish, 6000)
       }, 2800)

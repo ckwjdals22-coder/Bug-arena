@@ -100,8 +100,12 @@ export function makePopup(
     for (const a of anchors()) if (a.contains(t)) return
     popup.hide()
   }
+  // Esc 한 번에는 맨 위의 것 하나만 닫는다: 대화 창 위에 메뉴 팝업이 떠 있으면 팝업만 닫고 대화는 남긴다.
+  // 캡처 단계에서 먼저 받아 전파를 끊는다(대화 창의 Esc 처리기가 같은 키로 대화까지 끝내지 않게)
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape') popup.hide()
+    if (e.key !== 'Escape' || !open) return
+    popup.hide()
+    e.stopImmediatePropagation()
   }
   const popup: Popup = {
     get open() {
@@ -115,7 +119,7 @@ export function makePopup(
       for (const a of anchors()) a.classList.add('active')
       // 캡처 단계에서 듣는다: 캔버스(입력 모듈)가 이벤트를 먹어도 닫을 수 있어야 한다
       window.addEventListener('pointerdown', onDown, true)
-      window.addEventListener('keydown', onKey)
+      window.addEventListener('keydown', onKey, true)
       playSfx(ctx, 'open')
       opts.onShow?.()
     },
@@ -125,7 +129,7 @@ export function makePopup(
       el.classList.add('hidden')
       for (const a of anchors()) a.classList.remove('active')
       window.removeEventListener('pointerdown', onDown, true)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
       if (!silent) playSfx(ctx, 'close')
       opts.onHide?.()
     },

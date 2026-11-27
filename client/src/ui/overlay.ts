@@ -62,6 +62,8 @@ const POP_RISE = 58
 const POP_MS = 1400
 /** 연달아 뜨는 글자 사이 간격(px) */
 const POP_GAP = 34
+/** 떠오르는 글자 한 줄의 높이 어림(px): 글자 크기(19~23px) + 외곽선 */
+const POP_H = 28
 /** 연달아 오는 보상 메시지를 모으는 시간 */
 const REWARD_GATHER_MS = 220
 /** 말풍선 한두 줄의 대략적인 높이(px) — 보상 글자를 내 말풍선 위에서 띄우기 위한 어림값 */
@@ -128,9 +130,31 @@ interface Pop {
   stack: number
   /** 기준점에서 위로 띄우는 고정 px(이름표·말풍선을 피해 올린다) */
   lift: number
+  /** 같은 자리에서 연달아 뜬 글자 묶음: 함께 오르고 함께 비켜서 줄 간격이 늘 그대로다 */
+  group: PopGroup
+  /** 어림한 폭(px) — 말풍선과 겹치는지 볼 때 쓴다(레이아웃을 읽지 않는다) */
+  w: number
+  /** 이번 프레임에 비키기 전의 위치(투영 결과), 화면에 있어야 하는가 */
+  vis: boolean
+  bx: number
+  by: number
   px: number
   py: number
   shown: boolean
+}
+
+interface PopGroup {
+  /** 묶음이 오르기 시작한 시각: 늦게 합류한 줄도 같은 높이만큼 올라야 서로 겹치지 않는다 */
+  born: number
+  /** 말풍선·다른 글자를 피해 옮긴 양(px, +면 위로). 갑자기 튀지 않게 목표값으로 서서히 다가간다 */
+  dodge: number
+  /** 이번 프레임에 계산을 마쳤는가(같은 묶음을 한 번만 계산) */
+  frame: number
+  fresh: boolean
+  /** 함께 피할 큰 카드(결과 배너)의 상자. 아래로 비킬 때 이 위에서 멈춘다 */
+  avoid: number[] | null
+  /** 비킬 곳이 없어 일찍 물러났다(서서히 투명해진다) */
+  gone: boolean
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v)
@@ -258,8 +282,10 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
   let narrow = false
   let bubbleCap = MAX_BUBBLES
   let viewW = window.innerWidth
+  let viewH = window.innerHeight
   const measure = (): void => {
     viewW = window.innerWidth
+    viewH = window.innerHeight
     narrow = Math.min(window.innerWidth, window.innerHeight) < NARROW_PX
     npcCap = narrow ? MAX_NPC_TAGS_NARROW : MAX_NPC_TAGS
     bubbleCap = narrow ? MAX_BUBBLES_NARROW : MAX_BUBBLES
@@ -600,18 +626,32 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
   function spawnPop(x: number, y: number, z: number, text: string, kind: 'good' | 'bad' | 'gold' | 'info', lift: number): void {
     if (!text) return
     const now = performance.now()
-    // 같은 자리에서 연달아 뜨면(신도 +1, +10 영향력 …) 위로 쌓고 살짝 시차를 둔다
+    // 같은 자리에서 연달아 뜨면(신도 +1, +10 영향력 …) 한 묶음으로 위로 쌓고 살짝 시차를 둔다
     let stack = 0
+    let group: PopGroup | null = null
     for (let i = 0; i < pops.length; i++) {
       const q = pops[i]!
-      if (now - q.born < 700 && Math.abs(q.x - x) < 0.8 && Math.abs(q.z - z) < 0.8) stack = Math.max(stack, q.stack + 1)
+      if (now - q.born < 700 && Math.abs(q.x - x) < 0.8 && Math.abs(q.z - z) < 0.8 && q.stack + 1 > stack) {
+        stack = q.stack + 1
+        group = q.group
+      }
+    }
+    if (!group) {
+      // 포교 결과 배너(화면 가운데 큰 카드)가 떠 있으면 그 자리도 피한다. 묶음이 생길 때 한 번만 읽는다(매 프레임 레이아웃을 읽지 않는다)
+      let avoid: number[] | null = null
+      const banner = root.querySelector('.talk-result:not(.hidden)')
+      if (banner) {
+        const r = banner.getBoundingClientRect()
+        if (r.height > 0) avoid = [r.left, r.top, r.right, r.bottom]
+      }
+      group = { born: now, dodge: 0, frame: -1, fresh: true, avoid, gone: false }
     }
     let p = freePops.pop()
     if (!p) {
       const body = h('span.overlay-pop-body')
       const el = h('div.overlay-pop.off', body)
       layer.append(el)
-      p = { el, body, x: 0, y: 0, z: 0, born: 0, start: 0, stack: 0, lift: 0, px: NaN, py: NaN, shown: false }
+      p = { el, body, x: 0, y: 0, z: 0, born: 0, start: 0, stack: 0, lift: 0, group, w: 0, vis: false, bx: 0, by: 0, px: NaN, py: NaN, shown: false }
     }
     p.x = x
     p.y = y
@@ -619,9 +659,13 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     p.born = now
     p.stack = stack
     p.lift = lift
+    p.group = group
+    p.w = textWidth(text, kind === 'good' ? 23 : 19) + 8
+    p.vis = false
     p.start = now + stack * 110
     p.px = NaN
     p.py = NaN
+    p.el.style.opacity = ''
     p.body.textContent = text
     p.body.className = 'overlay-pop-body ' + kind
     if (typeof p.body.animate === 'function') {
@@ -649,7 +693,81 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
     freePops.push(p)
   }
 
+  /** 글자가 피해야 할 상자들: 말풍선, 내 이름표, 먼저 자리 잡은 글자 묶음 */
+  const popBoxes: number[] = []
+  let popFrame = 0
+
+  /** 상자들과 겹치는 것 중 가장 아래쪽 끝(y). 없으면 NaN */
+  function hitBottom(x0: number, y0: number, x1: number, y1: number, boxes: number[]): number {
+    let bottom = NaN
+    for (let i = 0; i < boxes.length; i += 4) {
+      if (x1 - 4 <= boxes[i]! || x0 + 4 >= boxes[i + 2]! || y1 <= boxes[i + 1]! || y0 >= boxes[i + 3]!) continue
+      const b = boxes[i + 3]!
+      if (!(bottom >= b)) bottom = b
+    }
+    return bottom
+  }
+
+  /**
+   * 한 묶음이 비켜야 할 양(+면 위로, -면 아래로).
+   * 포교 성공 순간에는 "신도 +1 / +10 영향력 / 🪙" 묶음, 헌납품 이름, 내 말풍선, 0.6초 뒤 NPC 의 대답 말풍선이 같은 자리에 몰린다.
+   * 글자끼리 포개지면 아무것도 읽을 수 없으므로, 먼저 위로 비켜 보고 HUD 에 닿으면 아래로 비킨다.
+   */
+  function groupDodge(g: PopGroup): number {
+    let up = 0
+    for (let k = 0; k < 5; k++) {
+      let moved = false
+      for (let i = 0; i < pops.length; i++) {
+        const m = pops[i]!
+        if (m.group !== g || !m.vis) continue
+        const hw = m.w / 2
+        const top = hitTop(m.bx - hw, m.by - up - POP_H, m.bx + hw, m.by - up, 0, popBoxes)
+        if (top === top) {
+          up = m.by - top + 3
+          moved = true
+        }
+      }
+      if (!moved) break
+    }
+    let minTop = Infinity
+    for (let i = 0; i < pops.length; i++) {
+      const m = pops[i]!
+      if (m.group === g && m.vis) minTop = Math.min(minTop, m.by - POP_H)
+    }
+    if (minTop - up >= hudBottom + 4) return up
+    // 위로는 HUD 에 닿는다 → 아래로 비킨다(글자가 캐릭터 몸 위에 오는 편이 글자 위에 글자가 오는 것보다 읽힌다)
+    let down = 0
+    for (let k = 0; k < 5; k++) {
+      let moved = false
+      for (let i = 0; i < pops.length; i++) {
+        const m = pops[i]!
+        if (m.group !== g || !m.vis) continue
+        const hw = m.w / 2
+        const bottom = hitBottom(m.bx - hw, m.by + down - POP_H, m.bx + hw, m.by + down, popBoxes)
+        if (bottom === bottom) {
+          down = bottom - (m.by - POP_H) + 3
+          moved = true
+        }
+      }
+      if (!moved) break
+    }
+    // 아래로도 결과 배너나 화면 아래쪽에 닿으면 비키기를 포기한다(HUD 를 덮지 않는 선까지만 위로)
+    let maxBottom = -Infinity
+    let floor = viewH - 120
+    for (let i = 0; i < pops.length; i++) {
+      const m = pops[i]!
+      if (m.group !== g || !m.vis) continue
+      maxBottom = Math.max(maxBottom, m.by)
+      const a = m.group.avoid
+      if (a && m.bx + m.w / 2 > a[0]! && m.bx - m.w / 2 < a[2]! && a[1]! > m.by - POP_H) floor = Math.min(floor, a[1]!)
+    }
+    if (down > 0 && maxBottom + down <= floor) return -down
+    // 위(HUD)도 아래(결과 배너)도 막혔다: 글자 위에 글자를 겹쳐 두느니 일찍 물러난다(같은 내용을 결과 배너와 HUD 숫자가 이미 보여 준다)
+    return NaN
+  }
+
   function updatePops(now: number): void {
+    // 1) 비키기 전 위치
     for (let i = pops.length - 1; i >= 0; i--) {
       const p = pops[i]!
       const t = (now - p.start) / POP_MS
@@ -657,24 +775,63 @@ export function createOverlay(root: HTMLElement, store: Store, bus: Bus, engine:
         releasePop(i)
         continue
       }
-      if (t < 0 || !engine.project(p.x, p.y, p.z, pt)) {
+      // 아직 차례가 안 된 줄(시차 110ms)도 자리는 미리 계산한다: 묶음이 비킬 양이 줄이 하나씩 나올 때마다 바뀌어 흔들리지 않게
+      p.vis = engine.project(p.x, p.y, p.z, pt)
+      if (!p.vis || t < 0) {
         if (p.shown) {
           p.shown = false
           p.el.classList.add('off')
         }
-        continue
+        if (!p.vis) continue
       }
-      const ease = 1 - (1 - t) * (1 - t) * (1 - t)
-      const x = Math.round(pt.x)
-      const y = Math.round(pt.y - p.lift - p.stack * POP_GAP - ease * POP_RISE)
-      if (x !== p.px || y !== p.py) {
-        p.px = x
-        p.py = y
-        p.el.style.transform = `translate3d(${x}px,${y}px,0) translate(-50%,-100%)`
+      // 오르는 높이는 묶음이 시작한 시각 기준: 늦게 나온 줄도 앞줄과 같은 만큼 올라 줄 간격(POP_GAP)이 그대로다
+      const tr = clamp((now - p.group.born) / POP_MS, 0, 1)
+      const ease = 1 - (1 - tr) * (1 - tr) * (1 - tr)
+      p.bx = Math.round(clamp(pt.x, p.w / 2 + 4, viewW - p.w / 2 - 4))
+      p.by = Math.round(pt.y - p.lift - p.stack * POP_GAP - ease * POP_RISE)
+    }
+    // 2) 묶음별로 말풍선·내 이름표·앞서 놓인 글자를 피한다(먼저 뜬 묶음이 먼저 자리 잡는다)
+    popFrame++
+    popBoxes.length = 0
+    for (let i = 0; i < placedBubbles.length; i++) popBoxes.push(placedBubbles[i]!)
+    const me = store.me
+    const myTag = me ? tags.get(me.id) : undefined
+    if (myTag && myTag.shown) {
+      const hw = myTag.w / 2
+      popBoxes.push(myTag.x - hw, myTag.y - (myTag.lines === 2 ? TAG_H2 : TAG_H1), myTag.x + hw, myTag.y)
+    }
+    for (let i = 0; i < pops.length; i++) {
+      const g = pops[i]!.group
+      if (!pops[i]!.vis || g.frame === popFrame) continue
+      g.frame = popFrame
+      const target = groupDodge(g)
+      if (target !== target) {
+        // 한 번 물러나기로 한 묶음은 다시 나타나지 않는다(깜빡이지 않게)
+        g.gone = true
+      } else if (!g.gone) {
+        g.dodge = g.fresh ? target : g.dodge + (target - g.dodge) * 0.5
       }
-      if (!p.shown) {
-        p.shown = true
-        p.el.classList.remove('off')
+      g.fresh = false
+      for (let j = i; j < pops.length; j++) {
+        const m = pops[j]!
+        if (m.group !== g || !m.vis) continue
+        const hw = m.w / 2
+        const y = Math.round(m.by - g.dodge)
+        if (g.gone) {
+          if (m.el.style.opacity !== '0') m.el.style.opacity = '0'
+          continue
+        }
+        popBoxes.push(m.bx - hw, y - POP_H, m.bx + hw, y)
+        if (now < m.start) continue
+        if (m.bx !== m.px || y !== m.py) {
+          m.px = m.bx
+          m.py = y
+          m.el.style.transform = `translate3d(${m.bx}px,${y}px,0) translate(-50%,-100%)`
+        }
+        if (!m.shown) {
+          m.shown = true
+          m.el.classList.remove('off')
+        }
       }
     }
   }

@@ -243,7 +243,8 @@ async function main() {
     await check('포교해서 첫 업적 → 달성 배너', async () => {
       const outcomes = await pitchUntilAchievement(A)
       await waitFor(A, () => window.__doas.store.me.prog.ach.length > 0, null, 5000, '업적 달성')
-      await A.waitForSelector('.ach-banner.pop', { timeout: 4000 })
+      // 결과 배너 → 자막 → (즉석 헌납 카드) → 업적 배너 순서로 무대에 오른다(ui/stage.ts) → 헌납 카드가 끼면 4초를 넘긴다
+      await A.waitForSelector('.ach-banner.pop', { timeout: 10000 })
       // 헤드리스(소프트웨어 렌더링)는 프레임이 느려 2.2초 애니메이션 중 어디가 찍힐지 모른다 → 찍는 동안만 멈춰 둔다
       await A.evaluate(() => (document.querySelector('.ach-banner').style.animation = 'none'))
       await A.screenshot({ path: path.join(OUT, 'ach-pc-banner.png') })
@@ -312,7 +313,7 @@ async function main() {
         await B.evaluate(() => window.__doas.net.send({ t: 'emote', e: 'wave' }))
         await sleep(560)
       }
-      await B.waitForSelector('.ach-banner.pop', { timeout: 5000 })
+      await B.waitForSelector('.ach-banner.pop', { timeout: 10000 })
       // 헤드리스(소프트웨어 렌더링)는 프레임이 느려 2.2초 애니메이션 중 어디가 찍힐지 모른다 → 찍는 동안만 멈춰 둔다
       await B.evaluate(() => (document.querySelector('.ach-banner').style.animation = 'none'))
       await B.screenshot({ path: path.join(OUT, 'ach-mobile-banner.png') })

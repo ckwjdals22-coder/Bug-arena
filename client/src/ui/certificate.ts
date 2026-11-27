@@ -19,8 +19,12 @@ import { CARD_SIZE, canvasToBlob, cardFileName, renderCard, type CardType, type 
 import { placeholderPortrait } from '../share/kit'
 import { playSfx, rankName } from './hud'
 import { h } from './kit'
+import { stagePlay } from './stage'
 
 const SNAP_MS = 6000
+/** 승급 토스트가 떠 있는 시간. 무대도 이만큼 잡는다: 위쪽의 업적 배너·다음 승급 카드가 토스트에 포개지지 않게 */
+const RANK_TOAST_MS = 7000
+const RANK_TOAST_OUT_MS = 400
 const SUMMARY_HINT_MS = 5 * 60 * 1000
 const SHARE_HINT = '이미지를 길게 눌러 저장한 뒤 스토리에 올려 보세요'
 
@@ -155,12 +159,19 @@ export function mountCertificate(ctx: AppContext): void {
 
   // ───────── 승급 토스트(행동 버튼) ─────────
   bus.on('rankUp', (rank) => {
-    // 승급 연출(system 모듈)과 겹치지 않게 조금 늦게 띄운다
-    window.setTimeout(() => rankToast(rank), 1600)
+    // 승급 카드(system 모듈, 무대 순서 3) 바로 뒤에 무대 줄을 서서 띄운다: 헌납 카드·업적 배너와 겹치지 않고, 무엇을 축하하는지 이어진다.
+    // 토스트가 떠 있는 내내 무대를 잡고, [임명장 받기]를 누르면 바로 돌려준다
+    stagePlay(3.5, RANK_TOAST_MS + RANK_TOAST_OUT_MS, (done) => {
+      if (store.phase === 'playing') rankToast(rank, done)
+      else done()
+    })
   })
-  function rankToast(rank: number): void {
+  function rankToast(rank: number, done: () => void): void {
     const box = ui.root.querySelector('.toasts')
-    if (!box) return
+    if (!box) {
+      done()
+      return
+    }
     const el = h(
       'div.toast.gold.cert-toast',
       h('span', `🎉 ${rankName(rank)} 승급!`),
@@ -171,6 +182,7 @@ export function mountCertificate(ctx: AppContext): void {
           onclick: () => {
             playSfx(ctx, 'click')
             el.remove()
+            done()
             openTab('certificate')
           },
         },
@@ -178,8 +190,8 @@ export function mountCertificate(ctx: AppContext): void {
       ),
     )
     box.append(el)
-    window.setTimeout(() => el.classList.add('out'), 7000)
-    window.setTimeout(() => el.remove(), 7400)
+    window.setTimeout(() => el.classList.add('out'), RANK_TOAST_MS)
+    window.setTimeout(() => el.remove(), RANK_TOAST_MS + RANK_TOAST_OUT_MS)
   }
 
   // ───────── 메뉴 ─────────

@@ -60,25 +60,16 @@ export function mountAchievements(ctx: AppContext): void {
   // ───────── 달성 알림 배너(줄 세우기) ─────────
   const banner = h('div.ach-banner.hidden', { 'aria-live': 'polite' })
   ui.root.append(banner)
-  const queue: AchievementDef[] = []
-  let showing = false
-  const showNext = (): void => {
-    if (queue.length === 0) {
-      showing = false
-      banner.classList.add('hidden')
-      return
-    }
-    showing = true
+  let hideTimer = 0
+  // 결과 배너·자막·헌납 카드가 화면 가운데를 쓰는 중이면 지나간 뒤에 띄운다(가장 기쁜 순간이 글자 더미가 되지 않게).
+  // 한 번에 여러 업적이 오면 전부 한꺼번에 무대 줄(순서 2)에 세운다: 하나가 끝난 뒤에 다음 것을 세우면
+  // 그사이 뒤에 서 있던 승급 카드(순서 3)가 먼저 나가 버려 업적 → 승급 → 업적 으로 뒤섞인다
+  const hideBanner = (): void => {
+    window.clearTimeout(hideTimer)
     banner.classList.add('hidden')
-    // 결과 배너·자막이 화면 가운데를 쓰는 중이면 지나간 뒤에 띄운다(가장 기쁜 순간이 글자 더미가 되지 않게)
-    stagePlay(2, BANNER_MS, showOne)
   }
-  const showOne = (): void => {
-    const def = queue.shift()
-    if (!def) {
-      showing = false
-      return
-    }
+  const showOne = (def: AchievementDef): (() => void) | undefined => {
+    if (store.phase !== 'playing') return undefined
     banner.replaceChildren(
       h('span.ach-banner-icon', def.icon),
       h('span.ach-banner-text', h('small', '🏆 업적 달성'), h('b', def.name)),
@@ -89,8 +80,15 @@ export function mountAchievements(ctx: AppContext): void {
     void banner.offsetWidth
     banner.classList.add('pop')
     playSfx(ctx, 'ach')
-    window.setTimeout(showNext, BANNER_MS)
+    window.clearTimeout(hideTimer)
+    hideTimer = window.setTimeout(hideBanner, BANNER_MS)
+    // 배너가 떠 있는 동안 다음 포교 결과 배너가 뜨면 비켜 준다(stage.ts)
+    return hideBanner
   }
+
+  bus.on('phase', (ph) => {
+    if (ph !== 'playing') hideBanner()
+  })
 
   // 새 업적이 왔는데 아직 패널을 안 열어 봤는가(메뉴 점 표시)
   let unseenAch = false
@@ -99,10 +97,9 @@ export function mountAchievements(ctx: AppContext): void {
     if (Array.isArray(m.ach) && m.ach.length > 0) {
       for (const id of m.ach) {
         const def = ACHIEVEMENT_BY_ID.get(id)
-        if (def) queue.push(def)
+        if (def) stagePlay(2, BANNER_MS, () => showOne(def))
       }
       unseenAch = true
-      if (!showing) showNext()
       if (ui.openPanelId === 'achievements') rerender()
     }
     if (m.why === 'daily' && m.coins) ui.toast(`🎉 오늘의 수행 올클리어! 보너스 +${m.inf ?? 0} · 🪙${m.coins}`, 'gold', 3200)
