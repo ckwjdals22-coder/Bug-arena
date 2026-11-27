@@ -5,7 +5,7 @@
   "type": "module",
   "description": "도를 아십니까? — 교주 시뮬레이터: 3D 로우폴리 실시간 멀티플레이 풍자 웹게임",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "dev": "concurrently -k -n server,client -c magenta,cyan \"npm:dev:server\" \"npm:dev:client\"",
@@ -14,10 +14,11 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "esbuild server/node/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server/main.js --external:ws --sourcemap",
-    "start": "node dist/server/main.js",
+    "start": "node --enable-source-maps dist/server/main.js",
     "typecheck": "tsc -p client/tsconfig.json --noEmit && tsc -p server/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:e2e": "node tests/e2e/run.cjs",
+    "test:ops": "node tests/e2e/ops.cjs && node tests/e2e/csp.cjs",
     "loadtest": "tsx tools/loadtest.ts",
     "cf:dev": "npm --prefix worker run dev",
     "cf:check": "npm --prefix worker run check",

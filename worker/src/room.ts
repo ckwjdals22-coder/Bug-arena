@@ -8,19 +8,25 @@
  *   3. 연결 표를 Map 하나로 들고 있으면 되고 '소켓은 살아 있는데 방 메모리는 빈' 복귀 경로가 없다.
  * (근거: docs/research/06-cloudflare-durable-objects.md §3)
  *
+ * 남용 방지(Node 어댑터와 같은 규칙, 단 '방 단위'):
+ *   - 인사(hello) 전 연결이 MAX_PRE_HELLO 를 넘으면 가장 오래 인사하지 않은 연결부터 끊는다(빈 연결로 방 막기 방지).
+ *   - MAX_CONNS_PER_IP(기본 0 = 끔): CF-Connecting-IP 하나가 이 방에 동시에 열 수 있는 연결 수.
+ *   - 접속자 메모(쿨타임·차단·입막음·이름 고정·마지막 자리)는 DO 저장소에 남겨 DO 가 내려갔다 깨어나도 이어진다(memory.ts).
+ *
  * 과금 핵심: 사람이 없으면 타이머를 지운다. 타이머가 남아 있으면 DO 가 내려가지 못하고 벽시계 시간 전부가 과금된다.
  * 그래서 Node 판처럼 '빈 방도 1초에 한 번 틱'을 하지 않는다. 빈 방의 NPC 는 멈춰 있다가 다음 입장 때 다시 움직인다.
  */
 import { DurableObject } from 'cloudflare:workers'
 import { TICK_MS } from '../../shared/constants'
 import type { RoomInfo } from '../../shared/types'
-import type { ConnId, RoomHost } from '../../server/core/api'
+import type { ConnId, PlayerMemory, RoomHost } from '../../server/core/api'
 import { roomName } from '../../server/core/lobby'
 import { Room } from '../../server/core/room'
 import { createSigner } from '../../server/core/save'
 import { CultCache } from './cults'
 import { type Env, lobbyStub, policyOf } from './env'
 import type { ReportResult } from './lobby'
+import { type LiveView, MEMORY_KEY, restoreMemory, serializeMemory } from './memory'
 import { REPORT_EVERY_MS } from './policy'
 
 /** close 이후 상대가 답하지 않을 때 연결을 정리하기까지 */
@@ -29,10 +35,16 @@ const CLOSE_GRACE_MS = 2000
 const MAX_CATCHUP_TICKS = 5
 /** 종료 사유는 UTF-8 123바이트까지(넘으면 예외) */
 const MAX_REASON_BYTES = 120
+/** 접속자 메모 저장 주기(변화가 있을 때만 쓴다). 사람이 모두 나가면 바로 쓴다 */
+const MEMORY_SAVE_EVERY_MS = 5000
+/** 인사 전 연결을 밀어낼 때 쓰는 종료 코드(정책 위반) */
+const CLOSE_PRE_HELLO = 1008
 
 interface Conn {
   ws: WebSocket
   closing: boolean
+  /** CF-Connecting-IP(IP당 상한 계산용) */
+  ip: string
 }
 
 /** 오류 로그가 틱마다 쏟아지지 않게 10초당 50건으로 묶는다(로그도 과금 대상이다) */
@@ -78,6 +90,18 @@ export class RoomDO extends DurableObject<Env> {
   private readonly cults = new CultCache()
   private readonly logger = new LogBudget()
   private readonly maxConns: number
+  private readonly maxPreHello: number
+  private readonly maxConnsPerIp: number
+  /** hello 가 아직 처리되지 않은 연결(삽입 순서 = 오래된 순) */
+  private readonly preHello = new Set<ConnId>()
+  private readonly connsPerIp = new Map<string, number>()
+  /** 접속자 메모. Room 이 이 표를 직접 고친다 → 주기적으로 DO 저장소에 남긴다 */
+  private readonly memory = new Map<string, PlayerMemory>()
+  private memorySavedJson = ''
+  private memorySavedAt = 0
+  private memorySaving = false
+  /** 쓰는 도중에 '지금 꼭 남겨야 하는' 요청이 오면 끝난 뒤 한 번 더 쓴다 */
+  private memorySaveAgain = false
   private nextConn = 1
   private timer: ReturnType<typeof setTimeout> | null = null
   private nextTickAt = 0
@@ -102,6 +126,8 @@ export class RoomDO extends DurableObject<Env> {
     this.inst = `${Date.now().toString(36)}-${Math.floor(Math.random() * 0x7fffffff).toString(36)}`
     const policy = policyOf(env)
     this.maxConns = policy.capacity * 2 + 20
+    this.maxPreHello = policy.maxPreHello
+    this.maxConnsPerIp = policy.maxConnsPerIp
     this.rooms = [{ id: this.roomId, name: roomName(Number(this.roomId) || 1), players: 0, cap: policy.capacity, npcs: policy.npcs }]
 
     const secret = env.SAVE_SECRET?.trim() ?? ''
@@ -122,7 +148,24 @@ export class RoomDO extends DurableObject<Env> {
       log: (level, msg, extra) => this.logger.log(level, msg, extra),
       cults: this.cults,
     }
-    this.room = new Room(host, { id: this.roomId, name: roomName(Number(this.roomId)), capacity: policy.capacity, npcCount: policy.npcs })
+    this.room = new Room(host, {
+      id: this.roomId,
+      name: roomName(Number(this.roomId)),
+      capacity: policy.capacity,
+      npcCount: policy.npcs,
+      memory: this.memory,
+    })
+    // 깨어날 때 지난번 메모를 되살린다. blockConcurrencyWhile 이 끝나기 전에는 fetch 가 들어오지 않는다
+    void ctx.blockConcurrencyWhile(async () => {
+      try {
+        const stored = await ctx.storage.get(MEMORY_KEY)
+        const n = restoreMemory(this.memory, stored, Date.now())
+        this.memorySavedJson = stored === undefined ? '' : JSON.stringify(stored)
+        if (n > 0) this.logger.log('info', `방 ${this.roomId}: 접속자 메모 ${n}건을 되살렸습니다`)
+      } catch (err) {
+        this.logger.log('error', `방 ${this.roomId}: 접속자 메모를 읽지 못했습니다`, err)
+      }
+    })
   }
 
   // ───────── 접속 ─────────
@@ -133,7 +176,13 @@ export class RoomDO extends DurableObject<Env> {
     }
     const room = this.room
     if (!room) return new Response('서버 설정 오류입니다.\n', { status: 503 })
+    // 자리가 없으면 먼저 '인사도 안 하고 버티는' 연결을 밀어낸다 → 빈 연결 수십 개로 방을 막을 수 없다
+    while (this.conns.size >= this.maxConns && this.preHello.size > 0) this.evictOldestPreHello()
     if (this.conns.size >= this.maxConns) return new Response('Service Unavailable', { status: 503 })
+    const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown'
+    if (this.maxConnsPerIp > 0 && (this.connsPerIp.get(ip) ?? 0) >= this.maxConnsPerIp) {
+      return new Response('Too Many Requests', { status: 429 })
+    }
 
     const pair = new WebSocketPair()
     const client = pair[0]
@@ -143,8 +192,11 @@ export class RoomDO extends DurableObject<Env> {
     server.accept()
 
     const id = this.nextConn++
-    const c: Conn = { ws: server, closing: false }
+    const c: Conn = { ws: server, closing: false, ip }
     this.conns.set(id, c)
+    this.connsPerIp.set(ip, (this.connsPerIp.get(ip) ?? 0) + 1)
+    this.preHello.add(id)
+    while (this.preHello.size > this.maxPreHello) this.evictOldestPreHello()
     server.addEventListener('message', (ev: MessageEvent) => {
       const data: unknown = ev.data
       if (typeof data === 'string' || data instanceof ArrayBuffer) room.message(id, data)
@@ -170,10 +222,73 @@ export class RoomDO extends DurableObject<Env> {
 
   private drop(id: ConnId, clean = true): void {
     // 표에서 먼저 지운다: 퇴장 처리 중 이 연결로 보내려는 것이 조용히 버려지게
-    if (!this.conns.delete(id)) return
+    const c = this.conns.get(id)
+    if (!c || !this.conns.delete(id)) return
+    this.preHello.delete(id)
+    const left = (this.connsPerIp.get(c.ip) ?? 1) - 1
+    if (left > 0) this.connsPerIp.set(c.ip, left)
+    else this.connsPerIp.delete(c.ip)
     this.room?.disconnect(id, clean)
     this.afterEvent()
-    if (this.conns.size === 0) this.stopLoop()
+    if (this.conns.size === 0) {
+      this.stopLoop()
+      // 아무도 없으면 곧 DO 가 내려갈 수 있다 → 메모를 지금 남긴다
+      this.saveMemory(true)
+    }
+  }
+
+  /** 가장 오래 인사하지 않은 연결을 끊는다(정상 클라이언트는 수십 ms 안에 hello 를 보낸다) */
+  private evictOldestPreHello(): void {
+    const oldest = this.preHello.values().next().value as ConnId | undefined
+    if (oldest === undefined) return
+    this.preHello.delete(oldest)
+    const c = this.conns.get(oldest)
+    if (c) {
+      try {
+        c.ws.close(CLOSE_PRE_HELLO, 'hello timeout')
+      } catch {
+        /* 이미 닫힘 */
+      }
+    }
+    // close 이벤트를 기다리지 않고 바로 자리를 비운다
+    this.drop(oldest, true)
+  }
+
+  // ───────── 접속자 메모 저장 ─────────
+
+  /** force = 사람이 모두 나갔을 때. 아니면 MEMORY_SAVE_EVERY_MS 에 한 번만. 내용이 같으면 쓰지 않는다 */
+  private saveMemory(force = false): void {
+    const room = this.room
+    if (!room) return
+    if (this.memorySaving) {
+      if (force) this.memorySaveAgain = true
+      return
+    }
+    const now = Date.now()
+    if (!force && now - this.memorySavedAt < MEMORY_SAVE_EVERY_MS) return
+    this.memorySavedAt = now
+    const byPid = new Map<string, LiveView>()
+    for (const p of room.players.values()) byPid.set(p.pid, { mutedUntil: p.mutedUntil, nameLockUntil: p.nameLockUntil, name: p.name })
+    const data = serializeMemory(this.memory, now, (pid) => byPid.get(pid))
+    const json = JSON.stringify(data)
+    if (json === this.memorySavedJson) return
+    const empty = json === '{}'
+    this.memorySaving = true
+    const op = empty ? this.ctx.storage.delete(MEMORY_KEY).then(() => undefined) : this.ctx.storage.put(MEMORY_KEY, data)
+    this.ctx.waitUntil(
+      op
+        .then(() => {
+          this.memorySavedJson = empty ? '' : json
+        })
+        .catch((err: unknown) => this.logger.log('error', `방 ${this.roomId}: 접속자 메모 저장 실패`, err))
+        .finally(() => {
+          this.memorySaving = false
+          if (this.memorySaveAgain) {
+            this.memorySaveAgain = false
+            this.saveMemory(true)
+          }
+        }),
+    )
   }
 
   // ───────── RoomHost ─────────
@@ -181,6 +296,8 @@ export class RoomDO extends DurableObject<Env> {
   private send(id: ConnId, data: string | Uint8Array): void {
     const c = this.conns.get(id)
     if (!c || c.closing) return
+    // Room 이 welcome 을 보냈다 = 인사를 마친 정상 접속
+    if (this.preHello.size > 0 && typeof data === 'string' && data.startsWith('{"t":"welcome"')) this.preHello.delete(id)
     try {
       c.ws.send(data)
     } catch {
@@ -276,6 +393,7 @@ export class RoomDO extends DurableObject<Env> {
     const due = now - this.lastReportAt >= REPORT_EVERY_MS
     const cultsDue = this.cults.pendingOps > 0 && now - this.lastReportAt >= 2000
     if (changed || due || cultsDue) this.report()
+    this.saveMemory()
   }
 
   private report(): void {

@@ -4,7 +4,15 @@ dist
 .claude
 .data
 .wrangler
-tests/e2e/out
 docs
+tests
 worker/node_modules
+worker/.wrangler
 *.log
+# 비밀이 든 파일은 빌드 컨텍스트(원격 빌더 포함)로도 보내지 않는다
+.env
+.env.*
+!.env.example
+**/.dev.vars
+**/.dev.vars.*
+!**/.dev.vars.example

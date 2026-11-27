@@ -12,7 +12,18 @@
     <meta property="og:title" content="도를 아십니까? (모르셔도 됩니다)" />
     <meta property="og:description" content="길에서 말 걸고 라면교 교주 되는 게임. 가입 없음, 전부 허구." />
     <meta property="og:image" content="/og.jpg" />
+    <!-- og:image·og:url 은 빌드 때 PUBLIC_URL 을 주면 절대 주소로 바뀐다(vite.config.ts, docs/DEPLOY.md) -->
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="도를 아십니까? 게임 화면 위에 얹은 제목" />
+    <meta property="og:site_name" content="도를 아십니까? — 교주 시뮬레이터" />
+    <meta property="og:locale" content="ko_KR" />
     <meta name="twitter:card" content="summary_large_image" />
+    <!-- 홈 화면에 추가: 아이콘은 tools/make-media.cjs --icons 로 그린다 -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-title" content="도를 아십니까" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🙏</text></svg>" />
     <!-- 실시간 서버 주소 등 런타임 설정(빌드 없이 수정 가능). docs/DEPLOY.md 참고 -->
     <script src="/config.js"></script>

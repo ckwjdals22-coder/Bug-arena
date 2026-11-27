@@ -339,17 +339,19 @@ async function runCheck(): Promise<number> {
     return JSON.stringify(leave)
   })
 
-  await step('같은 방에 같은 pid 가 들어오면 옛 연결이 dup 으로 쫓겨난다', async () => {
+  await step('같은 방에 같은 pid 가 들어오면 옛 연결만 dup 으로 닫히고 사람은 그대로 이어진다(재접속)', async () => {
     const fromB = b.msgs.length
     c = track(await Probe.join(R1, 'C', { pid: a.pid }))
     const kick = await a.waitMsg('kick')
     const closed = await a.waitClose()
     expect(kick.why === 'dup', `kick 사유: ${kick.why}`)
     expect(closed.code === CLOSE_KICK, `close 코드: ${closed.code}`)
-    await b.waitMsg('leave', (m) => m.id === a.id, fromB)
-    await b.waitMsg('join', (m) => m.p.id === c!.id, fromB)
-    expect(c.id !== a.id, '새 연결이 옛 id 를 그대로 받음')
-    return `A: kick{${kick.why}} close ${closed.code} / B: leave(${a.id}) → join(${c.id})`
+    // 같은 사람의 새 연결은 방에 있던 그 사람(같은 번호·자리)에 이어 붙는다 → 다른 사람에게는 leave/join 이 가지 않는다
+    expect(c.id === a.id, `새 연결이 다른 번호를 받음: ${a.id} → ${c.id}`)
+    await sleep(500)
+    const churn = b.msgs.slice(fromB).filter((m) => (m.t === 'leave' && m.id === a.id) || (m.t === 'join' && m.p.id === a.id))
+    expect(churn.length === 0, `B 가 불필요한 leave/join 을 받음: ${JSON.stringify(churn)}`)
+    return `A: kick{${kick.why}} close ${closed.code} / C 가 같은 번호 ${c.id} 로 이어받음(B 에게 leave/join 없음)`
   })
 
   await step('다른 방에 같은 pid 가 들어와도 쫓겨난다(claimPid)', async () => {
@@ -461,8 +463,11 @@ async function runCheck(): Promise<number> {
       tried.add(target)
     }
     expect(outcome, 'SKIP: 제한 시간 안에 NPC 에게 닿지 못함(맵 충돌이나 NPC 이동 때문일 수 있음)')
-    // 진행도가 바뀌었으므로 1초 안에 새 저장본이 온다
-    const save = await g.until('save 수신', () => g.of('save').pop(), 3000)
+    // 진행도가 바뀌었으므로 1초 안에 새 저장본이 온다. 보상 전에 받은 옛 저장본을 집지 않게 '진행도가 반영된 것'을 기다린다
+    // (그냥 마지막 save 를 집으면 느린 환경에서 보상 직전 것이 걸려 가끔 실패했다)
+    const progressed = (): ServerMsgOf<'save'> | undefined =>
+      g.of('save').filter((m) => (m.me.stats.talks ?? 0) >= 1 && m.me.inf >= 1).pop()
+    const save = await g.until('진행도가 반영된 save 수신', progressed, 4000).catch(() => g.of('save').pop() ?? fail('save 를 하나도 받지 못함'))
     saved = { pid: g.pid, save: save.save, talks: save.me.stats.talks ?? 0, inf: save.me.inf }
     expect(saved.talks >= 1 && saved.inf >= 1, `진행도가 오르지 않음: ${JSON.stringify(save.me)}`)
     g.close()

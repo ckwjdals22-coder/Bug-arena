@@ -39,8 +39,13 @@
 		"MAX_ROOMS": "3",
 		"ROOM_CAPACITY": "20",
 		"NPCS": "28",
-		// 쉼표 구분. 비우면 전부 허용. 예: "https://play.example.com,https://example.github.io"
-		"ALLOWED_ORIGINS": ""
+		// WebSocket 을 받을 화면 주소(Origin). 비우면 같은 주소(이 Worker 의 도메인)에서 연 화면만, "*" 면 전부 허용.
+		// 클라이언트를 다른 곳에 따로 올렸다면 쉼표로: "https://play.example.com,https://example.github.io"
+		"ALLOWED_ORIGINS": "",
+		// 방 하나에서 인사(hello) 전 연결의 상한. 넘으면 가장 오래된 것부터 끊는다
+		"MAX_PRE_HELLO": "8",
+		// IP(CF-Connecting-IP) 하나가 방 하나에 동시에 열 수 있는 연결 수. 0 = 끔(학교·회사처럼 IP 를 나눠 쓰는 곳이 있다)
+		"MAX_CONNS_PER_IP": "0"
 	},
 	// 누락되면 wrangler deploy 가 실패한다. 로컬에서는 이 폴더의 .dev.vars 에서 읽는다(.dev.vars.example 참고).
 	"secrets": { "required": ["SAVE_SECRET"] },

@@ -6,7 +6,10 @@
 > **먼저 읽어 주세요 — 검증 범위**
 > - 이 어댑터(`worker/`)는 로컬 `wrangler dev`(Cloudflare 런타임 workerd 를 내 컴퓨터에서 돌리는 것)에서
 >   `tests/e2e/worker-smoke.cjs` 로 실제 동작을 확인했습니다: 방 목록, 두 사람 입장·서로 보기, 이동 스냅샷, 이모트,
->   퇴장, 같은 기기 중복 접속 정리(다른 방 포함), 가득 참, 저장본 복원, 실제 브라우저(데스크톱·모바일) 플레이.
+>   퇴장, 같은 기기 재접속(같은 방은 이어 붙이기, 다른 방은 정리), 가득 참, 저장본 복원, 남의 출처(Origin) 거절,
+>   인사 없이 버티는 연결 밀어내기, 보안 헤더(`_headers`), 실제 브라우저(데스크톱·모바일) 플레이. 세 번 연속 통과를 확인합니다.
+> - 접속자 메모(쿨타임·입막음 등)를 DO 저장소에 남기고 되살리는 규칙은 `tests/unit/worker-memory.test.ts` 로 확인합니다
+>   (`wrangler dev` 에서는 DO 를 강제로 재울 방법이 없어 '잠들었다 깨어나기' 자체는 단위 테스트로 흉내 냅니다).
 > - **실제 Cloudflare 계정에 배포해 보지는 못했습니다**(작업 환경에 계정이 없음). 아래 배포 명령은 공식 문서 기준이고,
 >   요금은 공식 요금표로 계산한 **추정**입니다. 조사 근거: `docs/research/06-cloudflare-durable-objects.md`.
 
@@ -24,6 +27,8 @@
 | 배포할 때 | 재시작하는 순간 끊김(수 초) | 배포 후 최대 5분 안에 방마다 끊김(자동 재접속, 진행도 유지) |
 | 빈 방 | NPC 가 계속 돌아다님 | 사람이 없으면 방이 잠듦(돈이 안 나감), 다음 입장 때 새로 시작 |
 | 교단 순위·이름 중복 | 즉시 반영 | 방 사이 반영이 최대 약 10초 늦음 |
+| 남용 방지 기억(쿨타임·차단·신고 입막음·이름 고정) | 서버 전체에서 하나(방을 옮겨도 따라감) | **방마다 따로**(방을 옮기면 그 방의 기억만 적용). 방이 잠들어도 DO 저장소에 남아 이어짐 |
+| 인사 없이 버티는 연결 · IP당 상한 | 서버 전체 기준 | 방 하나 기준 |
 | 서버 지표 | `/healthz` 에 메모리·CPU·틱 시간 | 대시보드 그래프(요청 수·duration). `/healthz` 는 인원만 의미 있음 |
 | 무료로 해 보기 | 내 PC 에서 | 무료 플랜 가능(일일 한도 있음, 아래 7장) |
 
@@ -82,7 +87,8 @@ npx wrangler whoami    # 내 계정 이름이 보이면 성공
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-저장소 루트(= `worker` 의 상위 폴더)에 `.env.production` 파일을 만들고 한 줄을 넣습니다(이 파일은 git 에 올라가지 않게 이미 막혀 있습니다):
+저장소 루트(= `worker` 의 상위 폴더)에 `.env.production` 파일을 만들고 한 줄을 넣습니다(이 파일은 git 에도, Docker 빌드에도
+올라가지 않게 `.gitignore`·`.dockerignore` 에서 이미 막혀 있습니다):
 
 ```
 SAVE_SECRET=위에서_나온_문자열
@@ -121,8 +127,16 @@ npm run deploy
 1. 대시보드 → **Workers & Pages → Plans** 에서 **Workers Paid($5/월)** 로 바꿉니다. 무료 플랜은 한도를 넘는 순간 접속이 실패합니다.
 2. 대시보드 → **Billing → Spend limits** 에서 Workers 와 Durable Objects 각각 알림 이메일과 한도를 겁니다.
    (한도에 걸려도 이미 열린 WebSocket 메시지는 막지 못하므로 '브레이크'가 아니라 '경보'로 생각하세요.)
-3. `wrangler.jsonc` 의 `ALLOWED_ORIGINS` 에 게임을 여는 주소를 적으면, 남의 웹페이지가 내 서버를 끌어다 쓰는 것을 막을 수 있습니다.
-   예: `"ALLOWED_ORIGINS": "https://doas-game.myname.workers.dev,https://play.example.com"` → 다시 `npm run deploy`.
+3. **접속 출처(`ALLOWED_ORIGINS`)** — 기본값(빈 값)은 '같은 주소에서 연 화면만' 받습니다. Worker 가 게임 화면까지 서빙하는
+   기본 구성이면 아무것도 바꿀 필요가 없고, 남의 웹페이지가 내 서버를 끌어다 쓰는 것도 이미 막힙니다.
+   화면을 다른 곳에 따로 올렸거나 `workers.dev` 와 내 도메인을 섞어 쓴다면 그 주소들을 쉼표로 적습니다:
+   `"ALLOWED_ORIGINS": "https://doas-game.myname.workers.dev,https://play.example.com"` → 다시 `npm run deploy`.
+   `"*"` 는 모든 사이트 허용(권하지 않음). Origin 헤더가 없는 점검 도구(`tools/wsprobe.ts` 등)는 어느 설정에서든 통과합니다.
+4. **남용 방지 값** — `vars` 의 `MAX_PRE_HELLO`(방 하나에서 인사 전 연결 상한, 기본 8)와 `MAX_CONNS_PER_IP`(IP 하나가 방 하나에
+   동시에 여는 연결 수, 기본 0 = 끔). IP 상한은 `CF-Connecting-IP`(Cloudflare 가 붙이는 진짜 접속 주소)로 셉니다.
+   학교·회사처럼 여러 명이 한 IP 를 쓰는 곳이 있으니 켠다면 넉넉하게(예: 10).
+5. **보안 헤더** — 게임 화면에는 `client/public/_headers` 의 CSP·Referrer-Policy·Permissions-Policy 가 붙습니다(Node 서버와 같은 값).
+   게임 포털에 iframe 으로 올려야 한다면 그 파일의 `frame-ancestors 'self'` 뒤에 포털 주소를 더하고 다시 배포합니다.
 
 ## 6. 운영
 
@@ -150,7 +164,8 @@ npm run deploy
    ```jsonc
    "routes": [{ "pattern": "play.example.com", "custom_domain": true }]
    ```
-3. 클라이언트 서버 주소와 `ALLOWED_ORIGINS` 를 새 도메인으로 맞춥니다.
+3. 화면도 이 Worker 가 서빙한다면 그대로 됩니다(같은 주소). `workers.dev` 주소로도 계속 열게 하려면 두 주소를 `ALLOWED_ORIGINS` 에 적고,
+   화면을 따로 올렸다면 클라이언트의 서버 주소(`config.js`)와 `ALLOWED_ORIGINS` 를 새 도메인으로 맞춥니다.
    (Cloudflare 문서는 프로덕션을 `workers.dev` 대신 내 도메인에 두라고 권합니다. `workers.dev` 는 자동 봇 검사를 끌 수 없습니다.)
 
 ### 로그 보기
@@ -212,6 +227,8 @@ npm run deploy
 - 방(DO) 하나가 처리하는 요청은 초당 약 1,000건이 권장 상한입니다. 20명 × 10Hz = 200건이라 여유가 있습니다.
 - WebSocket 닫기 사유 문자열은 123바이트까지(코드에서 처리함).
 - 방의 메모리 상태(NPC 위치, 진행 중인 배틀 등)는 방이 비거나 배포·런타임 업데이트 때 사라집니다. 플레이어 진행도와 교단 기록은 남습니다.
+- 접속자 메모(쿨타임·차단·입막음·이름 고정·마지막 자리)는 방 DO 의 저장소에 5초마다(바뀐 것이 있을 때만)와 마지막 사람이 나갈 때 쓰고,
+  방이 깨어날 때 읽습니다. 방 하나에 최대 3,000명분, 기한이 지난 것은 저장하지 않습니다. 저장 1회 = DO 저장소 쓰기 1건(요금표의 storage 항목).
 
 ---
 
@@ -223,6 +240,7 @@ npm run deploy
 | 배포가 `SAVE_SECRET` 이 없다며 실패 | 4-2, 4-3 을 따라 `--secrets-file` 로 첫 배포를 하거나 `npx wrangler secret put SAVE_SECRET` |
 | 접속하면 "서버 설정 오류"(503) | 비밀키가 비어 있습니다. 위와 같음 |
 | `assets directory ... does not exist` | 먼저 저장소 루트에서 `npm run build:client` (또는 화면을 따로 호스팅한다면 `assets` 블록 삭제) |
-| 다른 사이트에 올린 화면에서 접속이 거부(403) | `ALLOWED_ORIGINS` 에 그 사이트 주소(https://… , 끝에 / 없이)를 넣고 재배포 |
+| 다른 사이트에 올린 화면에서 접속이 거부(403) | 기본값은 같은 주소만 받습니다. `ALLOWED_ORIGINS` 에 그 사이트 주소(https://… , 끝에 / 없이)를 넣고 재배포 |
+| 같은 IP 의 여러 명이 접속 실패(429) | `MAX_CONNS_PER_IP` 가 너무 낮습니다. 올리거나 0(끔)으로 |
 | 배포 직후 모두 한 번 끊김 | 정상 동작입니다(4-4 참고). 클라이언트가 자동으로 다시 들어옵니다 |
 | 무료 플랜에서 갑자기 접속 실패 | 일일 한도 초과. 한국 시간 오전 9시에 풀립니다. 유료 플랜으로 바꾸세요 |

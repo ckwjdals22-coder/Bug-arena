@@ -5,9 +5,10 @@
  * 그래서 같은 코어를 Cloudflare Workers 어댑터에서도 그대로 쓸 수 있다.
  *
  * 실행: `npx tsx server/node/main.ts` 또는 번들(`npm run build:server` → `node dist/server/main.js`).
- * 환경변수: PORT · HOST · ROOMS · MAX_ROOMS · ROOM_CAPACITY · NPCS · MAX_PRE_HELLO · MAX_CONNS_PER_IP · TRUST_PROXY · SAVE_SECRET · CLIENT_DIR · ALLOWED_ORIGINS · DATA_DIR
+ * 환경변수: PORT · HOST · ROOMS · MAX_ROOMS · ROOM_CAPACITY · NPCS · MAX_PRE_HELLO · MAX_CONNS_PER_IP · TRUST_PROXY · SAVE_SECRET · CLIENT_DIR ·
+ *           ALLOWED_ORIGINS · FRAME_ANCESTORS · DATA_DIR
+ * 운영: 로그는 한 줄에 JSON 하나(docs/DEPLOY.md §8). 저장 문제는 부팅 때 exit 1, 돌던 중이면 /healthz 503.
  */
-import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as http from 'node:http'
 import * as path from 'node:path'
@@ -28,6 +29,57 @@ import type { CultRegistry, PlayerMemory, RoomHost } from '../core/api'
 import { Lobby } from '../core/lobby'
 import { MAX_HELLO_BYTES, Room } from '../core/room'
 import { createSigner } from '../core/save'
+import {
+  ErrorTally,
+  formatLogLine,
+  frameAncestorsFrom,
+  LogBudget,
+  type LogLevel,
+  originAllowed,
+  originPolicyFrom,
+  pickEncoding,
+  securityHeaders,
+} from './ops'
+import { acquireDataLock, createCultRegistry, type DataLock, loadSecret, newPersistStatus, PersistFatal, probeDataDir } from './persist'
+
+// ───────────────────────── 로그 ─────────────────────────
+// 설정을 읽는 중에도 경고를 남기므로 맨 앞에 둔다.
+
+/** 10초 창마다: 오류 50건, 경고 100건까지. 넘친 것은 건수만 요약한다 */
+const errorBudget = new LogBudget(50)
+const warnBudget = new LogBudget(100)
+/** 소켓 오류(잘못된 프레임, 상한 초과 프레임)는 연결마다 쓰지 않고 10초마다 종류별 건수로 묶는다 */
+const socketErrors = new ErrorTally()
+
+function writeLine(level: LogLevel, msg: string, extra?: unknown): void {
+  const line = formatLogLine(level, msg, extra)
+  if (level === 'error') console.error(line)
+  else if (level === 'warn') console.warn(line)
+  else console.log(line)
+}
+
+setInterval(() => {
+  const errDropped = errorBudget.reset()
+  const warnDropped = warnBudget.reset()
+  if (errDropped > 0) writeLine('error', '같은 기간 오류 생략', { dropped: errDropped })
+  if (warnDropped > 0) writeLine('warn', '같은 기간 경고 생략', { dropped: warnDropped })
+  const sock = socketErrors.drain()
+  if (sock) writeLine('warn', '소켓 오류(10초 요약)', sock)
+}, 10_000).unref()
+
+function log(level: LogLevel, msg: string, extra?: unknown): void {
+  // 틱마다 터지는 버그나 공격성 요청이 로그를 초당 수백 줄로 도배하지 않게 양을 제한한다
+  if (level === 'error' && !errorBudget.take()) return
+  // 신고 기록(msg 'report')은 유일한 관리 기록이라 버리지 않는다(코어가 신고 자격·횟수를 이미 제한한다)
+  if (level === 'warn' && msg !== 'report' && !warnBudget.take()) return
+  writeLine(level, msg, extra)
+}
+
+/** 계속 돌면 안 되는 문제: 한 줄로 이유를 남기고 끝낸다(호스팅이 '죽음'으로 보여 주도록) */
+function fatal(msg: string): never {
+  writeLine('error', msg)
+  process.exit(1)
+}
 
 // ───────────────────────── 설정 ─────────────────────────
 
@@ -36,7 +88,7 @@ function envInt(name: string, def: number, min: number, max: number): number {
   if (raw === undefined || raw.trim() === '') return def
   const n = Number(raw)
   if (!Number.isFinite(n)) {
-    console.warn(`[server] 환경변수 ${name}="${raw}" 는 숫자가 아니라 기본값 ${def} 을 씁니다`)
+    log('warn', `환경변수 ${name}="${raw}" 는 숫자가 아니라 기본값 ${def} 을 씁니다`)
     return def
   }
   return Math.max(min, Math.min(max, Math.floor(n)))
@@ -52,8 +104,11 @@ const CAPACITY = envInt('ROOM_CAPACITY', ROOM_CAPACITY, 1, 100)
 const NPCS = envInt('NPCS', NPCS_PER_ROOM, 0, 200)
 const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR?.trim() || '.data')
 const CLIENT_DIR = path.resolve(process.cwd(), process.env.CLIENT_DIR?.trim() || 'dist/client')
-const normOrigin = (o: string): string => o.trim().toLowerCase().replace(/\/+$/, '')
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map(normOrigin).filter(Boolean)
+/** 비었으면 같은 출처만, '*' 면 전부, 아니면 쉼표 목록 */
+const ORIGIN_POLICY = originPolicyFrom(process.env.ALLOWED_ORIGINS)
+/** 이 게임을 iframe 으로 품을 수 있는 출처(CSP frame-ancestors). 기본 'self' */
+const FRAME_ANCESTORS = frameAncestorsFrom(process.env.FRAME_ANCESTORS)
+const HTML_SECURITY_HEADERS = securityHeaders(FRAME_ANCESTORS)
 
 /** 이만큼 보낼 것이 밀려 있으면 받지 못하는 연결로 본다 */
 const MAX_BUFFERED_BYTES = 1024 * 1024
@@ -74,191 +129,47 @@ const CULT_FLUSH_MS = 30_000
 const MAX_CULTS = 5000
 const ROOM_LIST_CACHE_MS = 250
 
-// ───────────────────────── 로그 ─────────────────────────
+// ───────────────────────── 저장(DATA_DIR) ─────────────────────────
+// 순서가 중요하다: 쓸 수 있는지 → 다른 서버가 쓰는 중인지(잠금) → 비밀키 → 교단 기록.
+// 하나라도 안 되면 조용히 메모리로만 돌지 않고 끝낸다(재시작마다 진행도·순위가 사라지는 것을 숨기지 않게).
 
-let errorBudget = 50
-let errorDropped = 0
-setInterval(() => {
-  if (errorDropped > 0) console.error(`${new Date().toISOString()} [error] (같은 기간 오류 ${errorDropped}건 생략)`)
-  errorBudget = 50
-  errorDropped = 0
-}, 10_000).unref()
-
-function log(level: 'info' | 'warn' | 'error', msg: string, extra?: unknown): void {
-  if (level === 'error') {
-    // 틱마다 터지는 버그가 로그를 초당 수백 줄로 도배하지 않게 양을 제한한다
-    if (errorBudget <= 0) {
-      errorDropped++
-      return
-    }
-    errorBudget--
-  }
-  const line = `${new Date().toISOString()} [${level}] ${msg}`
-  const detail = extra instanceof Error ? (extra.stack ?? extra.message) : extra
-  const out = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log
-  if (detail === undefined) out(line)
-  else out(line, detail)
+const persist = newPersistStatus()
+/** 돌던 중 DATA_DIR 점검 실패 사유(교단 기록 저장 실패와 따로 둔다: 하나가 회복돼도 다른 하나는 남게) */
+let dataDirError: string | null = null
+let dataLock: DataLock
+let cults: ReturnType<typeof createCultRegistry>
+let saveSecret: string
+try {
+  probeDataDir(DATA_DIR)
+  dataLock = acquireDataLock(DATA_DIR)
+  saveSecret = loadSecret(DATA_DIR, process.env.SAVE_SECRET, log)
+  cults = createCultRegistry({ file: path.join(DATA_DIR, 'cults.json'), maxCults: MAX_CULTS, log, status: persist })
+} catch (err) {
+  if (err instanceof PersistFatal) fatal(err.message)
+  throw err
 }
+// 어떻게 끝나든(정상 종료·예외) 내 잠금은 지운다. kill -9 로 남은 잠금은 다음 부팅이 낡은 것으로 알아본다
+process.on('exit', () => dataLock.release())
 
-// ───────────────────────── 저장 서명 비밀키 ─────────────────────────
-
-/** SAVE_SECRET 이 없으면 DATA_DIR/secret 에 만들어 두고 재사용한다(재시작해도 플레이어 저장본이 유효하도록) */
-function loadSecret(): string {
-  const fromEnv = process.env.SAVE_SECRET
-  if (fromEnv && fromEnv.trim().length > 0) return fromEnv.trim()
-  const file = path.join(DATA_DIR, 'secret')
-  const read = (): string | null => {
-    try {
-      const s = fs.readFileSync(file, 'utf8').trim()
-      return s.length >= 16 ? s : null
-    } catch {
-      return null
-    }
-  }
-  const existing = read()
-  if (existing) return existing
-  const secret = randomBytes(32).toString('hex')
+/** 30초마다: 잠금이 살아 있음을 표시하고, 디스크가 여전히 쓰이는지 확인한다 */
+function checkDataDir(): void {
   try {
-    fs.mkdirSync(DATA_DIR, { recursive: true })
-    // wx: 동시에 뜬 다른 프로세스가 먼저 만들었다면 덮어쓰지 않고 그쪽 것을 쓴다
-    fs.writeFileSync(file, `${secret}\n`, { mode: 0o600, flag: 'wx' })
-    return secret
+    probeDataDir(DATA_DIR)
+    dataLock.refresh()
+    if (dataDirError) log('info', 'DATA_DIR 에 다시 쓸 수 있습니다')
+    dataDirError = null
   } catch (err) {
-    const other = read()
-    if (other) return other
-    log('warn', `비밀키를 ${file} 에 저장하지 못했습니다. 재시작하면 기존 저장본이 무효가 됩니다(SAVE_SECRET 을 지정하세요)`, err)
-    return secret
+    const msg = err instanceof Error ? err.message : String(err)
+    if (dataDirError === null) log('error', msg)
+    dataDirError = msg
   }
 }
 
-// ───────────────────────── 교단 기록 저장소(메모리 + 파일) ─────────────────────────
-
-interface FileCultRegistry extends CultRegistry {
-  flush(sync: boolean): void
-}
-
-function createCultRegistry(file: string): FileCultRegistry {
-  const map = new Map<string, CultScore>()
-  let dirty = false
-  let version = 0
-  let sorted: CultScore[] = []
-  let sortedVersion = -1
-  let writing = false
-
-  const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
-  const int = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1e12, Math.floor(v))) : 0)
-  /** 띄어쓰기·대소문자만 다른 이름은 같은 이름으로 본다 */
-  const nameKey = (name: string): string => name.toLowerCase().replace(/\s+/g, '')
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
-    if (Array.isArray(raw)) {
-      for (const item of raw) {
-        if (map.size >= MAX_CULTS) break
-        if (!item || typeof item !== 'object') continue
-        const r = item as Record<string, unknown>
-        const id = str(r.id, 80)
-        const name = str(r.name, 40)
-        if (!id || !name) continue
-        map.set(id, {
-          id,
-          name,
-          color: int(r.color),
-          emblem: int(r.emblem),
-          leaderName: str(r.leaderName, 40),
-          title: str(r.title, 40),
-          online: 0,
-          fol: int(r.fol),
-          inf: int(r.inf),
-        })
-      }
-    }
-  } catch (err) {
-    // 파일이 없는 것은 첫 실행이라 정상. 깨진 파일이면 알리고 빈 상태로 시작한다
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log('warn', `교단 기록 ${file} 을 읽지 못해 빈 상태로 시작합니다`, err)
-  }
-
-  const touch = (): void => {
-    dirty = true
-    version++
-  }
-  const serialize = (): string => JSON.stringify([...map.values()].map((c) => ({ ...c, online: 0 })))
-
+function persistHealth(): { ok: boolean; lastCultSaveAt: string | null; lastError: string | null } {
   return {
-    record(cult, delta) {
-      const id = str(cult.id, 80)
-      const name = str(cult.name, 40)
-      if (!id || !name) return
-      let entry = map.get(id)
-      if (!entry) {
-        if (map.size >= MAX_CULTS) {
-          // 자리가 없으면 영향력이 가장 낮은 기록을 내보낸다
-          let lowest: CultScore | undefined
-          for (const c of map.values()) if (!lowest || c.inf < lowest.inf) lowest = c
-          if (lowest) map.delete(lowest.id)
-        }
-        entry = { id, name, color: 0, emblem: 0, leaderName: '', title: '', online: 0, fol: 0, inf: 0 }
-        map.set(id, entry)
-      }
-      entry.name = name
-      entry.color = int(cult.color)
-      entry.emblem = int(cult.emblem)
-      entry.leaderName = str(cult.leaderName, 40) || entry.leaderName
-      // 칭호가 비어 오면(교단원이 올린 기록) 기존 교주 칭호를 유지한다
-      entry.title = str(cult.title, 40) || entry.title
-      entry.fol = int(entry.fol + int(delta.fol))
-      entry.inf = int(entry.inf + int(delta.inf))
-      touch()
-    },
-    nameTaken(name, exceptId) {
-      const key = nameKey(String(name))
-      for (const c of map.values()) if (c.id !== exceptId && nameKey(c.name) === key) return true
-      return false
-    },
-    get(id) {
-      const c = map.get(id)
-      // 복사본을 준다: 받는 쪽이 online 등을 채워도 원본이 바뀌지 않게
-      return c ? { ...c } : undefined
-    },
-    top(n) {
-      if (sortedVersion !== version) {
-        sorted = [...map.values()].sort((a, b) => b.inf - a.inf || b.fol - a.fol || a.name.localeCompare(b.name, 'ko'))
-        sortedVersion = version
-      }
-      return sorted.slice(0, Math.max(0, Math.floor(n))).map((c) => ({ ...c }))
-    },
-    remove(id) {
-      if (map.delete(id)) touch()
-    },
-    flush(sync) {
-      if (!dirty || (writing && !sync)) return
-      dirty = false
-      const tmp = `${file}.tmp`
-      const text = serialize()
-      // 임시 파일에 쓴 뒤 이름을 바꾼다 → 쓰는 도중 죽어도 기존 파일이 깨지지 않는다
-      if (sync) {
-        try {
-          fs.mkdirSync(path.dirname(file), { recursive: true })
-          fs.writeFileSync(tmp, text)
-          fs.renameSync(tmp, file)
-        } catch (err) {
-          log('warn', '교단 기록 저장 실패', err)
-        }
-        return
-      }
-      writing = true
-      fs.promises
-        .mkdir(path.dirname(file), { recursive: true })
-        .then(() => fs.promises.writeFile(tmp, text))
-        .then(() => fs.promises.rename(tmp, file))
-        .catch((err: unknown) => {
-          dirty = true
-          log('warn', '교단 기록 저장 실패(다음 주기에 다시 시도)', err)
-        })
-        .finally(() => {
-          writing = false
-        })
-    },
+    ok: persist.ok && dataDirError === null,
+    lastCultSaveAt: persist.lastCultSaveAt > 0 ? new Date(persist.lastCultSaveAt).toISOString() : null,
+    lastError: dataDirError ?? persist.lastError,
   }
 }
 
@@ -295,8 +206,7 @@ let nextConnId = 1
 let shuttingDown = false
 const startedAt = Date.now()
 
-const cults = createCultRegistry(path.join(DATA_DIR, 'cults.json'))
-const signer = createSigner(loadSecret())
+const signer = createSigner(saveSecret)
 
 function closeSocket(ws: WebSocket, code: number, reason: string): void {
   try {
@@ -535,10 +445,13 @@ function compressed(file: string, st: fs.Stats, enc: 'br' | 'gzip'): Promise<Buf
   return hit
 }
 
-function cacheControlFor(urlPath: string, file: string): string {
+const ASSETS_DIR = path.join(CLIENT_DIR, 'assets')
+
+function cacheControlFor(file: string): string {
   const base = path.basename(file)
-  // 빌드가 파일 이름에 해시를 넣어 주는 자산은 내용이 바뀌면 이름도 바뀐다 → 영구 캐시
-  if (urlPath.startsWith('/assets/')) return 'public, max-age=31536000, immutable'
+  // 빌드가 파일 이름에 해시를 넣어 주는 자산은 내용이 바뀌면 이름도 바뀐다 → 영구 캐시.
+  // URL 이 아니라 '실제로 내주는 파일'로 정한다: 없는 자산 대신 다른 파일을 내줄 때 그것이 영구 캐시되지 않게
+  if (file.startsWith(ASSETS_DIR + path.sep)) return 'public, max-age=31536000, immutable'
   // 진입 문서와 런타임 설정은 배포 즉시 반영돼야 한다
   if (base === 'config.js' || base.endsWith('.html')) return 'no-cache'
   return 'public, max-age=300'
@@ -557,8 +470,10 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, 
     st = await statFile(file)
   }
   if (!st) {
-    // 확장자가 있는 경로는 없는 자산이다: index.html 을 대신 주면 브라우저가 HTML 을 스크립트로 읽다 엉뚱한 오류를 낸다
-    if (!isRoot && path.extname(urlPath) !== '') {
+    // 확장자가 있는 경로나 /assets 아래는 없는 자산이다: index.html 을 대신 주면 브라우저가 HTML 을 스크립트로 읽다
+    // 엉뚱한 오류를 내고, /assets 아래라면 그 HTML 이 1년짜리 캐시에 박힌다
+    const isAsset = urlPath === '/assets' || urlPath.startsWith('/assets/')
+    if (!isRoot && (isAsset || path.extname(urlPath) !== '')) {
       sendText(res, 404, '찾을 수 없습니다.\n')
       return
     }
@@ -574,10 +489,12 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, 
   const etag = `W/"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`
   const headers: http.OutgoingHttpHeaders = {
     'content-type': MIME[ext] ?? 'application/octet-stream',
-    'cache-control': cacheControlFor(urlPath, file),
+    'cache-control': cacheControlFor(file),
     etag,
     'last-modified': st.mtime.toUTCString(),
     'x-content-type-options': 'nosniff',
+    // 문서(HTML)에만: 스크립트 출처 제한·iframe 허용 범위·리퍼러·기기 권한
+    ...(ext === '.html' ? HTML_SECURITY_HEADERS : {}),
   }
   const canCompress = COMPRESSIBLE.has(ext) && st.size >= COMPRESS_MIN_BYTES && st.size <= COMPRESS_MAX_BYTES
   if (canCompress) headers.vary = 'Accept-Encoding'
@@ -588,8 +505,8 @@ async function serveStatic(req: http.IncomingMessage, res: http.ServerResponse, 
   }
 
   if (canCompress) {
-    const accept = String(req.headers['accept-encoding'] ?? '')
-    const enc = /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : null
+    // q=0 은 '보내지 말라'는 뜻이다(단순 문자열 검색으로는 br;q=0 에도 br 을 보내게 된다)
+    const enc = pickEncoding(req.headers['accept-encoding'])
     if (enc) {
       try {
         const body = await compressed(file, st, enc)
@@ -650,8 +567,12 @@ async function handleHttp(req: http.IncomingMessage, res: http.ServerResponse): 
     return
   }
   if (urlPath === '/healthz') {
-    sendJson(res, shuttingDown ? 503 : 200, {
-      ok: !shuttingDown,
+    const persistNow = persistHealth()
+    // 저장이 안 되는 동안은 '건강하지 않음': 호스팅의 헬스 체크가 알아채고 운영자에게 알리도록
+    const healthy = !shuttingDown && persistNow.ok
+    sendJson(res, healthy ? 200 : 503, {
+      ok: healthy,
+      persist: persistNow,
       rooms: lobby.size,
       players: lobby.totalPlayers(),
       conns: conns.size,
@@ -690,14 +611,6 @@ const wss = new WebSocketServer({
   // 입장 전 hello 에는 서명 저장본이 실려 오므로 그 크기까지는 받는다. 입장 후의 큰 프레임은 Room 이 버린다
   maxPayload: MAX_HELLO_BYTES,
 })
-
-function originAllowed(origin: string | undefined): boolean {
-  if (ALLOWED_ORIGINS.length === 0) return true
-  // Origin 헤더는 브라우저만 붙인다(위조도 브라우저 밖에서는 자유롭다). 이 검사의 목적은 '남의 웹 페이지가
-  // 이 서버를 끌어다 쓰는 것'을 막는 것이므로, 헤더가 없는 비브라우저 클라이언트(점검 도구, 부하 테스트)는 통과시킨다.
-  if (!origin) return true
-  return ALLOWED_ORIGINS.includes(normOrigin(origin))
-}
 
 function rejectUpgrade(socket: Duplex, status: number, text: string): void {
   socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
@@ -742,8 +655,9 @@ function attach(ws: WebSocket, room: Room, ip: string): void {
     room.disconnect(id, code === 1000 || code === 1001 || code === 1005)
   })
   ws.on('error', (err: Error) => {
-    // 프레임 상한 초과·잘못된 프레임 등. ws 가 알아서 닫고 close 이벤트가 뒤따른다
-    log('warn', `연결 ${id} 소켓 오류: ${err.message}`)
+    // 프레임 상한 초과·잘못된 프레임 등. ws 가 알아서 닫고 close 이벤트가 뒤따른다.
+    // 누구나 일으킬 수 있으므로 한 건씩 쓰지 않고 10초마다 종류별 건수로 요약한다
+    socketErrors.add(err)
   })
   room.connect(id)
 }
@@ -762,7 +676,14 @@ server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) =
     rejectUpgrade(socket, 404, 'Not Found')
     return
   }
-  if (!originAllowed(req.headers.origin)) {
+  // 기본은 같은 출처만(ALLOWED_ORIGINS 비었을 때). Origin 헤더가 없는 도구·부하 테스트는 통과(ops.ts 참고)
+  const originOk = originAllowed(ORIGIN_POLICY, {
+    origin: req.headers.origin,
+    host: req.headers.host,
+    forwardedHost: req.headers['x-forwarded-host'],
+    trustProxy: TRUST_PROXY,
+  })
+  if (!originOk) {
     rejectUpgrade(socket, 403, 'Forbidden')
     return
   }
@@ -810,7 +731,10 @@ const heartbeatTimer = setInterval(() => {
   }
 }, HEARTBEAT_MS)
 
-const cultTimer = setInterval(() => cults.flush(false), CULT_FLUSH_MS)
+const cultTimer = setInterval(() => {
+  checkDataDir()
+  cults.flush(false)
+}, CULT_FLUSH_MS)
 
 function shutdown(signal: string): void {
   if (shuttingDown) {
@@ -830,6 +754,7 @@ function shutdown(signal: string): void {
     }
   }
   cults.flush(true)
+  dataLock.release()
   server.close()
   server.closeIdleConnections()
   // 마지막 저장본과 kick(shutdown) 이 실제로 나갈 시간을 잠깐 준 뒤 끝낸다
@@ -860,8 +785,16 @@ server.listen(PORT, HOST, () => {
   const addr = server.address()
   const port = addr && typeof addr === 'object' ? addr.port : PORT
   const client = fs.existsSync(path.join(CLIENT_DIR, 'index.html')) ? displayPath(CLIENT_DIR) : '없음(API·WS 만 제공)'
-  const origins = ALLOWED_ORIGINS.length > 0 ? ALLOWED_ORIGINS.join(',') : '전부 허용'
-  console.log(
-    `[server] listening on http://${HOST ?? 'localhost'}:${port} — 포트 ${port} · 방 ${lobby.size}개(정원 ${CAPACITY}명, NPC ${NPCS}명) · 정적 파일: ${client} · 허용 출처: ${origins}`,
-  )
+  const origins = ORIGIN_POLICY.kind === 'all' ? '전부 허용(*)' : ORIGIN_POLICY.kind === 'same' ? '같은 출처만' : ORIGIN_POLICY.list.join(',')
+  log('info', `listening on http://${HOST ?? 'localhost'}:${port}`, {
+    port,
+    rooms: lobby.size,
+    capacity: CAPACITY,
+    npcs: NPCS,
+    client,
+    origins,
+    frameAncestors: FRAME_ANCESTORS,
+    dataDir: displayPath(DATA_DIR),
+    cults: cults.size,
+  })
 })

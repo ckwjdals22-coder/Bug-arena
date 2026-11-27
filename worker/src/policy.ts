@@ -8,8 +8,19 @@
  *   - 방 DO 는 배포·재시작 때 '0명' 보고 없이 사라진다 → 보고가 STALE_MS 넘게 끊긴 방은 0명으로 본다.
  */
 import type { RoomInfo } from '../../shared/types'
-import { EXTRA_ROOM_IDLE_MS, GROW_AT, roomName } from '../../server/core/lobby'
-import type { Policy } from './env'
+import { EXTRA_ROOM_IDLE_MS, GROW_AT, PENDING_SEAT_CAP, roomName } from '../../server/core/lobby'
+
+/** 운영 설정(env.ts 의 policyOf 가 Worker 환경변수에서 만든다) */
+export interface Policy {
+  /** 처음부터 있는(비어도 없애지 않는) 방 수 */
+  rooms: number
+  /** 자동 증설 상한(= rooms 면 증설 안 함) */
+  maxRooms: number
+  capacity: number
+  npcs: number
+  maxPreHello: number
+  maxConnsPerIp: number
+}
 
 /** 방 DO 의 정기 보고 간격 */
 export const REPORT_EVERY_MS = 10_000
@@ -97,9 +108,14 @@ export class RoomTable {
     return { players: stale ? 0 : r.players, pending: stale ? 0 : r.pending, reserved }
   }
 
+  /**
+   * 자리 계산. 인사(hello) 전 연결은 Node 처럼 PENDING_SEAT_CAP 까지만 친다: 전부 치면 hello 를 보내지 않는 소켓 몇 개로
+   * 모든 방을 '가득 참'으로 만들 수 있다. 정원은 방(Room)이 hello 때 다시 확인하므로 느슨하게 세도 넘치지 않는다.
+   * 방금 배정한 자리(reserved)는 그대로 센다(한꺼번에 몰린 정상 접속을 여러 방에 나누는 용도, 다음 보고 때 비워진다).
+   */
   private used(r: Occupancy, now: number): number {
     const l = this.live(r, now)
-    return l.players + l.pending + l.reserved
+    return l.players + Math.min(l.pending, PENDING_SEAT_CAP) + l.reserved
   }
 
   hasSeat(r: Occupancy, now: number): boolean {

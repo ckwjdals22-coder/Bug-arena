@@ -1,0 +1,19 @@
+{
+  "name": "도를 아십니까? — 교주 시뮬레이터",
+  "short_name": "도를 아십니까",
+  "description": "수상한 교주가 되어 거리를 누비는 3D 멀티플레이 풍자 코미디. 모든 교단은 허구입니다.",
+  "lang": "ko",
+  "dir": "ltr",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#8fd0f2",
+  "theme_color": "#ffd23f",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

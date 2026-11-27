@@ -38,6 +38,8 @@ server/
     save.ts             HMAC-SHA256(순수 JS) 서명기
     systems/*.ts        기능 플러그인(교단, 단상, 배틀, 헌금함, 업적, 단속반, 기싸움)
   node/main.ts          Node 어댑터: HTTP(정적 파일, /api/rooms, /healthz) + WebSocket
+  node/ops.ts           운영 규칙(순수 함수): JSON 한 줄 로그, 압축 협상, Origin 검사, 보안 헤더
+  node/persist.ts       DATA_DIR 점검·잠금, 서명 비밀키, 교단 기록 파일(.bak·깨진 파일 보존)
 worker/                 Cloudflare Workers + Durable Objects 어댑터(선택)
 client/
   index.html, public/config.js
@@ -74,7 +76,7 @@ npm test               # vitest (tests/unit)
 npm run test:e2e       # Playwright 스크립트
 ```
 
-서버 환경변수: `PORT`(8787) · `ROOMS`(3) · `ROOM_CAPACITY`(20) · `NPCS`(28) · `SAVE_SECRET`(없으면 `.data/secret` 에 생성) · `CLIENT_DIR`(정적 파일 위치) · `ALLOWED_ORIGINS`(쉼표 구분, 비우면 전부 허용) · `DATA_DIR`(.data).
+서버 환경변수: `PORT`(8787) · `ROOMS`(3) · `ROOM_CAPACITY`(20) · `NPCS`(28) · `SAVE_SECRET`(없으면 `.data/secret` 에 생성) · `CLIENT_DIR`(정적 파일 위치) · `ALLOWED_ORIGINS`(쉼표 구분, 비우면 같은 출처만, `*` 면 전부) · `FRAME_ANCESTORS`(기본 `'self'`) · `DATA_DIR`(.data). 전체 목록과 운영 안내는 `docs/DEPLOY.md`.
 
 헤드리스 검증: Playwright Chromium 은 SwiftShader 로 WebGL2 가 동작한다. `require('playwright')` 는 어디서나 된다(전역 설치). **`playwright install` 을 실행하지 말 것.**
 
@@ -193,14 +195,16 @@ export class Lobby {
 
 ### 4.6 Node 어댑터 (server/node/main.ts)
 - `http.createServer` + `ws`(`noServer: true`, `perMessageDeflate: false`, `maxPayload: MAX_MSG_BYTES`).
-- `GET /api/rooms` → `{rooms: RoomInfo[]}` (CORS 허용), `GET /healthz` → `{ok, rooms, players, uptime, tickMsP95}`, 그 외는 `CLIENT_DIR`(기본 `dist/client`) 정적 파일(경로 탈출 방지, 올바른 Content-Type, 해시 붙은 `/assets/*` 는 장기 캐시, `index.html`·`config.js` 는 no-cache, 없는 경로는 index.html).
-- `GET /ws?room=<id|auto>` 업그레이드: `ALLOWED_ORIGINS` 검사 → `lobby.pick` → 방이 없으면(전부 가득) 연결을 받은 뒤 `full` 메시지를 보내고 `CLOSE_FULL` 로 닫는다(클라이언트가 안내를 띄울 수 있게).
+- `GET /api/rooms` → `{rooms: RoomInfo[]}` (CORS 허용), `GET /healthz` → `{ok, persist:{ok,lastCultSaveAt,lastError}, rooms, players, uptime, tickMsP95, …}`(저장 실패 중이거나 종료 중이면 503), 그 외는 `CLIENT_DIR`(기본 `dist/client`) 정적 파일(경로 탈출 방지, 올바른 Content-Type, `/assets/` 안의 실제 파일만 장기 캐시, `index.html`·`config.js` 는 no-cache, `/assets/` 아래나 확장자 있는 없는 경로는 404, 그 밖의 없는 경로는 index.html). 압축은 `Accept-Encoding` 의 q 값을 지킨다. HTML 에는 CSP·Referrer-Policy·Permissions-Policy(`ops.ts securityHeaders`, Cloudflare 는 `client/public/_headers` 에 같은 값 — 단위 테스트가 둘을 맞춰 본다).
+- `GET /ws?room=<id|auto>` 업그레이드: Origin 검사(기본 같은 출처: Origin 의 host = `Host`/신뢰하는 프록시의 `X-Forwarded-Host`, Origin 없는 도구는 통과) → `lobby.pick` → 방이 없으면(전부 가득) 연결을 받은 뒤 `full` 메시지를 보내고 `CLOSE_FULL` 로 닫는다(클라이언트가 안내를 띄울 수 있게).
 - 연결마다 `connId` 발급, `room.connect/message/disconnect` 연결. `host.send` 는 `ws.bufferedAmount` 가 과하면(예: 1MB) 느린 클라이언트로 보고 스냅샷을 건너뛰거나 연결을 끊는다.
 - 하트비트: 20초마다 ws ping, 응답 없으면 terminate.
 - 틱: 방마다 따로 타이머를 두지 말고 **하나의 `setInterval(TICK_MS)` 에서 사람이 있는 방만** `tick()`(빈 방은 1초에 한 번만 — NPC 는 가볍게 유지). 틱 소요 시간을 측정해 `/healthz` 에 p95 를 노출.
 - `claimPid`: 전역 `pid → roomId` 맵으로 다른 방의 같은 pid 를 `kickPid(pid,'dup')`.
-- `SIGTERM`/`SIGINT`: 모든 방 `shutdown()` 후 종료.
-- `SAVE_SECRET` 이 없으면 `DATA_DIR/secret` 파일에 임의 값을 만들어 재사용(재시작해도 저장본이 유효하게).
+- `SIGTERM`/`SIGINT`: 모든 방 `shutdown()`(접속자에게 `kick{shutdown}` → 클라이언트는 자동 재접속) → 교단 기록 동기 저장 → 잠금 해제 → 종료. 신호가 node 에 바로 닿도록 `npm start` 가 아니라 `node --enable-source-maps dist/server/main.js` 로 띄운다.
+- 부팅 순서(`persist.ts`): `DATA_DIR` 쓰기 시험 → 잠금(`server.lock`: pid·호스트, 30초마다 갱신, 90초 넘게 낡았거나 주인이 죽었으면 가져감) → 비밀키(`SAVE_SECRET` 없으면 `DATA_DIR/secret`; 읽기·만들기 실패나 16자 미만이면 exit 1) → 교단 기록(깨진 파일은 `cults.json.corrupt-<시각>` 으로 옮기고 `.bak` 에서 복구). 어느 단계든 실패하면 JSON 한 줄 이유를 남기고 exit 1.
+- 교단 기록 쓰기: 프로세스별 임시 파일 → fsync → 이전 파일을 `.bak` 으로 → 이름 바꾸기. 30초마다 DATA_DIR 를 다시 시험하고 실패하면 `/healthz` 503.
+- 로그: 모든 수준이 `{"ts","level","msg","data"|"err","stack"}` JSON 한 줄. 오류 10초/50줄, 경고 10초/100줄(신고 `report` 줄은 제외), 소켓 오류는 10초마다 종류별 건수 한 줄로 요약.
 
 ## 5. 클라이언트
 

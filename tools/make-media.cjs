@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * README/링크 미리보기용 이미지를 실제 게임 화면에서 뽑는다.
- *   npm run build && node tools/make-media.cjs
- * 만드는 파일: docs/img/pc.jpg, docs/img/mobile.jpg, docs/img/certificate.png, client/public/og.jpg(1200×630)
+ * README/링크 미리보기/홈 화면 아이콘 이미지를 만든다. 외부 그림 파일 없이 전부 절차적으로 그린다.
+ *   npm run build && node tools/make-media.cjs        → 아래 전부
+ *   node tools/make-media.cjs --icons                 → 아이콘만(서버·빌드 없이, 몇 초)
+ * 만드는 파일
+ *   - docs/img/pc.jpg, docs/img/mobile.jpg, docs/img/certificate.png, client/public/og.jpg(1200×630): 실제 게임 화면에서
+ *   - client/public/icons/icon-192.png, icon-512.png, maskable-512.png, apple-touch-icon.png(180): SVG 로 그린 교주 얼굴
  */
 const fs = require('node:fs')
 const path = require('node:path')
@@ -10,8 +13,72 @@ const { startServer, launch, openPlayer, state, sleep, walkTo, pitchOnce } = req
 
 const ROOT = path.resolve(__dirname, '..')
 const IMG = path.join(ROOT, 'docs/img')
+const ICONS = path.join(ROOT, 'client/public/icons')
+
+/**
+ * 아이콘: 노란 바탕에 '후광을 단 채 땀 흘리는 수상한 교주' 얼굴. 게임 속 주인공(놀림받는 쪽)이 아이콘의 주인공이다.
+ * pad = 가장자리 여백 비율. 마스커블 아이콘은 기기가 원·물방울 등으로 잘라 내므로 가운데 80% 안에 얼굴을 넣는다.
+ * 글꼴·이모지에 기대지 않는다(서버·CI 에 한글/이모지 글꼴이 없어도 같은 그림이 나오게).
+ */
+function iconSvg({ pad, rounded }) {
+  const s = 512
+  const inner = s * (1 - pad * 2)
+  const k = inner / 512
+  const o = s * pad
+  const bg = rounded
+    ? `<rect x="8" y="8" width="496" height="496" rx="112" fill="#ffd23f" stroke="#241b35" stroke-width="16"/>`
+    : `<rect width="512" height="512" fill="#ffd23f"/>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  ${bg}
+  <g transform="translate(${o} ${o}) scale(${k})">
+    <circle cx="256" cy="282" r="210" fill="#ffe680"/>
+    <ellipse cx="256" cy="92" rx="120" ry="34" fill="none" stroke="#fff7d6" stroke-width="22"/>
+    <ellipse cx="256" cy="92" rx="120" ry="34" fill="none" stroke="#241b35" stroke-width="6" opacity=".35"/>
+    <path d="M118 300 L150 182 L256 140 L362 182 L394 300 L352 400 L256 436 L160 400 Z" fill="#ffd9b0" stroke="#241b35" stroke-width="16" stroke-linejoin="round"/>
+    <path d="M150 182 L256 140 L362 182 L346 214 L256 190 L166 214 Z" fill="#241b35"/>
+    <path d="M178 286 Q206 262 234 286" fill="none" stroke="#241b35" stroke-width="14" stroke-linecap="round"/>
+    <path d="M278 286 Q306 262 334 286" fill="none" stroke="#241b35" stroke-width="14" stroke-linecap="round"/>
+    <ellipse cx="184" cy="330" rx="26" ry="15" fill="#ff8fa3" opacity=".8"/>
+    <ellipse cx="328" cy="330" rx="26" ry="15" fill="#ff8fa3" opacity=".8"/>
+    <path d="M206 356 Q256 396 306 356" fill="none" stroke="#241b35" stroke-width="14" stroke-linecap="round"/>
+    <path d="M372 214 Q392 250 372 268 Q352 250 372 214 Z" fill="#8fd0f2" stroke="#241b35" stroke-width="8" stroke-linejoin="round"/>
+  </g>
+</svg>`
+}
+
+async function makeIcons(browser) {
+  fs.mkdirSync(ICONS, { recursive: true })
+  const ctx = await browser.newContext({ viewport: { width: 512, height: 512 }, deviceScaleFactor: 1 })
+  const page = await ctx.newPage()
+  const shots = [
+    // 일반 아이콘: 둥근 모서리 + 테두리(투명 바깥)
+    { file: 'icon-192.png', size: 192, pad: 0.06, rounded: true, transparent: true },
+    { file: 'icon-512.png', size: 512, pad: 0.06, rounded: true, transparent: true },
+    // 마스커블: 바탕이 끝까지 차고 그림은 안전 영역(가운데 80%) 안
+    { file: 'maskable-512.png', size: 512, pad: 0.14, rounded: false, transparent: false },
+    // iOS 는 투명을 검게 칠하고 모서리를 알아서 둥글린다 → 꽉 찬 바탕
+    { file: 'apple-touch-icon.png', size: 180, pad: 0.08, rounded: false, transparent: false },
+  ]
+  for (const sh of shots) {
+    await page.setViewportSize({ width: sh.size, height: sh.size })
+    const svg = iconSvg(sh).replace('width="512" height="512"', `width="${sh.size}" height="${sh.size}"`)
+    await page.setContent(`<!doctype html><html><body style="margin:0;background:transparent">${svg}</body></html>`)
+    await page.screenshot({ path: path.join(ICONS, sh.file), omitBackground: sh.transparent, clip: { x: 0, y: 0, width: sh.size, height: sh.size } })
+  }
+  await ctx.close()
+  console.log('만든 아이콘:', shots.map((s) => `client/public/icons/${s.file}`).join(', '))
+}
 
 ;(async () => {
+  if (process.argv.includes('--icons')) {
+    const browser = await launch()
+    try {
+      await makeIcons(browser)
+    } finally {
+      await browser.close()
+    }
+    return
+  }
   fs.mkdirSync(IMG, { recursive: true })
   const srv = await startServer(Number(process.env.MEDIA_PORT || 8893))
   const browser = await launch()
@@ -72,6 +139,7 @@ const IMG = path.join(ROOT, 'docs/img')
     await sleep(300)
     await og.screenshot({ path: path.join(ROOT, 'client/public/og.jpg'), type: 'jpeg', quality: 84 })
     console.log('만든 파일:', fs.readdirSync(IMG).join(', '), '+ client/public/og.jpg', errors.length ? `(페이지 오류 ${errors.length}건)` : '')
+    await makeIcons(browser)
   } finally {
     await browser.close()
     srv.stop()

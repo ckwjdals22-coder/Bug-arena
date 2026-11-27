@@ -53,7 +53,7 @@ async function handleWs(request: Request, env: Env, url: URL): Promise<Response>
   if (request.method !== 'GET' || request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
     return text(426, '이 주소는 WebSocket 전용입니다.\n', { upgrade: 'websocket' })
   }
-  if (!originAllowed(env, request.headers.get('Origin'))) return text(403, 'Forbidden\n')
+  if (!originAllowed(env, request.headers.get('Origin'), url.host)) return text(403, 'Forbidden\n')
   if (!env.SAVE_SECRET || env.SAVE_SECRET.trim() === '') {
     console.error('[worker] SAVE_SECRET 이 설정되지 않았습니다. `npx wrangler secret put SAVE_SECRET` 으로 넣으세요')
     return text(503, '서버 설정 오류입니다.\n')

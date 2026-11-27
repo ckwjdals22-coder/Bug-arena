@@ -1,5 +1,5 @@
 # Render Blueprint — 저장소를 연결하면 이 설정으로 서버+클라이언트를 한 번에 띄운다.
-# 주의: 방 상태가 프로세스 메모리에 있으므로 인스턴스는 반드시 1개여야 한다.
+# 주의: 방 상태가 프로세스 메모리에 있으므로 인스턴스는 반드시 1개여야 한다(DATA_DIR 잠금이 두 번째 프로세스를 막는다).
 services:
   - type: web
     name: doas-game
@@ -7,8 +7,10 @@ services:
     plan: free            # 잠들지 않게 하려면 유료 플랜으로 바꾼다
     region: singapore     # 한국에서 가장 가까운 Render 리전
     buildCommand: npm ci --include=dev && npm run build
-    startCommand: npm start
-    healthCheckPath: /healthz
+    # npm start 를 쓰지 않는다: npm 이 받은 SIGTERM 이 node 까지 전달되지 않아 종료 안내·마지막 저장이 빠지고
+    # node 가 고아로 남는다. node 를 직접 띄운다(소스맵: 오류 위치가 번들이 아니라 원본 파일로 찍힌다)
+    startCommand: node --enable-source-maps dist/server/main.js
+    healthCheckPath: /healthz   # 저장이 안 되는 동안은 503
     numInstances: 1
     envVars:
       - key: NODE_VERSION
@@ -21,5 +23,7 @@ services:
         value: "3"
       - key: ROOM_CAPACITY
         value: "20"
+      # 비워 두면 같은 주소(https://<이름>.onrender.com)에서 연 화면만 접속할 수 있다(기본, 대부분 이것으로 충분).
+      # 클라이언트를 다른 곳에 따로 올렸다면 그 주소를 쉼표로 적는다. '*' 는 모든 사이트 허용.
       - key: ALLOWED_ORIGINS
-        sync: false           # 예: https://doas-game.onrender.com (클라이언트를 따로 올리면 그 주소도 쉼표로 추가)
+        sync: false
