@@ -221,6 +221,8 @@ export interface SeatTemplate {
   gender: "ANY" | "MALE" | "FEMALE";
   capacity: number;
   price: number;
+  /** 개최 확정에 필요한 최소 확정 인원. 없거나 0 이면 조건 없음 */
+  minCount?: number;
 }
 
 export const CANCELLATION_PRESETS = {

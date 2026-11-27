@@ -143,7 +143,8 @@ CONFIRMED ─ 사업자 노쇼 처리 ─▶ NO_SHOW (환불 없음, 고객 노�
 - 온라인 결제분은 PG 부분취소 API 로 환불하고 `Refund` 에 기록한다. 환불 실패는 `FAILED` 로 남겨 운영자 콘솔에서 재시도한다.
 - **재판매 연동 환불**(`Product.resaleRefundRate`, 선택): 환불율이 이 값보다 낮은 구간에서 취소해도, 그 좌석이 시작 전에 다시 팔리면 이 비율까지 추가로 환불한다.
   - 예약 생성 시 상품 설정을 `Booking.resaleRefundRate` 로 스냅샷. 고객 취소 시 `refundRate < resaleRefundRate` 이고 온라인 결제분이 있으면 `resalePendingQty = quantity`.
-  - 같은 좌석 유형(`slotSeatId`)에서 새 예약(직접 입력 제외)이 **확정**되면, 그 예약 수량만큼 `cancelledAt` 이 빠른 취소 건부터 매칭한다(새 예약의 `resaleMatchedAt` 으로 중복 매칭 방지).
+  - "다시 팔렸다"의 기준: 같은 좌석 유형(`slotSeatId`)에서 새 예약(직접 입력 제외)이 **확정**된 뒤, 아직 팔리지 않은 좌석 수 `unsold = capacity − reserved + withheld` 가 재판매 대기 합계 `P = Σ resalePendingQty` 보다 적으면 그 차이만큼 다시 팔린 것으로 본다. 즉 `매칭수량 = min(새 예약 수량, max(0, P − unsold))`. (다른 빈자리가 남아 있는 동안에는 취소 좌석이 다시 팔린 것이 아니다. 보류 중(`withheld`)인 좌석도 팔린 것이 아니다.)
+  - 매칭은 `SlotSeat` 행을 잠그고(`SELECT … FOR UPDATE`) `cancelledAt` 이 빠른 취소 건부터 배분한다. 새 예약의 `resaleMatchedAt` 으로 중복 매칭을 막는다.
   - 추가 환불액 = `floor(payNowAmount × (resaleRefundRate − refundRate) / 100 × 매칭수량 / quantity)`. `refundAmount` 에 더하고 수수료를 남은 금액 기준으로 다시 계산한다. 새 예약이 나중에 취소돼도 회수하지 않는다.
   - 회차가 시작되면 남은 `resalePendingQty` 는 0 으로 정리한다. 정산은 회차 종료 뒤에만 집계하므로 금액이 뒤바뀌지 않는다.
 
